@@ -89,6 +89,7 @@ if __name__ == "__main__":
         if True:
             print("delete from transaction_memo... ")
             transactionStorage.delete_sender("dtube.rewards")
+            transactionStorage.delete_sender("reward.app")
             transactionStorage.delete_to("sbi2")
             transactionStorage.delete_to("sbi3")
             transactionStorage.delete_to("sbi4")

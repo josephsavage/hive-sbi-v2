@@ -2,6 +2,7 @@ from beem.utils import formatTimeString, resolve_authorperm, construct_authorper
 from beem.nodelist import NodeList
 from beem.comment import Comment
 from beem import Steem
+from beem import Hive
 from datetime import datetime, timedelta
 from beem.instance import set_shared_steem_instance
 from beem.blockchain import Blockchain
@@ -13,7 +14,7 @@ import dataset
 import random
 from datetime import date, datetime, timedelta
 from dateutil.parser import parse
-from beem.constants import STEEM_100_PERCENT 
+from beem.constants import STEEM_100_PERCENT, HIVE_100_PERCENT 
 from steembi.transfer_ops_storage import TransferTrx, AccountTrx, PostsTrx
 from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB, KeysDB, BlacklistDB
 from steembi.parse_hist_op import ParseAccountHist
@@ -189,7 +190,11 @@ if __name__ == "__main__":
         if ops["author"] not in changed_member_data:
             changed_member_data.append(ops["author"])
         if main_post:
-            if c["created"] == c["last_update"]:
+            if "last_update" in c:
+                last_update = c["last_update"]
+            else:
+                last_update = c["updated"]
+            if c["created"] == last_update:
                 member_data[ops["author"]]["last_post"] = c["created"]
                 member_data[ops["author"]]["comment_upvote"] = 0
         else:
@@ -203,7 +208,6 @@ if __name__ == "__main__":
                 reply_body = "Hi @%s!\n\n" % ops["author"]
                 reply_body += "* you have %d units and %d bonus units\n" % (member_data[ops["author"]]["shares"], member_data[ops["author"]]["bonus_shares"])
                 reply_body += "* your rshares balance is %d or %.3f $\n" % (member_data[ops["author"]]["balance_rshares"], stm.rshares_to_sbd(member_data[ops["author"]]["balance_rshares"])) 
-                
                 if member_data[ops["author"]]["comment_upvote"] == 0:
                     rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
                     if rshares > minimum_vote_threshold:
@@ -211,8 +215,8 @@ if __name__ == "__main__":
                     else:
                         reply_body += "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n" % (stm.rshares_to_sbd(rshares), stm.rshares_to_sbd(minimum_vote_threshold))
                 else:
-                    rshares =  member_data[ops["author"]]["balance_rshares"] / (comment_vote_divider ** 2)
-                    reply_body += "* as you did not wrote a post within the last 7 days, your comments will be upvoted.\n"
+                    rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
+                    # reply_body += "* as you did not wrote a post within the last 7 days, your pending vote accumulates until you post."
                     if rshares > minimum_vote_threshold * 20:
                         reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(int(minimum_vote_threshold * 20)))
                     elif  rshares > minimum_vote_threshold * 2:
