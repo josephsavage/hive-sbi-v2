@@ -22,9 +22,7 @@ from steembi.storage import TrxDB, MemberDB, ConfigurationDB
 from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB
 from steembi.member import Member
 
-    
-
-if __name__ == "__main__":
+def run():
     config_file = 'config.json'
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
@@ -38,21 +36,21 @@ if __name__ == "__main__":
         other_accounts = config_data["other_accounts"]
         mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
-        
-        
+
+
     db2 = dataset.connect(databaseConnector2)
     db = dataset.connect(databaseConnector)
-    transferStorage = TransferTrx(db)    
+    transferStorage = TransferTrx(db)
     # Create keyStorage
     trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
     accountStorage = MemberHistDB(db)
     confStorage = ConfigurationDB(db2)
-    
- 
-    
+
+
+
     conf_setup = confStorage.get()
-    
+
     last_cycle = conf_setup["last_cycle"]
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
@@ -60,31 +58,31 @@ if __name__ == "__main__":
     upvote_multiplier = conf_setup["upvote_multiplier"]
     last_paid_post = conf_setup["last_paid_post"]
     last_paid_comment = conf_setup["last_paid_comment"]
-    
+
 
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
-    comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]    
-    
+    comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
+
     print("last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
     if True:
         last_cycle = datetime.utcnow() - timedelta(seconds = 60 * 145)
-        confStorage.update({"last_cycle": last_cycle})        
+        confStorage.update({"last_cycle": last_cycle})
         print("update member database")
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
-        
+
         # Update current node list from @fullnodeupdate
         nodes = NodeList()
         nodes.update_nodes()
-        stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))    
+        stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
         # stm = Steem()
         member_data = {}
         n_records = 0
-        share_age_member = {}    
+        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
-        
+
 
         print("reset rshares")
         if True:
@@ -95,13 +93,13 @@ if __name__ == "__main__":
                 member_data[m]["earned_rshares"]  = total_share_days * rshares_per_cycle * 10
                 member_data[m]["rewarded_rshares"] = 0
                 member_data[m]["subscribed_rshares"] = total_share_days * rshares_per_cycle * 10
-                member_data[m]["delegation_rshares"] = 0          
-                member_data[m]["curation_rshares"] = 0 
-        
-        
+                member_data[m]["delegation_rshares"] = 0
+                member_data[m]["curation_rshares"] = 0
+
+
             for acc_name in accounts:
                 acc = Account(acc_name, steem_instance=stm)
-                
+
                 a = AccountVotes(acc_name, steem_instance=stm)
                 print(acc_name)
                 for vote in a:
@@ -109,7 +107,7 @@ if __name__ == "__main__":
                     if author in member_data:
                         member_data[author]["rewarded_rshares"] += int(vote["rshares"])
                         member_data[author]["balance_rshares"] -= int(vote["rshares"])
-                    
+
         if True:
             b = Blockchain(steem_instance=stm)
             wallet = Wallet(steem_instance=stm)
@@ -118,7 +116,7 @@ if __name__ == "__main__":
                 print(acc_name)
                 db = dataset.connect(databaseConnector)
                 accountTrx[acc_name] = AccountTrx(db, acc_name)
-                
+
                 comments_transfer = []
                 comments = []
                 ops = accountTrx[acc_name].get_all(op_types=["transfer"])
@@ -138,10 +136,10 @@ if __name__ == "__main__":
                         continue
                     authorperm = construct_authorperm(c["author"], c["permlink"])
                     if authorperm not in comments_transfer:
-                        comments_transfer.append(authorperm)                
+                        comments_transfer.append(authorperm)
                 print("%d comments with transfer found" % len(comments_transfer))
                 del ops
-                
+
                 ops = accountTrx[acc_name].get_all(op_types=["comment"])
                 cnt = 0
                 for o in ops:
@@ -172,7 +170,7 @@ if __name__ == "__main__":
                             for m in member_data:
                                 member_data_list.append(member_data[m])
                             memberStorage.add_batch(member_data_list)
-                            member_data_list = []                            
+                            member_data_list = []
                         cnt2 += 1
                     try:
                         c = Comment(authorperm, steem_instance=stm)
@@ -194,7 +192,7 @@ if __name__ == "__main__":
                                 block_num = b.get_estimated_block_num(vote["time"])
                                 current_block_num = b.get_current_block_num()
                                 transaction = None
-                                block_search_list = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5]                       
+                                block_search_list = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5]
                                 block_cnt = 0
                                 while transaction is None and block_cnt < len(block_search_list):
                                     if block_num + block_search_list[block_cnt] > current_block_num:
@@ -216,8 +214,8 @@ if __name__ == "__main__":
                                     signed_tx = Signed_Transaction(transaction)
                                     public_keys = []
                                     for key in signed_tx.verify(chain=stm.chain_params, recover_parameter=True):
-                                        public_keys.append(format(Base58(key, prefix=stm.prefix), stm.prefix))                            
-                                    
+                                        public_keys.append(format(Base58(key, prefix=stm.prefix), stm.prefix))
+
                                     empty_public_keys = []
                                     for key in public_keys:
                                         pubkey_account = wallet.getAccountFromPublicKey(key)
@@ -227,20 +225,20 @@ if __name__ == "__main__":
                                             key_accounts.append(pubkey_account)
                                 if len(key_accounts) > 0:
                                     vote_did_sign = True
-        
+
                                 for a in key_accounts:
                                     if vote["voter"] == a:
                                         continue
                                     if a not in ["quarry", "steemdunk"]:
                                         print(a)
                                     if a in ["smartsteem", "smartmarket", "minnowbooster"]:
-                                        vote_did_sign = False               
-                                
+                                        vote_did_sign = False
+
                                 if not vote_did_sign:
                                     continue
                             except:
                                 continue
-                        
+
                         if c.is_main_post():
                             if acc_name == "steembasicincome":
                                 rshares = int(vote["rshares"]) * upvote_multiplier
@@ -257,11 +255,11 @@ if __name__ == "__main__":
                                 continue
                             member_data[vote["voter"]]["earned_rshares"] += rshares
                             member_data[vote["voter"]]["curation_rshares"] += rshares
-                            member_data[vote["voter"]]["balance_rshares"] += rshares                            
+                            member_data[vote["voter"]]["balance_rshares"] += rshares
 
-                
-                    
-     
+
+
+
         print("write member database")
         memberStorage.db = dataset.connect(databaseConnector2)
         member_data_list = []
@@ -269,3 +267,7 @@ if __name__ == "__main__":
             member_data_list.append(member_data[m])
         memberStorage.add_batch(member_data_list)
         member_data_list = []
+
+
+if __name__ == "__main__":
+    run()

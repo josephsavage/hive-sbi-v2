@@ -24,8 +24,7 @@ from steembi.member import Member
 import dataset
 
 
-
-if __name__ == "__main__":
+def run():
     config_file = 'config.json'
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing")
@@ -46,11 +45,11 @@ if __name__ == "__main__":
     confStorage = ConfigurationDB(db2)
     accStorage = AccountsDB(db2)
     keyStorage = KeysDB(db2)
-    
+
     accounts = accStorage.get()
-    
+
     conf_setup = confStorage.get()
-    
+
     last_cycle = conf_setup["last_cycle"]
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
@@ -60,16 +59,16 @@ if __name__ == "__main__":
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
     upvote_delay_correction = 18
     member_accounts = memberStorage.get_all_accounts()
-    
+
     nobroadcast = False
     # nobroadcast = True
-    
+
     upvote_counter = {}
-    
+
     for m in member_accounts:
         upvote_counter[m] = 0
-    
-    # print("%d members in list" % len(member_accounts))    
+
+    # print("%d members in list" % len(member_accounts))
     postTrx = PostsTrx(db)
 
     print("Upvote posts/comments")
@@ -96,7 +95,7 @@ if __name__ == "__main__":
         wss = True
         https = True
         normal = True
-        appbase = True        
+        appbase = True
 
     nodes = NodeList()
     # nodes.update_nodes(weights={"block": 1})
@@ -104,7 +103,7 @@ if __name__ == "__main__":
         nodes.update_nodes()
     except:
         print("could not update nodes")
-        
+
     keys = []
     for acc in accounts:
         keys.append(keyStorage.get(acc, "posting"))
@@ -113,13 +112,13 @@ if __name__ == "__main__":
         if k["key_type"] == 'posting':
             keys_list.append(k["wif"].replace("\n", '').replace('\r', ''))
     node_list = nodes.get_nodes(hive=hive_blockchain)
-   
-    stm = Steem(node=node_list, keys=keys_list, num_retries=5, call_num_retries=3, timeout=15, nobroadcast=nobroadcast)      
-    
+
+    stm = Steem(node=node_list, keys=keys_list, num_retries=5, call_num_retries=3, timeout=15, nobroadcast=nobroadcast)
+
     voter_accounts = {}
     for acc in accounts:
-        voter_accounts[acc] = Account(acc, steem_instance=stm)    
-    
+        voter_accounts[acc] = Account(acc, steem_instance=stm)
+
     b = Blockchain(steem_instance = stm)
     # print("reading all authorperm")
     already_voted_posts = []
@@ -176,9 +175,9 @@ if __name__ == "__main__":
         main_post = c.is_main_post()
         already_voted = False
         if c.time_elapsed() > timedelta(hours=156):
-            continue        
+            continue
         voted_after = 300
-            
+
         for v in c.get_votes():
             if v["voter"] in accounts:
                 already_voted = True
@@ -189,7 +188,7 @@ if __name__ == "__main__":
                         voted_after = (v["last_update"] - c["created"]).total_seconds()
                     else:
                         voted_after =300
-                        
+
                 except:
                     voted_after =300
         if already_voted:
@@ -203,7 +202,7 @@ if __name__ == "__main__":
         if member["last_received_vote"] is not None and (datetime.utcnow() - member["last_received_vote"]).total_seconds() / 60 < 15:
             continue
 
-        
+
         if post_list[authorperm]["main_post"] == 0:
             highest_pct = 0
             highest_rshares = 0
@@ -225,9 +224,9 @@ if __name__ == "__main__":
 
             if nobroadcast and voter is not None:
                 print(c["authorperm"])
-                print("Comment Vote %s from %s with %.2f %%" % (author, voter, vote_percentage))            
+                print("Comment Vote %s from %s with %.2f %%" % (author, voter, vote_percentage))
             elif voter is not None:
-                print("Comment Upvote %s from %s with %.2f %%" % (author, voter, vote_percentage)) 
+                print("Comment Upvote %s from %s with %.2f %%" % (author, voter, vote_percentage))
                 vote_sucessfull = False
                 voted_after = 300
                 cnt = 0
@@ -245,7 +244,7 @@ if __name__ == "__main__":
                                     voted_after = (v["time"] - c["created"]).total_seconds()
                                 else:
                                     vote_time = v["last_update"]
-                                    voted_after = (v["last_update"] - c["created"]).total_seconds()                                    
+                                    voted_after = (v["last_update"] - c["created"]).total_seconds()
                     except Exception as e:
                         print(e)
                         time.sleep(6)
@@ -271,7 +270,7 @@ if __name__ == "__main__":
                     highest_pct = mana["current_mana_pct"]
                     current_mana = mana
                     voter = acc
-           
+
             if voter is None:
                 print("Could not find voter for %s" % author)
                 current_mana = {}
@@ -324,10 +323,10 @@ if __name__ == "__main__":
                             cnt += 1
                         if vote_sucessfull:
                             print("Vote for %s at %s was sucessfully" % (author, str(vote_time)))
-                            memberStorage.update_last_vote(author, vote_time)                        
+                            memberStorage.update_last_vote(author, vote_time)
                     rshares_sum += (current_mana["max_mana"] / 50 * current_mana["current_mana_pct"] / 100)
                     rshares -= (current_mana["max_mana"] / 50 * current_mana["current_mana_pct"] / 100)
-                
+
             else:
                 vote_percentage = rshares / (current_mana["max_mana"] / 50 * current_mana["current_mana_pct"] / 100) * 100
                 rshares_sum += current_mana["max_mana"] / 50 * current_mana["current_mana_pct"] / 100
@@ -353,7 +352,7 @@ if __name__ == "__main__":
                                         voted_after = (v["time"] - c["created"]).total_seconds()
                                     else:
                                         vote_time = v["last_update"]
-                                        voted_after = (v["last_update"] - c["created"]).total_seconds()                                        
+                                        voted_after = (v["last_update"] - c["created"]).total_seconds()
                         except Exception as e:
                             print(e)
                             time.sleep(6)
@@ -364,9 +363,11 @@ if __name__ == "__main__":
                     if vote_sucessfull:
                         print("Vote for %s at %s was sucessfully" % (author, str(vote_time)))
                         memberStorage.update_last_vote(author, vote_time)
-                        upvote_counter[author] += 1                    
+                        upvote_counter[author] += 1
                     postTrx.update_voted(author, created, vote_sucessfull, voted_after)
-                    
+
             print("rshares_sum %d" % rshares_sum)
     print("upvote script run %.2f s" % (time.time() - start_prep_time))
-            
+
+if __name__ == "__main__":
+    run()

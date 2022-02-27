@@ -48,18 +48,18 @@ def memo_sp_delegation(transferMemos, memo_transfer_acc, sponsor, shares, sp_sha
 def memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol="STEEM"):
     if "welcome" not in transferMemos:
         return
-    
+
     if transferMemos["welcome"]["enabled"] == 0:
         return
     if memo_transfer_acc is None:
-        return    
+        return
     try:
         memo_text = transferMemos["welcome"]["memo"]
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except:
         print("Could not sent 0.001 %s to %s" % (STEEM_symbol, sponsor))
-    
+
 
 def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="STEEM"):
     if "sponsoring" not in transferMemos:
@@ -67,7 +67,7 @@ def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="
     if transferMemos["sponsoring"]["enabled"] == 0:
         return
     if memo_transfer_acc is None:
-        return    
+        return
     try:
         if "%s" in transferMemos["sponsoring"]["memo"]:
             memo_text = transferMemos["sponsoring"]["memo"] % sponsor
@@ -85,7 +85,7 @@ def memo_update_shares(transferMemos, memo_transfer_acc, sponsor, shares, STEEM_
     if transferMemos["update_shares"]["enabled"] == 0:
         return
     if memo_transfer_acc is None:
-        return    
+        return
     try:
         if "%d" in transferMemos["update_shares"]["memo"]:
             memo_text = transferMemos["update_shares"]["memo"] % shares
@@ -98,13 +98,13 @@ def memo_update_shares(transferMemos, memo_transfer_acc, sponsor, shares, STEEM_
 
 
 def memo_sponsoring_update_shares(transferMemos, memo_transfer_acc, s, sponsor, shares, STEEM_symbol="STEEM"):
-    
+
     if "sponsoring_update_shares" not in transferMemos:
         return
     if transferMemos["sponsoring_update_shares"]["enabled"] == 0:
         return
     if memo_transfer_acc is None:
-        return    
+        return
     try:
         if "%s" in transferMemos["sponsoring_update_shares"]["memo"] and "%d" in transferMemos["sponsoring_update_shares"]["memo"]:
             if transferMemos["sponsoring_update_shares"]["memo"].find("%s") < transferMemos["sponsoring_update_shares"]["memo"].find("%d"):
@@ -118,10 +118,10 @@ def memo_sponsoring_update_shares(transferMemos, memo_transfer_acc, s, sponsor, 
         memo_transfer_acc.transfer(s, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except:
-        print("Could not sent 0.001 %s to %s" % (STEEM_symbol, s))  
+        print("Could not sent 0.001 %s to %s" % (STEEM_symbol, s))
 
 
-if __name__ == "__main__":
+def run():
     config_file = 'config.json'
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
@@ -134,11 +134,11 @@ if __name__ == "__main__":
         databaseConnector2 = config_data["databaseConnector2"]
         mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
-        
+
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)
     db = dataset.connect(databaseConnector)
-    transferStorage = TransferTrx(db)    
+    transferStorage = TransferTrx(db)
     # Create keyStorage
     trxStorage = TrxDB(db2)
     keyStorage = KeysDB(db2)
@@ -151,10 +151,10 @@ if __name__ == "__main__":
 
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
-    other_accounts = accountStorage.get_transfer()     
-    
+    other_accounts = accountStorage.get_transfer()
+
     conf_setup = confStorage.get()
-    
+
     last_cycle = conf_setup["last_cycle"]
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
@@ -167,66 +167,66 @@ if __name__ == "__main__":
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     upvote_multiplier_adjusted = conf_setup["upvote_multiplier_adjusted"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
-    
+
     accountTrx = {}
     for account in accounts:
         if account == "steembasicincome":
             accountTrx["sbi"] = AccountTrx(db, "sbi")
         else:
-            accountTrx[account] = AccountTrx(db, account)    
+            accountTrx[account] = AccountTrx(db, account)
 
-    
-    
+
+
     print("sbi_update_member_db: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
     print("last_paid_post: %s - last_paid_comment: %s" % (formatTimeString(last_paid_post), formatTimeString(last_paid_comment)))
     if last_cycle is None:
         last_cycle = datetime.utcnow() - timedelta(seconds = 60 * 145)
         confStorage.update({"last_cycle": last_cycle})
     elif (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:
-        
-        
+
+
         new_cycle = (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min
         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
-        
-        
+
+
         print("Update member database, new cycle: %s" % str(new_cycle))
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
-        
+
         data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
-        
+
         # Update current node list from @fullnodeupdate
         keys_list = []
         key = keyStorage.get("steembasicincome", "memo")
         if key is not None:
             keys_list.append(key["wif"].replace("\n", '').replace('\r', ''))
-        
+
         memo_transfer_acc = accountStorage.get_transfer_memo_sender()
         if len(memo_transfer_acc) > 0:
             memo_transfer_acc = memo_transfer_acc[0]
         key = keyStorage.get(memo_transfer_acc, "active")
         if key is not None and key["key_type"] == 'active':
-            keys_list.append(key["wif"].replace("\n", '').replace('\r', ''))         
-        
+            keys_list.append(key["wif"].replace("\n", '').replace('\r', ''))
+
         transferMemos = {}
         for db_entry in transferMemosStorage.get_all_data():
             transferMemos[db_entry["memo_type"]] = {"enabled": db_entry["enabled"], "memo": db_entry["memo"]}
-        
+
         #print(key_list)
         nodes = NodeList()
         nodes.update_nodes()
         stm = Steem(keys=keys_list, node=nodes.get_nodes(hive=hive_blockchain))
-        
+
         if memo_transfer_acc is not None:
             try:
                 memo_transfer_acc = Account(memo_transfer_acc, steem_instance=stm)
             except:
                 print("%s is not a valid steem account! Will be able to send transfer memos..." % memo_transfer_acc)
-        
+
         member_data = {}
         n_records = 0
-        share_age_member = {}    
+        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
@@ -241,13 +241,13 @@ if __name__ == "__main__":
             delegation[m] = 0
             delegation_timestamp[m] = None
             member_data[m].reset_share_age_list()
-        
+
         shares_sum = 0
         latest_share = trxStorage.get_lastest_share_type("Mgmt")
         mngt_shares_sum = (latest_share["index"] + 1) / len(mgnt_shares) * 100
         print("mngt_shares sum %d" % mngt_shares_sum)
         latest_data_timestamp = None
-        
+
         for op in data:
             if op["status"] == "Valid":
                 share_type = op["share_type"]
@@ -260,7 +260,7 @@ if __name__ == "__main__":
                 if isinstance(op["timestamp"], str):
                     timestamp = formatTimeString(op["timestamp"])
                 else:
-                    timestamp = op["timestamp"]                
+                    timestamp = op["timestamp"]
                 if share_type.lower() in ["sharetransfer"]:
                     if op["shares"] > 0 and op["sponsor"] in member_data and op["account"] in member_data:
                         if op["shares"] > member_data[op["account"]]["shares"]:
@@ -282,7 +282,7 @@ if __name__ == "__main__":
                 elif share_type.lower() in ["removeddelegation"]:
                     delegation[op["sponsor"]] = 0
                     delegation_timestamp[op["sponsor"]] = None
-                    
+
                 elif share_type.lower() in ["mgmttransfer"]:
                     if op["shares"] > 0 and op["sponsor"] in member_data and op["account"] in member_data:
                         if op["shares"] > member_data[op["account"]]["bonus_shares"]:
@@ -291,10 +291,10 @@ if __name__ == "__main__":
                         member_data[op["sponsor"]]["bonus_shares"] += op["shares"]
 
                         member_data[op["sponsor"]]["latest_enrollment"] = timestamp
-                        member_data[op["sponsor"]].append_share_age(timestamp, op["shares"])                    
-                    
+                        member_data[op["sponsor"]].append_share_age(timestamp, op["shares"])
+
                 elif share_type.lower() in ["mgmt"]:
-             
+
                     if op["shares"] > 0 and op["sponsor"] in member_data:
                         member_data[op["sponsor"]]["bonus_shares"] += op["shares"]
                         member_data[op["sponsor"]].append_share_age(timestamp, op["shares"])
@@ -302,7 +302,7 @@ if __name__ == "__main__":
                     else:
                         member = Member(op["sponsor"], op["shares"], timestamp)
                         member.append_share_age(timestamp, op["shares"])
-                        member_data[op["sponsor"]] = member                        
+                        member_data[op["sponsor"]] = member
                         print("mngt bonus_shares: %s - %d" % (op["sponsor"], op["shares"]))
                 else:
                     sponsor = op["sponsor"]
@@ -316,14 +316,14 @@ if __name__ == "__main__":
                         timestamp = formatTimeString(op["timestamp"])
                     else:
                         timestamp = op["timestamp"]
-        
+
                     if shares == 0:
                         continue
                     shares_sum += shares
                     for s in sponsee:
                         shares_sum += sponsee[s]
                     # if (shares_sum - mngt_shares_sum) >= 100:
-                         
+
                     if sponsor not in member_data:
                         # Build and send transfer with memo to welcome new member
                         memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol=stm.steem_symbol)
@@ -333,10 +333,10 @@ if __name__ == "__main__":
                         member_data[sponsor] = member
                         member_data[sponsor]["balance_rshares"] = (minimum_vote_threshold * comment_vote_divider)
                     else:
-                        
+
                         member_data[sponsor]["latest_enrollment"] = timestamp
                         member_data[sponsor]["shares"] += shares
-                        
+
                         # Build and send transfer with memo about new shares
                         memo_update_shares(transferMemos, memo_transfer_acc, sponsor, member_data[sponsor]["shares"], STEEM_symbol=stm.steem_symbol)
                         member_data[sponsor].append_share_age(timestamp, shares)
@@ -348,7 +348,7 @@ if __name__ == "__main__":
                         if s not in member_data:
                             # Build and send transfer with memo to welcome new sponsered member
                             memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol=stm.steem_symbol)
-                                
+
                             member = Member(s, shares, timestamp)
                             member.append_share_age(timestamp, shares)
                             member_data[s] = member
@@ -377,7 +377,7 @@ if __name__ == "__main__":
                          "status": "Valid", "share_type": "Mgmt"}
                 start_index += 1
                 print(mgmt_data)
-                trxStorage.add(mgmt_data)     
+                trxStorage.add(mgmt_data)
 
         # add bonus_shares from active delegation
         for m in member_data:
@@ -385,9 +385,9 @@ if __name__ == "__main__":
                 member_data[m]["bonus_shares"] += delegation[m]
             if m in delegation_timestamp and delegation_timestamp[m] is not None and m in delegation:
                 member_data[m].append_share_age(delegation_timestamp[m], delegation[m])
-        
+
         print("update share age")
-        
+
         empty_shares = []
         latest_enrollment = None
         for m in member_data:
@@ -401,15 +401,15 @@ if __name__ == "__main__":
                 latest_enrollment = member_data[m]["latest_enrollment"]
             elif latest_enrollment < member_data[m]["latest_enrollment"]:
                 latest_enrollment = member_data[m]["latest_enrollment"]
-        
+
         print("latest data timestamp: %s - latest member enrollment %s" % (str(latest_data_timestamp), str(latest_enrollment)))
-        
+
         # date_now = datetime.utcnow()
         date_now = latest_enrollment
         date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
         date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))
         if new_cycle:
-            
+
             for m in member_data:
                 if member_data[m]["shares"] <= 0:
                     continue
@@ -444,14 +444,14 @@ if __name__ == "__main__":
             if "first_cycle_at" in member_json and member_json["first_cycle_at"] is not None:
                 member_json["first_cycle_at"] = str(member_json["first_cycle_at"])
             if "last_received_vote" in member_json and member_json["last_received_vote"] is not None:
-                member_json["last_received_vote"] = str(member_json["last_received_vote"])            
+                member_json["last_received_vote"] = str(member_json["last_received_vote"])
             member_data_json.append(member_json)
         memberStorage.add_batch(member_data_list)
         member_data_list = []
         with open('/var/www/html/data.json', 'w') as outfile:
-            json.dump(member_data_json, outfile)        
+            json.dump(member_data_json, outfile)
         member_data_json = []
-        
+
         if new_cycle:
             last_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
         print("update last_cycle to %s" % str(last_cycle))
@@ -461,11 +461,11 @@ if __name__ == "__main__":
         else:
             confStorage.update({"last_cycle": last_cycle})
 
-        
+
         # Statistics
         shares = 0
         bonus_shares = 0
-        
+
         delegation_shares = 0
         for m in member_data:
             shares += member_data[m]["shares"]
@@ -475,5 +475,9 @@ if __name__ == "__main__":
         print("shares: %d" % shares)
         print("delegation bonus shares: %d" % delegation_shares)
         print("Mngt bonus shares %d" % (mngt_shares))
-        
+
     print("update member script run %.2f s" % (time.time() - start_prep_time))
+
+
+if __name__ == "__main__":
+    run()
