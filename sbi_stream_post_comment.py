@@ -23,9 +23,7 @@ from steembi.member import Member
 from steembi.version import version as sbiversion
 import dataset
 
-
-
-if __name__ == "__main__":
+def run():
     config_file = 'config.json'
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
@@ -47,44 +45,44 @@ if __name__ == "__main__":
     blacklistStorage = BlacklistDB(db2)
     accStorage = AccountsDB(db2)
     keyStorage = KeysDB(db2)
-    
+
     accounts = accStorage.get()
     other_accounts = accStorage.get_transfer()
-    
+
     blacklist = blacklistStorage.get()
-    
+
     blacklist_tags = []
     for t in blacklist["tags"].split(","):
         blacklist_tags.append(t.strip())
-    
+
     blacklist_apps = []
     for t in blacklist["apps"].split(","):
         blacklist_apps.append(t.strip())
 
     blacklist_body = []
     for t in blacklist["body"].split(","):
-        blacklist_body.append(t.strip())       
-    
+        blacklist_body.append(t.strip())
+
     conf_setup = confStorage.get()
-    
+
     last_cycle = conf_setup["last_cycle"]
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
-    rshares_per_cycle = conf_setup["rshares_per_cycle"]    
+    rshares_per_cycle = conf_setup["rshares_per_cycle"]
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_footer = conf_setup["comment_footer"]
-    
+
     member_accounts = memberStorage.get_all_accounts()
-    print("%d members in list" % len(member_accounts)) 
-    
+    print("%d members in list" % len(member_accounts))
+
     nobroadcast = False
-    # nobroadcast = True    
+    # nobroadcast = True
 
     member_data = {}
     for m in member_accounts:
-        member_data[m] = Member(memberStorage.get(m))    
-    
+        member_data[m] = Member(memberStorage.get(m))
+
     postTrx = PostsTrx(db)
 
     print("stream new posts")
@@ -110,7 +108,7 @@ if __name__ == "__main__":
         wss = True
         https = True
         normal = True
-        appbase = True        
+        appbase = True
 
     nodes = NodeList()
     # nodes.update_nodes(weights={"block": 1})
@@ -118,7 +116,7 @@ if __name__ == "__main__":
         nodes.update_nodes()
     except:
         print("could not update nodes")
-    
+
     keys = []
     account_list = []
     for acc in accounts:
@@ -127,10 +125,10 @@ if __name__ == "__main__":
     keys_list = []
     for k in keys:
         if k["key_type"] == 'posting':
-            keys_list.append(k["wif"].replace("\n", '').replace('\r', ''))    
+            keys_list.append(k["wif"].replace("\n", '').replace('\r', ''))
     node_list = nodes.get_nodes(hive=hive_blockchain)
-    stm = Steem(node=node_list, keys=keys_list, num_retries=5, call_num_retries=3, timeout=15, nobroadcast=nobroadcast) 
-    
+    stm = Steem(node=node_list, keys=keys_list, num_retries=5, call_num_retries=3, timeout=15, nobroadcast=nobroadcast)
+
     b = Blockchain(steem_instance = stm)
     print("deleting old posts")
     postTrx.delete_old_posts(1)
@@ -140,7 +138,7 @@ if __name__ == "__main__":
     start_block = b.get_current_block_num() - int(28800)
     stop_block = b.get_current_block_num()
     last_block_print = start_block
-    
+
     latest_update = postTrx.get_latest_post()
     latest_block = postTrx.get_latest_block()
     if latest_block is not None and latest_block > start_block:
@@ -152,7 +150,7 @@ if __name__ == "__main__":
     else:
         latest_update_block = start_block
     print("latest update %s - %d to %d" % (str(latest_update), latest_update_block, stop_block))
-    
+
     start_block = max([latest_update_block, start_block]) + 1
     if stop_block > start_block + 6000:
         stop_block = start_block + 6000
@@ -201,13 +199,13 @@ if __name__ == "__main__":
             member_data[ops["author"]]["last_comment"] = c["created"]
             status_command = c.body.find("!sbi status")
             if status_command > -1 and abs((ops["timestamp"] - c["created"]).total_seconds()) <= 10:
-                
+
                 rshares_denom = member_data[ops["author"]]["rewarded_rshares"] + member_data[ops["author"]]["balance_rshares"]
-                
-                
+
+
                 reply_body = "Hi @%s!\n\n" % ops["author"]
                 reply_body += "* you have %d units and %d bonus units\n" % (member_data[ops["author"]]["shares"], member_data[ops["author"]]["bonus_shares"])
-                reply_body += "* your rshares balance is %d or %.3f $\n" % (member_data[ops["author"]]["balance_rshares"], stm.rshares_to_sbd(member_data[ops["author"]]["balance_rshares"])) 
+                reply_body += "* your rshares balance is %d or %.3f $\n" % (member_data[ops["author"]]["balance_rshares"], stm.rshares_to_sbd(member_data[ops["author"]]["balance_rshares"]))
                 if member_data[ops["author"]]["comment_upvote"] == 0:
                     rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
                     if rshares > minimum_vote_threshold:
@@ -232,7 +230,7 @@ if __name__ == "__main__":
                 if len(comment_footer) > 0:
                     reply_body += "<br>\n"
                     reply_body += comment_footer
-                    
+
                 account_name = account_list[random.randint(0, len(account_list) - 1)]
                 try:
                     stm.post("", reply_body, app="steembasicincome/%s" % sbiversion, author=account_name, reply_identifier=c.identifier)
@@ -240,14 +238,14 @@ if __name__ == "__main__":
                     time.sleep(4)
                 except:
                     continue
-            
-                
+
+
         already_voted = False
-    
+
         #for v in c["active_votes"]:
         #    if v["voter"] in accounts:
         #        already_voted = True
-                  
+
         dt_created = c["created"]
         dt_created = dt_created.replace(tzinfo=None)
         skip = False
@@ -272,19 +270,19 @@ if __name__ == "__main__":
         for s in blacklist_body:
             if c.body.find(s) > -1:
                 skip = True
-        
+
         vote_delay = member_data[ops["author"]]["upvote_delay"]
         if vote_delay is None:
             vote_delay = 300
         posts_dict[authorperm] = {"authorperm": authorperm, "author": ops["author"], "created": dt_created, "block": ops["block_num"], "main_post": main_post,
                      "voted": already_voted, "skip": skip, "vote_delay": vote_delay}
-        
+
         if len(posts_dict) > 100:
             start_time = time.time()
             postTrx.add_batch(posts_dict)
             print("Adding %d post took %.2f seconds" % (len(posts_dict), time.time() - start_time))
             posts_dict = {}
-            
+
 
         cnt += 1
 
@@ -292,7 +290,7 @@ if __name__ == "__main__":
     member_data_list = []
     for m in changed_member_data:
         member_data_list.append(member_data[m])
-        
+
     db2 = dataset.connect(databaseConnector2)
     memberStorage = MemberDB(db2)
     memberStorage.add_batch(member_data_list)
@@ -301,6 +299,9 @@ if __name__ == "__main__":
         start_time = time.time()
         postTrx.add_batch(posts_dict)
         print("Adding %d post took %.2f seconds" % (len(posts_dict), time.time() - start_time))
-        posts_dict = {}        
+        posts_dict = {}
 
     print("stream posts script run %.2f s" % (time.time() - start_prep_time))
+
+if __name__ == "__main__":
+    run()

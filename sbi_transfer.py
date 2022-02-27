@@ -17,7 +17,7 @@ from datetime import datetime
 from steembi.member import Member
     
 
-if __name__ == "__main__":
+def run():
     config_file = 'config.json'
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
@@ -158,3 +158,6 @@ if __name__ == "__main__":
     
     
         print("transfer script run %.2f s" % (time.time() - start_prep_time))
+
+if __name__ == "__main__":
+    run()
