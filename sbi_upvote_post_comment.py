@@ -174,7 +174,7 @@ def run():
             continue
         main_post = c.is_main_post()
         already_voted = False
-        if c.time_elapsed() > timedelta(hours=156):
+        if c.time_elapsed() > timedelta(hours=24):
             continue
         voted_after = 300
 
