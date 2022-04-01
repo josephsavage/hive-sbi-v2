@@ -16,7 +16,7 @@ from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB
 
 
 def calculate_shares(delegation_shares, sp_share_ratio):
-    return int(delegation_account[acc] / sp_share_ratio)
+    return int(delegation_shares / sp_share_ratio)
 
 def run():
     config_file = 'config.json'
