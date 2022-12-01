@@ -233,7 +233,7 @@ def run():
                 vote_time = None
                 while not vote_sucessfull and cnt < 5:
                     try:
-                        if voter.has_voted(c) is False:
+                        if not Account(voter).has_voted(c):
                             c.upvote(vote_percentage, voter=voter)
                             time.sleep(6)
                             c.refresh()
