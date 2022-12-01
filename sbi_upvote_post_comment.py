@@ -305,16 +305,17 @@ def run():
                         vote_time = None
                         while not vote_sucessfull and cnt < 5:
                             try:
-                                c.upvote(vote_percentage, voter=voter)
-                                time.sleep(6)
-                                c.refresh()
-                                for v in c.get_votes():
-                                    if voter == v["voter"]:
-                                        vote_sucessfull = True
-                                        if "time" in v:
-                                            vote_time = v["time"]
-                                        else:
-                                            vote_time = v["last_update"]
+                                if not Account(voter).has_voted(c):
+                                    c.upvote(vote_percentage, voter=voter)
+                                    time.sleep(6)
+                                    c.refresh()
+                                    for v in c.get_votes():
+                                        if voter == v["voter"]:
+                                            vote_sucessfull = True
+                                            if "time" in v:
+                                                vote_time = v["time"]
+                                            else:
+                                                vote_time = v["last_update"]
                             except Exception as e:
                                 print(e)
                                 time.sleep(6)
@@ -342,18 +343,19 @@ def run():
                     vote_time = None
                     while not vote_sucessfull and cnt < 5:
                         try:
-                            c.upvote(vote_percentage, voter=voter)
-                            time.sleep(6)
-                            c.refresh()
-                            for v in c.get_votes():
-                                if voter == v["voter"]:
-                                    vote_sucessfull = True
-                                    if "time" in v:
-                                        vote_time = v["time"]
-                                        voted_after = (v["time"] - c["created"]).total_seconds()
-                                    else:
-                                        vote_time = v["last_update"]
-                                        voted_after = (v["last_update"] - c["created"]).total_seconds()
+                            if not Account(voter).has_voted(c):
+                                c.upvote(vote_percentage, voter=voter)
+                                time.sleep(6)
+                                c.refresh()
+                                for v in c.get_votes():
+                                    if voter == v["voter"]:
+                                        vote_sucessfull = True
+                                        if "time" in v:
+                                            vote_time = v["time"]
+                                            voted_after = (v["time"] - c["created"]).total_seconds()
+                                        else:
+                                            vote_time = v["last_update"]
+                                            voted_after = (v["last_update"] - c["created"]).total_seconds()
                         except Exception as e:
                             print(e)
                             time.sleep(6)
