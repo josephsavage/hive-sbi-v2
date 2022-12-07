@@ -8,7 +8,7 @@ beempy updatenodes --hive
 /usr/local/bin/python3.6 -u /root/steembasicincome/sbi_update_member_db.py
 
 /usr/local/bin/python3.6 -u /root/steembasicincome/sbi_store_member_hist.py
-/usr/local/bin/python3.6 -u /root/steembasicincome/sbi_upvote_post_comment.py
+#/usr/local/bin/python3.6 -u /root/steembasicincome/sbi_upvote_post_comment.py
 
 /usr/local/bin/python3.6 -u /root/steembasicincome/sbi_stream_post_comment.py
 
