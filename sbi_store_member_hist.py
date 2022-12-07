@@ -112,8 +112,8 @@ def run():
         trx_id_list = []
     else:
         trx_id_list = accountTrx.get_block_trx_id(start_block)
-    # end_block = current_block["id"]
-    end_block = current_block["id"] - (20 * 10)
+    end_block = current_block["id"]
+    # end_block = current_block["id"] - (20 * 10)
     if end_block > start_block + 6000:
         end_block = start_block + 6000
 
