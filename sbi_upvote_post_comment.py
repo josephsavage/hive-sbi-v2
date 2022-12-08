@@ -233,7 +233,8 @@ def run():
                 vote_time = None
                 while not vote_sucessfull and cnt < 5:
                     try:
-                        if not Account(voter).has_voted(c):
+                        if all(v not in accounts for v in c["active_votes"]):
+                        #if not Account(voter).has_voted(c):
                             c.upvote(vote_percentage, voter=voter)
                             time.sleep(6)
                             c.refresh()
@@ -305,7 +306,8 @@ def run():
                         vote_time = None
                         while not vote_sucessfull and cnt < 5:
                             try:
-                                if not Account(voter).has_voted(c):
+                                if all(v not in accounts for v in c["active_votes"]):
+                                #if not Account(voter).has_voted(c):
                                     c.upvote(vote_percentage, voter=voter)
                                     time.sleep(6)
                                     c.refresh()
@@ -343,7 +345,8 @@ def run():
                     vote_time = None
                     while not vote_sucessfull and cnt < 5:
                         try:
-                            if not Account(voter).has_voted(c):
+                            if all(v not in accounts for v in c["active_votes"]):
+                            #if not Account(voter).has_voted(c):
                                 c.upvote(vote_percentage, voter=voter)
                                 time.sleep(6)
                                 c.refresh()
