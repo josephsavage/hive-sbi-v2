@@ -249,7 +249,7 @@ def run():
         dt_created = c["created"]
         dt_created = dt_created.replace(tzinfo=None)
         skip = False
-        if "tags" in c and c["tags"] is not None:
+        if "tags" in c and c["tags"] is not None and type(c["tags"]) == type([]): #ensure that tags is an array
             for tag in c["tags"]:
                 if tag is not None and isinstance(tag, str) and tag.lower() in blacklist_tags:
                     skip = True
