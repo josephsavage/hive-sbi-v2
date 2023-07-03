@@ -136,7 +136,7 @@ def run():
     already_voted_posts = []
     flagged_posts = []
     start_block = b.get_current_block_num() - int(28800)
-    stop_block = b.get_current_block_num()
+    stop_block = b.get_current_block_num() - int(1)
     last_block_print = start_block
 
     latest_update = postTrx.get_latest_post()
