@@ -21,7 +21,7 @@ VERSION = '0.1.2'
 tests_require = ['mock >= 2.0.0', 'pytest', 'pytest-mock', 'parameterized']
 
 requires = [
-    "nectar",
+    "hive-nectar",
     "dataset",
     "mysqlclient"
 ]
