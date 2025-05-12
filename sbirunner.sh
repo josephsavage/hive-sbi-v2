@@ -1,5 +1,5 @@
 #!/bin/bash
-beempy updatenodes --hive
+hive-nectar updatenodes --hive
 
 /usr/local/bin/python3.6 -u /root/steembasicincome/sbi_store_ops_db.py
 /usr/local/bin/python3.6 -u /root/steembasicincome/sbi_transfer.py

@@ -1,10 +1,10 @@
-from beem.account import Account
-from beem.amount import Amount
-from beem import Steem
-from beem.instance import set_shared_steem_instance
-from beem.nodelist import NodeList
-from beem.blockchain import Blockchain
-from beem.utils import formatTimeString, addTzInfo
+from nectar.account import Account
+from nectar.amount import Amount
+from nectar import Steem
+from nectar.instance import set_shared_steem_instance
+from nectar.nodelist import NodeList
+from nectar.blockchain import Blockchain
+from nectar.utils import formatTimeString, addTzInfo
 from datetime import datetime
 import re
 import os

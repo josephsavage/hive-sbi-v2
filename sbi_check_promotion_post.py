@@ -1,16 +1,16 @@
-from beem.account import Account
-from beem.amount import Amount
-from beem import Steem
-from beem.instance import set_shared_steem_instance
-from beem.nodelist import NodeList
-from beem.utils import addTzInfo, resolve_authorperm, formatTimeString
-from beem.vote import AccountVotes
-from beem.comment import Comment
-from beem.block import Block
-from beem.blockchain import Blockchain
-from beem.wallet import Wallet
-from beembase.signedtransactions import Signed_Transaction
-from beemgraphenebase.base58 import Base58
+from nectar.account import Account
+from nectar.amount import Amount
+from nectar import Steem
+from nectar.instance import set_shared_steem_instance
+from nectar.nodelist import NodeList
+from nectar.utils import addTzInfo, resolve_authorperm, formatTimeString
+from nectar.vote import AccountVotes
+from nectar.comment import Comment
+from nectar.block import Block
+from nectar.blockchain import Blockchain
+from nectar.wallet import Wallet
+from nectarbase.signedtransactions import Signed_Transaction
+from nectargraphenebase.base58 import Base58
 from datetime import datetime, timedelta
 import re
 import json
