@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Packaging logic for beem."""
+"""Packaging logic for nectar."""
 import codecs
 import io
 import os
@@ -21,7 +21,7 @@ VERSION = '0.1.2'
 tests_require = ['mock >= 2.0.0', 'pytest', 'pytest-mock', 'parameterized']
 
 requires = [
-    "beem",
+    "hive-nectar",
     "dataset",
     "mysqlclient"
 ]
@@ -29,7 +29,7 @@ requires = [
 
 def write_version_py(filename):
     """Write version."""
-    cnt = """\"""THIS FILE IS GENERATED FROM beem SETUP.PY.\"""
+    cnt = """\"""THIS FILE IS GENERATED FROM nectar SETUP.PY.\"""
 version = '%(version)s'
 """
     with open(filename, 'w') as a:

@@ -1,12 +1,12 @@
-from beem.account import Account
-from beem.comment import Comment
-from beem.vote import ActiveVotes
-from beem.amount import Amount
-from beem import Steem
-from beem.instance import set_shared_steem_instance
-from beem.nodelist import NodeList
-from beem.memo import Memo
-from beem.utils import addTzInfo, resolve_authorperm, formatTimeString, construct_authorperm
+from nectar.account import Account
+from nectar.comment import Comment
+from nectar.vote import ActiveVotes
+from nectar.amount import Amount
+from nectar import Steem
+from nectar.instance import set_shared_steem_instance
+from nectar.nodelist import NodeList
+from nectar.memo import Memo
+from nectar.utils import addTzInfo, resolve_authorperm, formatTimeString, construct_authorperm
 from datetime import datetime, timedelta
 import requests
 import re

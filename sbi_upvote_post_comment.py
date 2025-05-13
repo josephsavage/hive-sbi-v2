@@ -1,13 +1,13 @@
-from beem.utils import formatTimeString, resolve_authorperm, construct_authorperm, addTzInfo
-from beem.nodelist import NodeList
-from beem.comment import Comment
-from beem import Hive
-from beem import Steem
+from nectar.utils import formatTimeString, resolve_authorperm, construct_authorperm, addTzInfo
+from nectar.nodelist import NodeList
+from nectar.comment import Comment
+from nectar import Hive
+from nectar import Steem
 from datetime import datetime, timedelta
-from beem.instance import set_shared_steem_instance
-from beem.blockchain import Blockchain
-from beem.account import Account
-from beem.vote import Vote
+from nectar.instance import set_shared_steem_instance
+from nectar.blockchain import Blockchain
+from nectar.account import Account
+from nectar.vote import Vote
 import time 
 import json
 import os
@@ -15,7 +15,7 @@ import math
 import dataset
 from datetime import date, datetime, timedelta
 from dateutil.parser import parse
-from beem.constants import HIVE_100_PERCENT, STEEM_100_PERCENT
+from nectar.constants import HIVE_100_PERCENT, STEEM_100_PERCENT
 from steembi.transfer_ops_storage import TransferTrx, AccountTrx, PostsTrx
 from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB, KeysDB
 from steembi.parse_hist_op import ParseAccountHist

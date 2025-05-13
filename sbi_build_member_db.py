@@ -1,9 +1,9 @@
-from beem.account import Account
-from beem.amount import Amount
-from beem import Steem
-from beem.instance import set_shared_steem_instance
-from beem.nodelist import NodeList
-from beem.utils import formatTimeString
+from nectar.account import Account
+from nectar.amount import Amount
+from nectar import Steem
+from nectar.instance import set_shared_steem_instance
+from nectar.nodelist import NodeList
+from nectar.utils import formatTimeString
 import re
 import json
 import os

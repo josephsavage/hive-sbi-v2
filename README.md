@@ -12,7 +12,7 @@ apt-get install libmariadbclient-dev
 ```
 
 ```
-pip3 install beem dataset  mysqlclient
+pip3 install hive-nectar dataset  mysqlclient
 ```
 
 Compile and install steembi, the helper library for all steembasicincome scripts

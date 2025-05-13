@@ -1,8 +1,8 @@
-from beem.account import Account
-from beem.amount import Amount
-from beem import Steem
-from beem.instance import set_shared_steem_instance
-from beem.nodelist import NodeList
+from nectar.account import Account
+from nectar.amount import Amount
+from nectar import Steem
+from nectar.instance import set_shared_steem_instance
+from nectar.nodelist import NodeList
 import re
 import os
 import dataset
