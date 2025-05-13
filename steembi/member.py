@@ -1,14 +1,8 @@
 # This Python file uses the following encoding: utf-8
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
 from builtins import bytes, int, str
-from future.utils import python_2_unicode_compatible
 from datetime import datetime, timedelta
 
 
-@python_2_unicode_compatible
 class Member(dict):
     def __init__(self, account, shares=0, timestamp=None):
         if isinstance(account, dict):
