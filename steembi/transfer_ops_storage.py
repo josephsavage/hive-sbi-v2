@@ -5,7 +5,6 @@ from __future__ import print_function
 from __future__ import unicode_literals
 from builtins import bytes
 from builtins import object
-from beemgraphenebase.py23 import py23_bytes, bytes_types
 import shutil
 import time
 import os
