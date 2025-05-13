@@ -12,13 +12,13 @@ import math
 import random
 import logging
 from bisect import bisect_left
-from beem.utils import formatTimeString, formatTimedelta, remove_from_dict, reputation_to_score, addTzInfo, parse_time
-from beem.amount import Amount
-from beem.account import Account
-from beem.vote import Vote
-from beem.instance import shared_steem_instance
-from beem.blockchain import Blockchain
-from beem.constants import STEEM_VOTE_REGENERATION_SECONDS, STEEM_1_PERCENT, STEEM_100_PERCENT
+from nectar.utils import formatTimeString, formatTimedelta, remove_from_dict, reputation_to_score, addTzInfo, parse_time
+from nectar.amount import Amount
+from nectar.account import Account
+from nectar.vote import Vote
+from nectar.instance import shared_steem_instance
+from nectar.blockchain import Blockchain
+from nectar.constants import STEEM_VOTE_REGENERATION_SECONDS, STEEM_1_PERCENT, STEEM_100_PERCENT
 
 log = logging.getLogger(__name__)
 
