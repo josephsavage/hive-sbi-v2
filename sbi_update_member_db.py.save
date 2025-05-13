@@ -100,14 +100,14 @@ if __name__ == "__main__":
 
     
     
-    print("sbi_update_member_db: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+    print("sbi_update_member_db: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
     if last_cycle is None:
-        last_cycle = datetime.utcnow() - timedelta(seconds = 60 * 145)
+        last_cycle = datetime.now(timezone.utc) - timedelta(seconds = 60 * 145)
         confStorage.update({"last_cycle": last_cycle})
     elif False: # doing same maintanence
         data = trxStorage.get_all_data()
-        data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
-        # data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
+        data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
+        # data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
         key_list = []
         key = keyStorage.get("steembasicincome", "memo")
         if key is not None:
@@ -432,10 +432,10 @@ if __name__ == "__main__":
                 trxStorage.update_delegation_state(account, acc, "Delegation", 
                                                   "DelegationLeased")
                             
-    elif (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:
+    elif (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
         
         
-        new_cycle = (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min
+        new_cycle = (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
         
         
@@ -444,7 +444,7 @@ if __name__ == "__main__":
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
         
-        data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
+        data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
         
         # Update current node list from @fullnodeupdate
         key_list = []
@@ -660,7 +660,7 @@ if __name__ == "__main__":
         # for del_acc in empty_shares:
         #    del member_data[del_acc]
     
-        # date_now = datetime.utcnow()
+        # date_now = datetime.now(timezone.utc)
         date_now = latest_enrollment
         date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
         date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))

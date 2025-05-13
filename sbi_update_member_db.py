@@ -1,25 +1,29 @@
-from nectar.account import Account
-from nectar.comment import Comment
-from nectar.vote import ActiveVotes
-from nectar.amount import Amount
-from nectar import Steem
-from nectar.instance import set_shared_steem_instance
-from nectar.nodelist import NodeList
-from nectar.memo import Memo
-from nectar.utils import addTzInfo, resolve_authorperm, formatTimeString, construct_authorperm
-from datetime import datetime, timedelta
-import requests
-import re
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from time import sleep
+
 import dataset
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, KeysDB, TransactionMemoDB, AccountsDB, TransferMemoDB
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB
-from steembi.memo_parser import MemoParser
+from nectar import Steem
+from nectar.account import Account
+from nectar.nodelist import NodeList
+from nectar.utils import (
+    addTzInfo,
+    formatTimeString,
+)
+
 from steembi.member import Member
+from steembi.storage import (
+    AccountsDB,
+    ConfigurationDB,
+    KeysDB,
+    MemberDB,
+    TransactionMemoDB,
+    TransferMemoDB,
+    TrxDB,
+)
+from steembi.transfer_ops_storage import AccountTrx, TransferTrx
 
 
 def memo_sp_delegation(transferMemos, memo_transfer_acc, sponsor, shares, sp_share_ratio, STEEM_symbol="STEEM"):
@@ -41,7 +45,7 @@ def memo_sp_delegation(transferMemos, memo_transfer_acc, sponsor, shares, sp_sha
             memo_text = transferMemos["sp_delegation"]["memo"]
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
-    except:
+    except Exception:
         print("Could not sent 0.001 %s to %s" % (STEEM_symbol, sponsor))
 
 
@@ -57,7 +61,7 @@ def memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol="STEEM"
         memo_text = transferMemos["welcome"]["memo"]
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
-    except:
+    except Exception:
         print("Could not sent 0.001 %s to %s" % (STEEM_symbol, sponsor))
 
 
@@ -75,7 +79,7 @@ def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="
             memo_text = transferMemos["sponsoring"]["memo"]
         memo_transfer_acc.transfer(s, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
-    except:
+    except Exception:
         print("Could not sent 0.001 %s to %s" % (STEEM_symbol, s))
 
 
@@ -93,7 +97,7 @@ def memo_update_shares(transferMemos, memo_transfer_acc, sponsor, shares, STEEM_
             memo_text = transferMemos["update_shares"]["memo"]
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
-    except:
+    except Exception:
         print("Could not sent 0.001 %s to %s" % (STEEM_symbol, sponsor))
 
 
@@ -117,7 +121,7 @@ def memo_sponsoring_update_shares(transferMemos, memo_transfer_acc, s, sponsor, 
             memo_text = transferMemos["sponsoring_update_shares"]["memo"]
         memo_transfer_acc.transfer(s, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
-    except:
+    except Exception:
         print("Could not sent 0.001 %s to %s" % (STEEM_symbol, s))
 
 
@@ -177,15 +181,15 @@ def run():
 
 
 
-    print("sbi_update_member_db: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+    print("sbi_update_member_db: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
     print("last_paid_post: %s - last_paid_comment: %s" % (formatTimeString(last_paid_post), formatTimeString(last_paid_comment)))
     if last_cycle is None:
-        last_cycle = datetime.utcnow() - timedelta(seconds = 60 * 145)
+        last_cycle = datetime.now(timezone.utc) - timedelta(seconds = 60 * 145)
         confStorage.update({"last_cycle": last_cycle})
-    elif (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:
+    elif (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
 
 
-        new_cycle = (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min
+        new_cycle = (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
 
 
@@ -194,7 +198,7 @@ def run():
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
 
-        data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
+        data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
 
         # Update current node list from @fullnodeupdate
         keys_list = []
@@ -308,7 +312,7 @@ def run():
                     sponsor = op["sponsor"]
                     try:
                         sponsee = json.loads(op["sponsee"].replace('""', '"'))
-                    except:
+                    except Exception:
                         continue
                     shares = op["shares"]
                     share_age = 0
@@ -404,7 +408,7 @@ def run():
 
         print("latest data timestamp: %s - latest member enrollment %s" % (str(latest_data_timestamp), str(latest_enrollment)))
 
-        # date_now = datetime.utcnow()
+        # date_now = datetime.now(timezone.utc)
         date_now = latest_enrollment
         date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
         date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))

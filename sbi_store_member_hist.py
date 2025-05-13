@@ -1,22 +1,21 @@
-from nectar.account import Account
-from nectar.amount import Amount
-from nectar.comment import Comment
+import json
+import os
+import time
+from datetime import datetime, timedelta, timezone
+
+import dataset
 from nectar import Steem
+from nectar.blockchain import Blockchain
+from nectar.comment import Comment
 from nectar.instance import set_shared_steem_instance
 from nectar.nodelist import NodeList
-from nectar.blockchain import Blockchain
+from nectar.utils import addTzInfo, construct_authorperm, formatTimeString
 from nectar.vote import Vote
-from nectar.utils import formatTimeString, addTzInfo, construct_authorperm
-from datetime import datetime, timedelta
-import re
-import time
-import os
-import json
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB, CurationOptimizationTrx
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB
+
 from steembi.member import Member
-import dataset
-from steembi.memo_parser import MemoParser
+from steembi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
+from steembi.transfer_ops_storage import CurationOptimizationTrx, MemberHistDB
+
 
 def run():
     config_file = 'config.json'
@@ -84,7 +83,7 @@ def run():
     # nodes.update_nodes(weights={"hist": 1})
     try:
         nodes.update_nodes()
-    except:
+    except Exception:
         print("could not update nodes")
 
     node_list = nodes.get_nodes(hive=hive_blockchain)
@@ -119,7 +118,7 @@ def run():
 
     print("Checking member upvotes from %d to %d" % (start_block, end_block))
 
-    date_now = datetime.utcnow()
+    date_now = datetime.now(timezone.utc)
     date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
     date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))
     date_72h_before = addTzInfo(date_now - timedelta(seconds=72 * 60 * 60))
@@ -158,9 +157,9 @@ def run():
             if op["author"] not in member_accounts:
                 continue
             try:
-                c = Comment(op, use_tags_api=True, steem_instance=stm)
+                c = Comment(op, steem_instance=stm)
                 c.refresh()
-            except:
+            except Exception:
                 continue
             main_post = c.is_main_post()
             comment_cnt += 1
@@ -204,7 +203,7 @@ def run():
                         performance = (float(curation_SBD) / vote_SBD * 100)
                     else:
                         performance = 0
-                except:
+                except Exception:
                     performance = 0
                     curation_rewards_SBD = None
 
@@ -235,7 +234,7 @@ def run():
                 updated_member_data.append(member_data[op["author"]])
 
                 curation_data = {"authorperm": authorperm, "member": op["author"], "created": c["created"], "best_time_delay": best_time_delay, "best_curation_performance": best_performance,
-                                 "vote_rshares": int(vote["rshares"]), "updated": datetime.utcnow(), "vote_delay": ((op["timestamp"]) - c["created"]).total_seconds(),
+                                 "vote_rshares": int(vote["rshares"]), "updated": datetime.now(timezone.utc), "vote_delay": ((op["timestamp"]) - c["created"]).total_seconds(),
                                  "performance": performance}
                 curation_vote_list.append(curation_data)
             data["permlink"] = op["permlink"]

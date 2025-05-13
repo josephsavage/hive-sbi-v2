@@ -1,27 +1,17 @@
-from nectar.utils import formatTimeString, resolve_authorperm, construct_authorperm, addTzInfo
+from nectar.utils import construct_authorperm
 from nectar.nodelist import NodeList
 from nectar.comment import Comment
 from nectar import Steem
-from nectar import Hive
-from datetime import datetime, timedelta
-from nectar.instance import set_shared_steem_instance
 from nectar.blockchain import Blockchain
 import time 
 import json
 import os
-import math
 import dataset
 import random
-from datetime import date, datetime, timedelta
-from dateutil.parser import parse
-from nectar.constants import STEEM_100_PERCENT, HIVE_100_PERCENT 
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, PostsTrx
+from steembi.transfer_ops_storage import PostsTrx
 from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB, KeysDB, BlacklistDB
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.memo_parser import MemoParser
 from steembi.member import Member
 from steembi.version import version as sbiversion
-import dataset
 
 def run():
     config_file = 'config.json'
@@ -114,7 +104,7 @@ def run():
     # nodes.update_nodes(weights={"block": 1})
     try:
         nodes.update_nodes()
-    except:
+    except Exception:
         print("could not update nodes")
 
     keys = []
@@ -173,14 +163,12 @@ def run():
         authorperm = construct_authorperm(ops)
         c = None
         cnt = 0
-        use_tags_api=True
         while c is None and cnt < 5:
             cnt += 1
             try:
-                c = Comment(authorperm, use_tags_api=use_tags_api, steem_instance=stm)
-            except:
+                c = Comment(authorperm, steem_instance=stm)
+            except Exception:
                 c = None
-                use_tags_api = False
                 continue
         if c is None:
             continue
@@ -236,7 +224,7 @@ def run():
                     stm.post("", reply_body, app="steembasicincome/%s" % sbiversion, author=account_name, reply_identifier=c.identifier)
                     # c.reply(reply_body, author=account_name)
                     time.sleep(4)
-                except:
+                except Exception:
                     continue
 
 
@@ -249,7 +237,7 @@ def run():
         dt_created = c["created"]
         dt_created = dt_created.replace(tzinfo=None)
         skip = False
-        if "tags" in c and c["tags"] is not None and type(c["tags"]) == type([]): #ensure that tags is an array
+        if "tags" in c and c["tags"] is not None and isinstance(c["tags"], list): #ensure that tags is an array
             for tag in c["tags"]:
                 if tag is not None and isinstance(tag, str) and tag.lower() in blacklist_tags:
                     skip = True
@@ -257,7 +245,7 @@ def run():
         if isinstance(json_metadata, str):
             try:
                 json_metadata = json.loads(json_metadata)
-            except:
+            except Exception:
                 json_metadata = {}
         if "app" in json_metadata:
             app = json_metadata["app"]

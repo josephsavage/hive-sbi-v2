@@ -1,25 +1,30 @@
-from nectar.account import Account
-from nectar.comment import Comment
-from nectar.vote import ActiveVotes
-from nectar.amount import Amount
-from nectar import Steem
-from nectar.instance import set_shared_steem_instance
-from nectar.nodelist import NodeList
-from nectar.memo import Memo
-from nectar.utils import addTzInfo, resolve_authorperm, formatTimeString, construct_authorperm
-from datetime import datetime, timedelta
-import requests
-import re
 import json
 import os
 import time
-from time import sleep
+from datetime import datetime, timedelta, timezone
+
 import dataset
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, KeysDB, TransactionMemoDB, AccountsDB, TransferMemoDB
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB
-from steembi.memo_parser import MemoParser
+from nectar import Steem
+from nectar.account import Account
+from nectar.comment import Comment
+from nectar.nodelist import NodeList
+from nectar.utils import (
+    addTzInfo,
+    formatTimeString,
+)
+from nectar.vote import ActiveVotes
+
 from steembi.member import Member
+from steembi.storage import (
+    AccountsDB,
+    ConfigurationDB,
+    KeysDB,
+    MemberDB,
+    TransactionMemoDB,
+    TransferMemoDB,
+    TrxDB,
+)
+from steembi.transfer_ops_storage import AccountTrx, TransferTrx
 
 
 def increment_rshares(member_data, vote, rshares):
@@ -52,14 +57,14 @@ def update_account(account, new_paid_post, new_paid_comment):
         try:
             comment = (json.loads(op["op_dict"]))
             created = formatTimeString(comment["timestamp"])
-        except:
+        except Exception:
             op_dict = op["op_dict"]
             comment = json.loads(op_dict[:op_dict.find("body") - 3] + '}')
         try:
             comment = Comment(comment, steem_instance=stm)
             comment.refresh()
             created = comment["created"]
-        except:
+        except Exception:
             continue
         if comment.is_pending():
             continue
@@ -175,13 +180,13 @@ def run():
             accountTrx[account] = AccountTrx(db, account)
 
     print("sbi_update_curation_rshares: last_cycle: %s - %.2f min" % (
-        formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+        formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
     print("last_paid_post: %s - last_paid_comment: %s" % (
         formatTimeString(last_paid_post), formatTimeString(last_paid_comment)))
 
-    if (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:
+    if (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
 
-        new_cycle = (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min
+        new_cycle = (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
 
         print("Update member database, new cycle: %s" % str(new_cycle))
@@ -209,8 +214,8 @@ def run():
             new_paid_post = last_paid_post
             if last_paid_comment is None:
                 last_paid_comment = datetime(2018, 8, 9, 3, 36, 48)
-            # elif (datetime.utcnow() - last_paid_comment).total_seconds() / 60 / 60 / 24 < 6.5:
-            #    last_paid_comment = datetime.utcnow() - timedelta(days=7)
+            # elif (datetime.now(timezone.utc) - last_paid_comment).total_seconds() / 60 / 60 / 24 < 6.5:
+            #    last_paid_comment = datetime.now(timezone.utc) - timedelta(days=7)
             new_paid_comment = last_paid_comment
 
             for account in accounts:

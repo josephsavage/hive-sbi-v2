@@ -1,18 +1,12 @@
-from nectar.account import Account
-from nectar.amount import Amount
-from nectar import Steem
-from nectar.instance import set_shared_steem_instance
-from nectar.nodelist import NodeList
-from nectar.utils import formatTimeString
-import re
 import json
 import os
-from time import sleep
-import dataset
-import json
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB
 
+import dataset
+from nectar import Steem
+from nectar.account import Account
+from nectar.nodelist import NodeList
+
+from steembi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
 
 if __name__ == "__main__":
     config_file = 'config.json'
@@ -41,7 +35,7 @@ if __name__ == "__main__":
     nodes = NodeList()
     try:
         nodes.update_nodes()
-    except:
+    except Exception:
         print("could not update nodes")    
     stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))    
 
@@ -65,12 +59,12 @@ if __name__ == "__main__":
                 continue
             cnt += 1
             if cnt % 100 == 0:
-                print("%d/%d scanned" % ())
+                print("%d/%d scanned" % (cnt, len(member_accounts)))
             try:
                 acc = Account(m, steem_instance=stm)
             except KeyboardInterrupt:
                 aborted = True
-            except:
+            except Exception:
                 print("%s is not a valid account" % m)
                 missing_accounts.append(m)
     
