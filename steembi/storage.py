@@ -1,10 +1,5 @@
 # This Python file uses the following encoding: utf-8
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-from builtins import bytes
-from builtins import object
+
 import shutil
 import time
 import os
