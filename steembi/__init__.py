@@ -1,4 +1,4 @@
-""" beem."""
+""" nectar."""
 from .version import version as __version__
 __all__ = [
     'parse_hist_op',

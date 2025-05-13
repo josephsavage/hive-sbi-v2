@@ -12,7 +12,7 @@ import os
 import sqlite3
 from appdirs import user_data_dir
 from datetime import datetime, timedelta
-from beem.utils import formatTimeString, addTzInfo
+from nectar.utils import formatTimeString, addTzInfo
 import logging
 from binascii import hexlify
 import random
