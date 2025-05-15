@@ -1,21 +1,28 @@
+import json
+import os
+import time
+from datetime import datetime, timezone
+
+import dataset
+from nectar import Steem
 from nectar.account import Account
 from nectar.amount import Amount
-from nectar import Steem
-from nectar.instance import set_shared_steem_instance
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
-import re
-import os
-import json
-import time
-from time import sleep
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import TrxDB, MemberDB, TransactionMemoDB, TransactionOutDB, KeysDB, AccountsDB, ConfigurationDB
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx
-import dataset
-from datetime import datetime
+
 from steembi.member import Member
-    
+from steembi.parse_hist_op import ParseAccountHist
+from steembi.storage import (
+    AccountsDB,
+    ConfigurationDB,
+    KeysDB,
+    MemberDB,
+    TransactionMemoDB,
+    TransactionOutDB,
+    TrxDB,
+)
+from steembi.transfer_ops_storage import AccountTrx
+
 
 def run():
     config_file = 'config.json'
@@ -59,9 +66,9 @@ def run():
     last_cycle = conf_setup["last_cycle"]
     share_cycle_min = conf_setup["share_cycle_min"]
     
-    print("sbi_transfer: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+    print("sbi_transfer: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
     
-    if last_cycle is not None and  (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:    
+    if last_cycle is not None and  (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:    
     
         key_list = []
         print("Parse new transfers.")
@@ -72,7 +79,7 @@ def run():
         nodes = NodeList()
         try:
             nodes.update_nodes()
-        except:
+        except Exception:
             print("could not update nodes")    
         stm = Steem(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
         # set_shared_steem_instance(stm)    

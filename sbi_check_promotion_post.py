@@ -1,28 +1,21 @@
-from nectar.account import Account
-from nectar.amount import Amount
+import json
+import os
+from datetime import datetime, timedelta, timezone
+
+import dataset
 from nectar import Steem
-from nectar.instance import set_shared_steem_instance
-from nectar.nodelist import NodeList
-from nectar.utils import addTzInfo, resolve_authorperm, formatTimeString
-from nectar.vote import AccountVotes
-from nectar.comment import Comment
 from nectar.block import Block
 from nectar.blockchain import Blockchain
+from nectar.comment import Comment
+from nectar.nodelist import NodeList
+from nectar.utils import addTzInfo, formatTimeString
 from nectar.wallet import Wallet
 from nectarbase.signedtransactions import Signed_Transaction
 from nectargraphenebase.base58 import Base58
-from datetime import datetime, timedelta
-import re
-import json
-import os
-from time import sleep
-import dataset
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB
-from steembi.member import Member
 
-    
+from steembi.member import Member
+from steembi.storage import ConfigurationDB, MemberDB, TrxDB
+from steembi.transfer_ops_storage import AccountTrx, MemberHistDB, TransferTrx
 
 if __name__ == "__main__":
     config_file = 'config.json'
@@ -77,9 +70,9 @@ if __name__ == "__main__":
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]    
     
-    print("last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+    print("last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
     if True:
-        last_cycle = datetime.utcnow() - timedelta(seconds = 60 * 145)
+        last_cycle = datetime.now(timezone.utc) - timedelta(seconds = 60 * 145)
         confStorage.update({"last_cycle": last_cycle})        
         print("update member database")
         # memberStorage.wipe(True)
@@ -118,7 +111,7 @@ if __name__ == "__main__":
                         continue
                     try:
                         c = Comment(op["memo"], steem_instance=stm)
-                    except:
+                    except Exception:
                         continue
                     if c["author"] not in accounts:
                         continue
@@ -131,7 +124,7 @@ if __name__ == "__main__":
                     for vote in c["active_votes"]:
                         if vote["rshares"] == 0:
                             continue
-                        if (addTzInfo(datetime.utcnow()) - (vote["time"])).total_seconds() / 60 / 60 / 24 <= 7:
+                        if (addTzInfo(datetime.now(timezone.utc)) - (vote["time"])).total_seconds() / 60 / 60 / 24 <= 7:
                             continue
                         if vote["voter"] not in member_data:
                             continue
@@ -182,7 +175,7 @@ if __name__ == "__main__":
                                 
                                 if not vote_did_sign:
                                     continue
-                            except:
+                            except Exception:
                                 continue
                         if vote_did_sign:
                             continue

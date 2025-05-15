@@ -1,27 +1,18 @@
-from nectar.utils import formatTimeString, resolve_authorperm, construct_authorperm, addTzInfo
-from nectar.nodelist import NodeList
-from nectar.comment import Comment
-from nectar import Hive
-from nectar import Steem
-from datetime import datetime, timedelta
-from nectar.instance import set_shared_steem_instance
-from nectar.blockchain import Blockchain
-from nectar.account import Account
-from nectar.vote import Vote
-import time 
 import json
 import os
-import math
+import time
+from datetime import datetime, timedelta, timezone
+
 import dataset
-from datetime import date, datetime, timedelta
-from dateutil.parser import parse
-from nectar.constants import HIVE_100_PERCENT, STEEM_100_PERCENT
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, PostsTrx
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB, KeysDB
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.memo_parser import MemoParser
+from nectar import Steem
+from nectar.account import Account
+from nectar.blockchain import Blockchain
+from nectar.comment import Comment
+from nectar.nodelist import NodeList
+
 from steembi.member import Member
-import dataset
+from steembi.storage import AccountsDB, ConfigurationDB, KeysDB, MemberDB, TrxDB
+from steembi.transfer_ops_storage import PostsTrx
 
 
 def run():
@@ -101,7 +92,7 @@ def run():
     # nodes.update_nodes(weights={"block": 1})
     try:
         nodes.update_nodes()
-    except:
+    except Exception:
         print("could not update nodes")
 
     keys = []
@@ -131,7 +122,7 @@ def run():
     for authorperm in post_list:
 
         created = post_list[authorperm]["created"]
-        if (datetime.utcnow() - created).total_seconds() > 1 * 24 * 60 * 60:
+        if (datetime.now(timezone.utc) - created).total_seconds() > 1 * 24 * 60 * 60:
             continue
         if (start_timestamp > created):
             continue
@@ -140,7 +131,7 @@ def run():
             continue
         if upvote_counter[author] > 0:
             continue
-        if post_list[authorperm]["main_post"] == 0 and (datetime.utcnow() - created).total_seconds() > comment_vote_timeout_h * 60 * 60:
+        if post_list[authorperm]["main_post"] == 0 and (datetime.now(timezone.utc) - created).total_seconds() > comment_vote_timeout_h * 60 * 60:
             postTrx.update_comment_to_old(author, created, True)
 
         member = Member(memberStorage.get(author))
@@ -165,8 +156,8 @@ def run():
         while c is None and cnt < 5:
             cnt += 1
             try:
-                c = Comment(authorperm, use_tags_api=True, steem_instance=stm)
-            except:
+                c = Comment(authorperm, steem_instance=stm)
+            except Exception:
                 c = None
                 stm.rpc.next()
         if c is None:
@@ -189,7 +180,7 @@ def run():
                     else:
                         voted_after =300
 
-                except:
+                except Exception:
                     voted_after =300
         if already_voted:
             postTrx.update_voted(author, created, already_voted, voted_after)
@@ -199,7 +190,7 @@ def run():
             vote_delay_sec = member["upvote_delay"]
         if c.time_elapsed() < timedelta(seconds=(vote_delay_sec - upvote_delay_correction)):
             continue
-        if member["last_received_vote"] is not None and (datetime.utcnow() - member["last_received_vote"]).total_seconds() / 60 < 15:
+        if member["last_received_vote"] is not None and (datetime.now(timezone.utc) - member["last_received_vote"]).total_seconds() / 60 < 15:
             continue
 
 

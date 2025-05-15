@@ -1,18 +1,15 @@
-from nectar.account import Account
-from nectar.amount import Amount
+import json
+import os
+from datetime import datetime, timezone
+
+import dataset
 from nectar import Steem
 from nectar.instance import set_shared_steem_instance
-from nectar.utils import formatTimeString
 from nectar.nodelist import NodeList
-import re
-import os
-from time import sleep
-from datetime import datetime
-import json
-import dataset
-from steembi.parse_hist_op import ParseAccountHist
+from nectar.utils import formatTimeString
+
+from steembi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
 from steembi.transfer_ops_storage import TransferTrx
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB
 
 
 def calculate_shares(delegation_shares, sp_share_ratio):
@@ -48,15 +45,15 @@ def run():
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     last_delegation_check = conf_setup["last_delegation_check"]
 
-    print("sbi_check_delegation: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+    print("sbi_check_delegation: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
 
-    if last_cycle is not None and  (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:
+    if last_cycle is not None and  (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
 
 
         nodes = NodeList()
         try:
             nodes.update_nodes()
-        except:
+        except Exception:
             print("could not update nodes")
         stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
         set_shared_steem_instance(stm)
@@ -93,7 +90,7 @@ def run():
                 delegation_list.append(d)
 
 
-        sorted_delegation_list = sorted(delegation_list, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
+        sorted_delegation_list = sorted(delegation_list, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
 
         for d in sorted_delegation_list:
             if d["share_type"] == "Delegation":

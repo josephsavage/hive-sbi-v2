@@ -1,17 +1,10 @@
-from nectar.account import Account
-from nectar.amount import Amount
-from nectar import Steem
-from nectar.instance import set_shared_steem_instance
-from nectar.nodelist import NodeList
-import re
-import os
-import dataset
 import json
-from time import sleep
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import TrxDB, MemberDB
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB
+import os
 
+import dataset
+
+from steembi.storage import MemberDB, TrxDB
+from steembi.transfer_ops_storage import AccountTrx
 
 if __name__ == "__main__":
     config_file = 'config.json'

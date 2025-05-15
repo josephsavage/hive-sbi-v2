@@ -1,18 +1,21 @@
+import json
+import os
+import time
+from datetime import datetime, timezone
+
+import dataset
+from nectar import Steem
 from nectar.account import Account
 from nectar.amount import Amount
-from nectar import Steem
-from nectar.instance import set_shared_steem_instance
-from nectar.nodelist import NodeList
 from nectar.blockchain import Blockchain
-from nectar.utils import formatTimeString, addTzInfo
-from datetime import datetime
-import re
-import os
-import json
-import time
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx
-from steembi.storage import TrxDB, MemberDB, ConfigurationDB, KeysDB, TransactionMemoDB, AccountsDB
-import dataset
+from nectar.nodelist import NodeList
+from nectar.utils import formatTimeString
+
+from steembi.storage import (
+    AccountsDB,
+    ConfigurationDB,
+)
+from steembi.transfer_ops_storage import AccountTrx, TransferTrx
 
 
 def get_account_trx_data(account, start_block, start_index):
@@ -127,9 +130,9 @@ def run():
     share_cycle_min = conf_setup["share_cycle_min"]
 
     print("sbi_store_ops_db: last_cycle: %s - %.2f min" % (
-        formatTimeString(last_cycle), (datetime.utcnow() - last_cycle).total_seconds() / 60))
+        formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
 
-    if last_cycle is not None and (datetime.utcnow() - last_cycle).total_seconds() > 60 * share_cycle_min:
+    if last_cycle is not None and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
 
         # Update current node list from @fullnodeupdate
         nodes = NodeList()

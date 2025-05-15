@@ -2,8 +2,6 @@
 """Packaging logic for nectar."""
 import codecs
 import io
-import os
-import sys
 
 from setuptools import setup
 
