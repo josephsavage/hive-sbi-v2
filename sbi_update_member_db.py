@@ -199,7 +199,7 @@ def run():
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
 
-        data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
+        data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - ensure_timezone_aware(x["timestamp"])).total_seconds(), reverse=True)
 
         # Update current node list from @fullnodeupdate
         keys_list = []
@@ -419,9 +419,9 @@ def run():
                 if member_data[m]["shares"] <= 0:
                     continue
                 if "first_cycle_at" not  in member_data[m]:
-                    member_data[m]["first_cycle_at"] = current_cycle
-                elif member_data[m]["first_cycle_at"] < datetime(2000, 1 , 1, 0, 0, 0):
-                    member_data[m]["first_cycle_at"] = current_cycle
+                    member_data[m]["first_cycle_at"] = ensure_timezone_aware(current_cycle)
+                elif member_data[m]["first_cycle_at"] < ensure_timezone_aware(datetime(2000, 1 , 1, 0, 0, 0)):
+                    member_data[m]["first_cycle_at"] = ensure_timezone_aware(current_cycle)
                 member_data[m]["balance_rshares"] += (member_data[m]["shares"] * rshares_per_cycle) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
                 member_data[m]["earned_rshares"] += (member_data[m]["shares"] * rshares_per_cycle) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
                 member_data[m]["subscribed_rshares"] += (member_data[m]["shares"] * rshares_per_cycle)
