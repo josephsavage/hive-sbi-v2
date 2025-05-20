@@ -63,7 +63,7 @@ def run():
     postTrx = PostsTrx(db)
 
     print("Upvote posts/comments")
-    start_timestamp = datetime(2018, 12, 14, 9, 18, 20)
+    start_timestamp = ensure_timezone_aware(datetime(2018, 12, 14, 9, 18, 20))
 
 
     if True:
