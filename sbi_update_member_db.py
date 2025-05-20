@@ -418,9 +418,9 @@ def run():
             for m in member_data:
                 if member_data[m]["shares"] <= 0:
                     continue
-                if "first_cycle_at" not  in member_data[m]:
+                if "first_cycle_at" not in member_data[m]:
                     member_data[m]["first_cycle_at"] = ensure_timezone_aware(current_cycle)
-                elif member_data[m]["first_cycle_at"] < ensure_timezone_aware(datetime(2000, 1 , 1, 0, 0, 0)):
+                elif ensure_timezone_aware(member_data[m]["first_cycle_at"]) < ensure_timezone_aware(datetime(2000, 1 , 1, 0, 0, 0)):
                     member_data[m]["first_cycle_at"] = ensure_timezone_aware(current_cycle)
                 member_data[m]["balance_rshares"] += (member_data[m]["shares"] * rshares_per_cycle) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
                 member_data[m]["earned_rshares"] += (member_data[m]["shares"] * rshares_per_cycle) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
