@@ -16,6 +16,7 @@ from nectargraphenebase.base58 import Base58
 from steembi.member import Member
 from steembi.storage import ConfigurationDB, MemberDB, TrxDB
 from steembi.transfer_ops_storage import AccountTrx, MemberHistDB, TransferTrx
+from steembi.utils import ensure_timezone_aware
 
 if __name__ == "__main__":
     config_file = 'config.json'
@@ -57,12 +58,12 @@ if __name__ == "__main__":
     
     conf_setup = confStorage.get()
     
-    last_cycle = conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
-    last_paid_post = conf_setup["last_paid_post"]
+    last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
     last_paid_comment = conf_setup["last_paid_comment"]
     
 

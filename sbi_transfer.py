@@ -22,7 +22,7 @@ from steembi.storage import (
     TrxDB,
 )
 from steembi.transfer_ops_storage import AccountTrx
-
+from steembi.utils import ensure_timezone_aware
 
 def run():
     config_file = 'config.json'
@@ -63,7 +63,7 @@ def run():
     
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
-    last_cycle = conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     
     print("sbi_transfer: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
