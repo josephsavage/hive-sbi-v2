@@ -1,6 +1,6 @@
 # This Python file uses the following encoding: utf-8
 from datetime import datetime, timezone
-
+from steembi.utils import ensure_timezone_aware
 
 class Member(dict):
     def __init__(self, account, shares=0, timestamp=None):
@@ -24,7 +24,7 @@ class Member(dict):
     def append_share_age(self, timestamp, shares):
         if shares == 0:
             return
-        age = (datetime.now(timezone.utc)) - (timestamp)
+        age = (datetime.now(timezone.utc)) - (ensure_timezone_aware(timestamp))
         share_age = int(age.total_seconds() / 60 / 60 / 24)          
         self.share_age_list.append(share_age)
         self.shares_list.append(shares)
@@ -52,7 +52,7 @@ class Member(dict):
         sum_days = 0
         index = 0
         for i in range(len(self.share_age_list)):
-            if self.share_timestamp[i] <= timestamp:
+            if self.share_timestamp[i] <= ensure_timezone_aware(timestamp):
                 
                 total_share_days += self.share_age_list[i] * self.shares_list[i]
                 index += 1
