@@ -9,6 +9,7 @@ from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
 from steembi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
+from steembi.utils import ensure_timezone_aware
 from steembi.transfer_ops_storage import TransferTrx
 
 
@@ -39,11 +40,11 @@ def run():
 
     conf_setup = confStorage.get()
 
-    last_cycle = conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
-    last_delegation_check = conf_setup["last_delegation_check"]
+    last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
 
     print("sbi_check_delegation: last_cycle: %s - %.2f min" % (formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
 

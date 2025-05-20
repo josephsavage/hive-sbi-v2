@@ -16,6 +16,7 @@ from steembi.storage import (
     ConfigurationDB,
 )
 from steembi.transfer_ops_storage import AccountTrx, TransferTrx
+from steembi.utils import ensure_timezone_aware
 
 
 def get_account_trx_data(account, start_block, start_index):
@@ -126,7 +127,7 @@ def run():
 
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
-    last_cycle = conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"]
     share_cycle_min = conf_setup["share_cycle_min"]
 
     print("sbi_store_ops_db: last_cycle: %s - %.2f min" % (

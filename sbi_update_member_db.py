@@ -23,6 +23,7 @@ from steembi.storage import (
     TransferMemoDB,
     TrxDB,
 )
+from steembi.utils import ensure_timezone_aware
 from steembi.transfer_ops_storage import AccountTrx, TransferTrx
 
 
@@ -159,15 +160,15 @@ def run():
 
     conf_setup = confStorage.get()
 
-    last_cycle = conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
-    last_paid_post = conf_setup["last_paid_post"]
-    last_paid_comment = conf_setup["last_paid_comment"]
-    last_delegation_check = conf_setup["last_delegation_check"]
+    last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
+    last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
+    last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     upvote_multiplier_adjusted = conf_setup["upvote_multiplier_adjusted"]
     comment_vote_divider = conf_setup["comment_vote_divider"]

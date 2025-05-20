@@ -20,7 +20,7 @@ from steembi.storage import TrxDB, MemberDB, ConfigurationDB, KeysDB, Transactio
 from steembi.transfer_ops_storage import TransferTrx, AccountTrx, MemberHistDB
 from steembi.memo_parser import MemoParser
 from steembi.member import Member
-
+from steembi.utils import ensure_timezone_aware
 
 def memo_sp_delegation(new_shares, sp_per_share):
     memo = "Thank you for your SP delegation! Your shares have increased by %d (%d SP = +1 bonus share)" % (new_shares, sp_per_share)
@@ -81,14 +81,14 @@ if __name__ == "__main__":
     
     conf_setup = confStorage.get()
     
-    last_cycle = conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
-    last_paid_post = conf_setup["last_paid_post"]
-    last_paid_comment = conf_setup["last_paid_comment"]
-    last_delegation_check = conf_setup["last_delegation_check"]
+    last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
+    last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
+    last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     upvote_multiplier_adjusted = conf_setup["upvote_multiplier_adjusted"]
     
