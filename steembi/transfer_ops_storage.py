@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import and_
 
+from steembi.utils import ensure_timezone_aware
+
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 log.addHandler(logging.StreamHandler())
@@ -50,7 +52,7 @@ class AccountTrx(object):
     def get_newest(self, timestamp, op_types = [], limit=100):
         ops = []
         table = self.db[self.__tablename__]
-        for op in table.find(table.table.columns.timestamp > timestamp, order_by='-op_acc_index'):
+        for op in table.find(table.table.columns.timestamp > ensure_timezone_aware(timestamp), order_by='-op_acc_index'):
             if op["type"] in op_types or len(op_types) == 0:
                 ops.append(op)
             if len(ops) >= limit:
@@ -422,7 +424,7 @@ class PostsTrx(object):
         table = self.db[self.__tablename__]
         del_posts = []
         for post in table.find(order_by='created'):
-            if (datetime.now(timezone.utc) - post["created"]).total_seconds() > 60 * 60 * 24 * days:
+            if (datetime.now(timezone.utc) - ensure_timezone_aware(post["created"])).total_seconds() > 60 * 60 * 24 * days:
                 del_posts.append({"author": post["author"], "created": post["created"]} )
         for post in del_posts:
             table.delete(author=post["author"], created=post["created"])
@@ -579,7 +581,7 @@ class CurationOptimizationTrx(object):
         table = self.db[self.__tablename__]
         del_posts = []
         for post in table.find(order_by='created'):
-            if (datetime.now(timezone.utc) - post["created"]).total_seconds() > 60 * 60 * 24 * days:
+            if (datetime.now(timezone.utc) - ensure_timezone_aware(post["created"])).total_seconds() > 60 * 60 * 24 * days:
                 del_posts.append({"member": post["member"], "created": post["created"]} )
         for post in del_posts:
             table.delete(member=post["member"], created=post["created"])
