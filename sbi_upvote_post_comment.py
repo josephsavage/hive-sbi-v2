@@ -190,7 +190,7 @@ def run():
             vote_delay_sec = member["upvote_delay"]
         if c.time_elapsed() < timedelta(seconds=(vote_delay_sec - upvote_delay_correction)):
             continue
-        if member["last_received_vote"] is not None and (datetime.now(timezone.utc) - member["last_received_vote"]).total_seconds() / 60 < 15:
+        if member["last_received_vote"] is not None and (datetime.now(timezone.utc) - ensure_timezone_aware(member["last_received_vote"])).total_seconds() / 60 < 15:
             continue
 
 
