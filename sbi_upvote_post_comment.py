@@ -121,7 +121,7 @@ def run():
     # print("prep time took %.2f s" % (time.time() - start_prep_time))
     for authorperm in post_list:
 
-        created = post_list[authorperm]["created"]
+        created = ensure_timezone_aware(post_list[authorperm]["created"])
         if (datetime.now(timezone.utc) - created).total_seconds() > 1 * 24 * 60 * 60:
             continue
         if (start_timestamp > created):
