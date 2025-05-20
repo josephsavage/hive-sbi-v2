@@ -1,25 +1,14 @@
-from nectar.account import Account
-from nectar.amount import Amount
+import json
+import os
+
+import dataset
 from nectar import Steem
+from nectar.account import Account
+from nectar.blockchain import Blockchain
 from nectar.instance import set_shared_steem_instance
 from nectar.nodelist import NodeList
-from nectar.blockchain import Blockchain
-from nectar.utils import formatTimeString, addTzInfo
-from datetime import datetime
-import re
-import os
-import json
-import time
-from steembi.transfer_ops_storage import TransferTrx, AccountTrx
-from steembi.storage import TrxDB, MemberDB
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.memo_parser import MemoParser
-from steembi.member import Member
-import dataset
 
-
-
-
+from steembi.transfer_ops_storage import AccountTrx
 
 if __name__ == "__main__":
     config_file = 'config.json'
@@ -54,7 +43,7 @@ if __name__ == "__main__":
     nodes = NodeList()
     try:
         nodes.update_nodes(weights={"hist": 1})
-    except:
+    except Exception:
         print("could not update nodes")           
     stm = Steem(node=nodes.get_nodes())
     print(str(stm))

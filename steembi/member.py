@@ -1,6 +1,5 @@
 # This Python file uses the following encoding: utf-8
-from builtins import bytes, int, str
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 
 
 class Member(dict):
@@ -25,7 +24,7 @@ class Member(dict):
     def append_share_age(self, timestamp, shares):
         if shares == 0:
             return
-        age = (datetime.utcnow()) - (timestamp)
+        age = (datetime.now(timezone.utc)) - (timestamp)
         share_age = int(age.total_seconds() / 60 / 60 / 24)          
         self.share_age_list.append(share_age)
         self.shares_list.append(shares)

@@ -1,19 +1,7 @@
 # This Python file uses the following encoding: utf-8
-import pytz
-import json
-import re
-from datetime import datetime, timedelta, date, time
-import math
-import random
 import logging
-from bisect import bisect_left
-from nectar.utils import formatTimeString, formatTimedelta, remove_from_dict, reputation_to_score, addTzInfo, parse_time
-from nectar.amount import Amount
 from nectar.account import Account
-from nectar.vote import Vote
 from nectar.instance import shared_steem_instance
-from nectar.blockchain import Blockchain
-from nectar.constants import STEEM_VOTE_REGENERATION_SECONDS, STEEM_1_PERCENT, STEEM_100_PERCENT
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +62,7 @@ class MemoParser(object):
                         account_name = account_name.strip()
                         acc = Account(account_name, steem_instance=self.steem)
                         account_found = True
-                    except:
+                    except Exception:
                         print(account_name + " is not an account")
                         account_error = True
                 elif len(w.split(":")) == 2 and '/' not in w:
@@ -102,7 +90,7 @@ class MemoParser(object):
                             sponsor = account_name1
                         else:
                             account_error = True
-                    except:
+                    except Exception:
                         print(account_name + " is not an account")
                         account_error = True                    
                 elif w[0] == '@':
@@ -121,7 +109,7 @@ class MemoParser(object):
                         acc = Account(account_name, steem_instance=self.steem)
                         account_found = True
 
-                    except:
+                    except Exception:
                         print(account_name + " is not an account")
                         account_error = True
                 elif len(w.split('@')) > 1:
@@ -140,7 +128,7 @@ class MemoParser(object):
                         acc = Account(account_name, steem_instance=self.steem)
                         account_found = True
 
-                    except:
+                    except Exception:
                         print(account_name + " is not an account")
                         account_error = True
                 
@@ -161,7 +149,7 @@ class MemoParser(object):
                         account_name = account_name.strip()
                         acc = Account(account_name, steem_instance=self.steem)
                         account_found = True
-                    except:
+                    except Exception:
                         print(account_name + " is not an account")                
                         not_parsed_words.append(w)
                         word_count += 1
@@ -193,7 +181,7 @@ class MemoParser(object):
                 if account_name != account:
                     sponsors[account_name] = 1
                     amount_left -= 1
-            except:
+            except Exception:
                 account_error = True
                 print(account_name + " is not an account")
         if len(sponsors) == 1 and shares > 1 and no_numbers:

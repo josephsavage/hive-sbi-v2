@@ -100,8 +100,8 @@ if __name__ == "__main__":
             accountTrx[account] = AccountTrx(db, account)    
 
     data = trxStorage.get_all_data()
-    data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
-    # data = sorted(data, key=lambda x: (datetime.utcnow() - x["timestamp"]).total_seconds(), reverse=True)
+    data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
+    # data = sorted(data, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
     key_list = []
     key = keyStorage.get("steembasicincome", "memo")
     if key is not None:

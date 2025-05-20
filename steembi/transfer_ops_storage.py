@@ -1,17 +1,9 @@
 # This Python file uses the following encoding: utf-8
-import shutil
-import time
-import os
-import sqlite3
-from appdirs import user_data_dir
-from datetime import datetime, timedelta
-from nectar.utils import formatTimeString, addTzInfo
 import logging
-from binascii import hexlify
-import random
-import hashlib
-import dataset
+from datetime import datetime, timezone
+
 from sqlalchemy import and_
+
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 log.addHandler(logging.StreamHandler())
@@ -430,7 +422,7 @@ class PostsTrx(object):
         table = self.db[self.__tablename__]
         del_posts = []
         for post in table.find(order_by='created'):
-            if (datetime.utcnow() - post["created"]).total_seconds() > 60 * 60 * 24 * days:
+            if (datetime.now(timezone.utc) - post["created"]).total_seconds() > 60 * 60 * 24 * days:
                 del_posts.append({"author": post["author"], "created": post["created"]} )
         for post in del_posts:
             table.delete(author=post["author"], created=post["created"])
@@ -587,7 +579,7 @@ class CurationOptimizationTrx(object):
         table = self.db[self.__tablename__]
         del_posts = []
         for post in table.find(order_by='created'):
-            if (datetime.utcnow() - post["created"]).total_seconds() > 60 * 60 * 24 * days:
+            if (datetime.now(timezone.utc) - post["created"]).total_seconds() > 60 * 60 * 24 * days:
                 del_posts.append({"member": post["member"], "created": post["created"]} )
         for post in del_posts:
             table.delete(member=post["member"], created=post["created"])
