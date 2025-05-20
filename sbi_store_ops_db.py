@@ -127,7 +127,7 @@ def run():
 
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
 
     print("sbi_store_ops_db: last_cycle: %s - %.2f min" % (

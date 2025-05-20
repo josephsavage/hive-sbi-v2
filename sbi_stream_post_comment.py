@@ -56,7 +56,7 @@ def run():
 
     conf_setup = confStorage.get()
 
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
