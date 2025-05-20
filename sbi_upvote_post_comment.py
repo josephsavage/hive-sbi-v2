@@ -342,11 +342,11 @@ def run():
                                     if voter == v["voter"]:
                                         vote_sucessfull = True
                                         if "time" in v:
-                                            vote_time = v["time"]
-                                            voted_after = (v["time"] - c["created"]).total_seconds()
+                                            vote_time = ensure_timezone_aware(v["time"])
+                                            voted_after = (ensure_timezone_aware(v["time"]) - c["created"]).total_seconds()
                                         else:
-                                            vote_time = v["last_update"]
-                                            voted_after = (v["last_update"] - c["created"]).total_seconds()
+                                            vote_time = ensure_timezone_aware(v["last_update"])
+                                            voted_after = (ensure_timezone_aware(v["last_update"]) - c["created"]).total_seconds()
                         except Exception as e:
                             print(e)
                             time.sleep(6)

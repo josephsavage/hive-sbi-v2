@@ -91,20 +91,20 @@ def run():
                 delegation_list.append(d)
 
 
-        sorted_delegation_list = sorted(delegation_list, key=lambda x: (datetime.now(timezone.utc) - x["timestamp"]).total_seconds(), reverse=True)
+        sorted_delegation_list = sorted(delegation_list, key=lambda x: (datetime.now(timezone.utc) - ensure_timezone_aware(x["timestamp"])).total_seconds(), reverse=True)
 
         for d in sorted_delegation_list:
             if d["share_type"] == "Delegation":
                 delegation[d["account"]] = stm.vests_to_sp(float(d["vests"]))
-                delegation_timestamp[d["account"]] = d["timestamp"]
+                delegation_timestamp[d["account"]] = ensure_timezone_aware(d["timestamp"])
                 delegation_shares[d["account"]] = d["shares"]
             elif d["share_type"] == "DelegationLeased":
                 delegation[d["account"]] = 0
-                delegation_timestamp[d["account"]] = d["timestamp"]
+                delegation_timestamp[d["account"]] = ensure_timezone_aware(d["timestamp"])
                 delegation_shares[d["account"]] = d["shares"]
             elif d["share_type"] == "RemovedDelegation":
                 delegation[d["account"]] = 0
-                delegation_timestamp[d["account"]] = d["timestamp"]
+                delegation_timestamp[d["account"]] = ensure_timezone_aware(d["timestamp"])
                 delegation_shares[d["account"]] = 0
 
         delegation_leased = {}
