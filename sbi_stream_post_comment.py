@@ -122,7 +122,7 @@ def run():
 
     b = Blockchain(steem_instance = stm)
     print("deleting old posts")
-    postTrx.delete_old_posts(1)
+    # postTrx.delete_old_posts(1)
     # print("reading all authorperm")
     already_voted_posts = []
     flagged_posts = []
@@ -195,27 +195,27 @@ def run():
                 reply_body = "Hi @%s!\n\n" % ops["author"]
                 reply_body += "* you have %d units and %d bonus units\n" % (member_data[ops["author"]]["shares"], member_data[ops["author"]]["bonus_shares"])
                 reply_body += "* your rshares balance is %d or %.3f $\n" % (member_data[ops["author"]]["balance_rshares"], stm.rshares_to_sbd(member_data[ops["author"]]["balance_rshares"]))
-                if member_data[ops["author"]]["comment_upvote"] == 0:
-                    rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
-                    if rshares > minimum_vote_threshold:
-                        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(rshares))
-                    else:
-                        reply_body += "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n" % (stm.rshares_to_sbd(rshares), stm.rshares_to_sbd(minimum_vote_threshold))
+                #if member_data[ops["author"]]["comment_upvote"] == 0:
+                rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
+                if rshares > minimum_vote_threshold:
+                    reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(rshares))
                 else:
-                    rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
+                    reply_body += "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n" % (stm.rshares_to_sbd(rshares), stm.rshares_to_sbd(minimum_vote_threshold))
+                #else:
+                #    rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
                     # reply_body += "* as you did not wrote a post within the last 7 days, your pending vote accumulates until you post."
-                    if rshares > minimum_vote_threshold * 20:
-                        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(int(minimum_vote_threshold * 20)))
-                    elif  rshares > minimum_vote_threshold * 2:
-                        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(rshares))
-                    else:
-                        reply_body += "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n" % (stm.rshares_to_sbd(rshares), stm.rshares_to_sbd(minimum_vote_threshold * 2))
-                if rshares_denom > 0:
-                    reply_body += "\n\nStructure of your total SBI vote value:\n"
-                    reply_body += "* %.2f %% has come from your subscription level\n" % (member_data[ops["author"]]["subscribed_rshares"] / rshares_denom * 100)
-                    reply_body += "* %.2f %% has come from your bonus units\n" % (member_data[ops["author"]]["delegation_rshares"] / rshares_denom * 100)
-                    reply_body += "* %.2f %% has come from upvoting rewards\n" % (member_data[ops["author"]]["curation_rshares"] / rshares_denom * 100)
-                    reply_body += "* %.2f %% has come from new account bonus or extra value from pre-automation rewards\n" % (member_data[ops["author"]]["other_rshares"] / rshares_denom * 100)
+                #    if rshares > minimum_vote_threshold * 20:
+                #        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(int(minimum_vote_threshold * 20)))
+                #    elif  rshares > minimum_vote_threshold * 2:
+                #        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (stm.rshares_to_sbd(rshares))
+                #    else:
+                #        reply_body += "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n" % (stm.rshares_to_sbd(rshares), stm.rshares_to_sbd(minimum_vote_threshold * 2))
+                #if rshares_denom > 0:
+                #    reply_body += "\n\nStructure of your total SBI vote value:\n"
+                #    reply_body += "* %.2f %% has come from your subscription level\n" % (member_data[ops["author"]]["subscribed_rshares"] / rshares_denom * 100)
+                #    reply_body += "* %.2f %% has come from your bonus units\n" % (member_data[ops["author"]]["delegation_rshares"] / rshares_denom * 100)
+                #    reply_body += "* %.2f %% has come from upvoting rewards\n" % (member_data[ops["author"]]["curation_rshares"] / rshares_denom * 100)
+                #    reply_body += "* %.2f %% has come from new account bonus or extra value from pre-automation rewards\n" % (member_data[ops["author"]]["other_rshares"] / rshares_denom * 100)
                 if len(comment_footer) > 0:
                     reply_body += "<br>\n"
                     reply_body += comment_footer
@@ -248,14 +248,14 @@ def run():
                 json_metadata = json.loads(json_metadata)
             except Exception:
                 json_metadata = {}
-        if "app" in json_metadata:
-            app = json_metadata["app"]
-            if isinstance(app, dict) and "name" in app:
-                app = app["name"]
-            if app is not None and isinstance(app, str) and app.find("/") > -1:
-                app = app.split("/")[0]
-            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
-                skip = True
+#        if "app" in json_metadata:
+#            app = json_metadata["app"]
+#            if isinstance(app, dict) and "name" in app:
+#                app = app["name"]
+#            if app is not None and isinstance(app, str) and app.find("/") > -1:
+#                app = app.split("/")[0]
+#            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
+#                skip = True
         for s in blacklist_body:
             if c.body.find(s) > -1:
                 skip = True

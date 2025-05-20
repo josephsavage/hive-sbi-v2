@@ -95,17 +95,17 @@ def run():
         
         if True:
             print("delete from transaction_memo... ")
-            transactionStorage.delete_sender("dtube.rewards")
-            transactionStorage.delete_sender("reward.app")
-            transactionStorage.delete_to("sbi2")
-            transactionStorage.delete_to("sbi3")
-            transactionStorage.delete_to("sbi4")
-            transactionStorage.delete_to("sbi5")
-            transactionStorage.delete_to("sbi6")
-            transactionStorage.delete_to("sbi7")
-            transactionStorage.delete_to("sbi8")
-            transactionStorage.delete_to("sbi9")
-            transactionStorage.delete_to("sbi10")
+#            transactionStorage.delete_sender("dtube.rewards")
+#            transactionStorage.delete_sender("reward.app")
+#            transactionStorage.delete_to("sbi2")
+#            transactionStorage.delete_to("sbi3")
+#            transactionStorage.delete_to("sbi4")
+#            transactionStorage.delete_to("sbi5")
+#            transactionStorage.delete_to("sbi6")
+#            transactionStorage.delete_to("sbi7")
+#            transactionStorage.delete_to("sbi8")
+#            transactionStorage.delete_to("sbi9")
+#            transactionStorage.delete_to("sbi10")
             print("done.")
     
         stop_index = None
