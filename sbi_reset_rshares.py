@@ -90,7 +90,7 @@ def run():
         if True:
             for m in member_data:
                 total_share_days = member_data[m]["total_share_days"]
-                member_data[m]["first_cycle_at"] = datetime(1970,1,1,0,0,0)
+                member_data[m]["first_cycle_at"] = ensure_timezone_aware(datetime(1970,1,1,0,0,0))
                 member_data[m]["balance_rshares"] = total_share_days * rshares_per_cycle * 10
                 member_data[m]["earned_rshares"]  = total_share_days * rshares_per_cycle * 10
                 member_data[m]["rewarded_rshares"] = 0
