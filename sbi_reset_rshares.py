@@ -183,7 +183,7 @@ def run():
                         cnt3 += 1
                         if int(vote["rshares"]) == 0:
                             continue
-                        if (addTzInfo(datetime.now(timezone.utc)) - (vote["time"])).total_seconds() / 60 / 60 / 24 <= 7:
+                        if (addTzInfo(datetime.now(timezone.utc)) - ensure_timezone_aware(vote["time"])).total_seconds() / 60 / 60 / 24 <= 7:
                             continue
                         if vote["voter"] not in member_data:
                             continue
