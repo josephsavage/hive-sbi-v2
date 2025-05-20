@@ -66,9 +66,9 @@ def run():
     for m in member_accounts:
         member_data[m] = Member(memberStorage.get(m))
         if latest_enrollment is None:
-            latest_enrollment = member_data[m]["latest_enrollment"]
-        elif latest_enrollment < member_data[m]["latest_enrollment"]:
-            latest_enrollment = member_data[m]["latest_enrollment"]
+            latest_enrollment = ensure_timezone_aware(member_data[m]["latest_enrollment"])
+        elif latest_enrollment < ensure_timezone_aware(member_data[m]["latest_enrollment"]):
+            latest_enrollment = ensure_timezone_aware(member_data[m]["latest_enrollment"])
 
     print("latest member enrollment %s" % str(latest_enrollment))
 
