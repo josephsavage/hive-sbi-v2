@@ -132,7 +132,7 @@ def run():
             delegation_leased[acc] = delegation_account[acc]
             trxStorage.update_delegation_state(account, acc, "Delegation",
                                               "DelegationLeased")
-            print("set delegration from %s to leased" % acc)
+            print("set delegation from %s to leased" % acc)
 
 
         dd = delegation

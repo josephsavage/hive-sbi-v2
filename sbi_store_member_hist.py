@@ -77,7 +77,7 @@ def run():
 
     db = dataset.connect(databaseConnector)
     curationOptimTrx = CurationOptimizationTrx(db)
-    curationOptimTrx.delete_old_posts(days=7)
+#    curationOptimTrx.delete_old_posts(days=7)
     # Update current node list from @fullnodeupdate
     nodes = NodeList()
     # nodes.update_nodes(weights={"hist": 1})
@@ -123,7 +123,7 @@ def run():
     date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))
     date_72h_before = addTzInfo(date_now - timedelta(seconds=72 * 60 * 60))
     print("delete old hist data")
-    accountTrx.delete_old_data(end_block - (20 * 60 * 24 * 7))
+#    accountTrx.delete_old_data(end_block - (20 * 60 * 24 * 7))
     print("delete done")
 
     # print("start to stream")
