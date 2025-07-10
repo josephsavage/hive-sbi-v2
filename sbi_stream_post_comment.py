@@ -256,7 +256,7 @@ def run():
 #            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
 #                skip = True
         for s in blacklist_body:
-            if c.body.find(s) > -1:
+            if s in c.body:
                 skip = True
 
         vote_delay = member_data[ops["author"]]["upvote_delay"]
