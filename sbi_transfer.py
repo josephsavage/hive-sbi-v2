@@ -20,11 +20,27 @@ from steembi.storage import (
     TransactionMemoDB,
     TransactionOutDB,
     TrxDB,
+    AuditDB,
 )
 from steembi.transfer_ops_storage import AccountTrx
 from steembi.utils import ensure_timezone_aware
 
-def handle_point_transfer(op, member_data, memberStorage, stm):
+def add_audit_log(auditStorage, account, value_type, old_value, new_value, reason, related_trx_id=None):
+    if old_value == new_value:
+        return
+    audit_log = {
+        "account": account,
+        "value_type": value_type,
+        "old_value": old_value,
+        "new_value": new_value,
+        "change_amount": new_value - old_value,
+        "timestamp": datetime.now(timezone.utc),
+        "reason": reason,
+        "related_trx_id": related_trx_id
+    }
+    auditStorage.add(audit_log)
+
+def handle_point_transfer(op, member_data, memberStorage, stm, auditStorage):
     amount_obj = Amount(op["amount"], steem_instance=stm)
     amount = float(amount_obj)
     sender = op["from"]
@@ -44,10 +60,12 @@ def handle_point_transfer(op, member_data, memberStorage, stm):
     nominee_member = member_data[nominee]
 
     if amount_obj.symbol == 'HBD':
+        old_sender_shares = sender_member.get("shares", 0)
+        old_nominee_shares = nominee_member.get("shares", 0)
         units = int(amount * 1000)
         
-        if sender_member.get("shares", 0) < units:
-            units = sender_member.get("shares", 0)
+        if old_sender_shares < units:
+            units = old_sender_shares
 
         if units <= 0:
             return
@@ -63,12 +81,17 @@ def handle_point_transfer(op, member_data, memberStorage, stm):
         memberStorage.update(sender_member)
         memberStorage.update(nominee_member)
         
+        add_audit_log(auditStorage, sender, 'shares', old_sender_shares, sender_member["shares"], f'Transferred {units} HSBI units to {nominee}', op["trx_id"])
+        add_audit_log(auditStorage, nominee, 'shares', old_nominee_shares, nominee_member["shares"], f'Received {units} HSBI units from {sender}', op["trx_id"])
+        
         print(f"Transferred {units} units from {sender} to {nominee}")
     else:
+        old_sender_rshares = sender_member["balance_rshares"]
+        old_nominee_rshares = nominee_member["balance_rshares"]
         points = int(amount * 1000)
         
-        if sender_member["balance_rshares"] < points:
-            points = sender_member["balance_rshares"]
+        if old_sender_rshares < points:
+            points = old_sender_rshares
 
         if points <= 0:
             return
@@ -79,7 +102,10 @@ def handle_point_transfer(op, member_data, memberStorage, stm):
         memberStorage.update(sender_member)
         memberStorage.update(nominee_member)
         
-        print(f"Transferred {points} points from {sender} to {nominee}")
+        add_audit_log(auditStorage, sender, 'balance_rshares', old_sender_rshares, sender_member["balance_rshares"], f'Transferred {points} rshares to {nominee}', op["trx_id"])
+        add_audit_log(auditStorage, nominee, 'balance_rshares', old_nominee_rshares, nominee_member["balance_rshares"], f'Received {points} rshares from {sender}', op["trx_id"])
+        
+        print(f"Transferred {points} rshares from {sender} to {nominee}")
 
 def run():
     config_file = 'config.json'
@@ -117,6 +143,7 @@ def run():
     keyStorage = KeysDB(db2)
     transactionStorage = TransactionMemoDB(db2)
     transactionOutStorage = TransactionOutDB(db2)
+    auditStorage = AuditDB(db2)
     
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
@@ -214,7 +241,7 @@ def run():
                 json_op["index"] = op["op_acc_index"] + start_index_offset
                 if account_name != "steembasicincome" and json_op["type"] == "transfer":
                     if float(Amount(json_op["amount"], steem_instance=stm)) < 1:
-                        handle_point_transfer(json_op, member_data, memberStorage, stm)
+                        handle_point_transfer(json_op, member_data, memberStorage, stm, auditStorage)
                         continue
                     if json_op["memo"][:8] == 'https://':
                         continue

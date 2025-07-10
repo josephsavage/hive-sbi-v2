@@ -896,3 +896,76 @@ class PendingRefundDB(object):
             table.drop
     
 
+class AuditDB(object):
+    """ This is the trx storage class
+    """
+    __tablename__ = 'audit_trail'
+
+    def __init__(self, db):
+        self.db = db
+
+    def exists_table(self):
+        """ Check if the database table exists
+        """
+        if len(self.db.tables) == 0:
+            return False
+        if self.__tablename__ in self.db.tables:
+            return True
+        else:
+            return False
+
+    def add(self, data):
+        """ Add a new data set
+
+        """
+        table = self.db[self.__tablename__]
+        table.insert(data)
+        self.db.commit()
+
+    def get_all(self):
+        """ Returns all entries for given value
+
+        """
+        table = self.db[self.__tablename__]
+        for d in table:
+            yield d
+    
+    def get(self, ID):
+        """ Returns all entries for given value
+
+        """
+        table = self.db[self.__tablename__]
+        return table.find_one(id=ID)
+
+    def add_batch(self, data):
+        """ Add a new data set
+
+        """
+        table = self.db[self.__tablename__]
+        self.db.begin()
+        for d in data:
+            table.insert(d)
+
+        self.db.commit()
+    
+    def delete(self, ID):
+        """ Delete a data set
+
+           :param int ID: database id
+        """
+        table = self.db[self.__tablename__]
+        table.delete(id=ID)
+        self.db.commit()
+    
+    def wipe(self, sure=False):
+        """Purge the entire database. No data set will survive this!"""
+        if not sure:
+            log.error(
+                "You need to confirm that you are sure "
+                "and understand the implications of "
+                "wiping your wallet!"
+            )
+            return
+        else:
+            table = self.db[self.__tablename__]
+            table.drop
