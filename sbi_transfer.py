@@ -25,7 +25,8 @@ from steembi.transfer_ops_storage import AccountTrx
 from steembi.utils import ensure_timezone_aware
 
 def handle_point_transfer(op, member_data, memberStorage, stm):
-    amount = float(Amount(op["amount"], steem_instance=stm))
+    amount_obj = Amount(op["amount"], steem_instance=stm)
+    amount = float(amount_obj)
     sender = op["from"]
     memo = op["memo"]
     
@@ -39,24 +40,46 @@ def handle_point_transfer(op, member_data, memberStorage, stm):
     if nominee not in member_data:
         return
         
-    points = int(amount * 1000)
-    
     sender_member = member_data[sender]
     nominee_member = member_data[nominee]
-    
-    if sender_member["balance_rshares"] < points:
-        points = sender_member["balance_rshares"]
 
-    if points <= 0:
-        return
+    if amount_obj.symbol == 'HBD':
+        units = int(amount * 1000)
         
-    sender_member["balance_rshares"] -= points
-    nominee_member["balance_rshares"] += points
-    
-    memberStorage.update(sender_member)
-    memberStorage.update(nominee_member)
-    
-    print(f"Transferred {points} points from {sender} to {nominee}")
+        if sender_member.get("shares", 0) < units:
+            units = sender_member.get("shares", 0)
+
+        if units <= 0:
+            return
+        
+        if "shares" not in sender_member:
+            sender_member["shares"] = 0
+        if "shares" not in nominee_member:
+            nominee_member["shares"] = 0
+
+        sender_member["shares"] -= units
+        nominee_member["shares"] += units
+        
+        memberStorage.update(sender_member)
+        memberStorage.update(nominee_member)
+        
+        print(f"Transferred {units} units from {sender} to {nominee}")
+    else:
+        points = int(amount * 1000)
+        
+        if sender_member["balance_rshares"] < points:
+            points = sender_member["balance_rshares"]
+
+        if points <= 0:
+            return
+            
+        sender_member["balance_rshares"] -= points
+        nominee_member["balance_rshares"] += points
+        
+        memberStorage.update(sender_member)
+        memberStorage.update(nominee_member)
+        
+        print(f"Transferred {points} points from {sender} to {nominee}")
 
 def run():
     config_file = 'config.json'
