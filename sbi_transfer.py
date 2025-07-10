@@ -24,6 +24,40 @@ from steembi.storage import (
 from steembi.transfer_ops_storage import AccountTrx
 from steembi.utils import ensure_timezone_aware
 
+def handle_point_transfer(op, member_data, memberStorage, stm):
+    amount = float(Amount(op["amount"], steem_instance=stm))
+    sender = op["from"]
+    memo = op["memo"]
+    
+    if memo.startswith("@"):
+        nominee = memo[1:]
+    else:
+        nominee = memo
+        
+    if sender not in member_data:
+        return
+    if nominee not in member_data:
+        return
+        
+    points = int(amount * 1000)
+    
+    sender_member = member_data[sender]
+    nominee_member = member_data[nominee]
+    
+    if sender_member["balance_rshares"] < points:
+        points = sender_member["balance_rshares"]
+
+    if points <= 0:
+        return
+        
+    sender_member["balance_rshares"] -= points
+    nominee_member["balance_rshares"] += points
+    
+    memberStorage.update(sender_member)
+    memberStorage.update(nominee_member)
+    
+    print(f"Transferred {points} points from {sender} to {nominee}")
+
 def run():
     config_file = 'config.json'
     if not os.path.isfile(config_file):
@@ -157,6 +191,7 @@ def run():
                 json_op["index"] = op["op_acc_index"] + start_index_offset
                 if account_name != "steembasicincome" and json_op["type"] == "transfer":
                     if float(Amount(json_op["amount"], steem_instance=stm)) < 1:
+                        handle_point_transfer(json_op, member_data, memberStorage, stm)
                         continue
                     if json_op["memo"][:8] == 'https://':
                         continue
