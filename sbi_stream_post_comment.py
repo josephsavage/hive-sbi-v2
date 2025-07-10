@@ -186,8 +186,7 @@ def run():
                 member_data[ops["author"]]["comment_upvote"] = 0
         else:
             member_data[ops["author"]]["last_comment"] = c["created"]
-            status_command = c.body.find("!sbi status")
-            if status_command > -1 and abs((ops["timestamp"] - c["created"]).total_seconds()) <= 10:
+            if "!sbi status" in c.body.lower() and abs((ops["timestamp"] - c["created"]).total_seconds()) <= 10:
 
                 rshares_denom = member_data[ops["author"]]["rewarded_rshares"] + member_data[ops["author"]]["balance_rshares"]
 
@@ -257,7 +256,7 @@ def run():
 #            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
 #                skip = True
         for s in blacklist_body:
-            if c.body.find(s) > -1:
+            if s in c.body:
                 skip = True
 
         vote_delay = member_data[ops["author"]]["upvote_delay"]
