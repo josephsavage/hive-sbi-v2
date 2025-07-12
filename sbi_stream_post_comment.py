@@ -186,7 +186,9 @@ def run():
                 member_data[ops["author"]]["comment_upvote"] = 0
         else:
             member_data[ops["author"]]["last_comment"] = c["created"]
-            if "!sbi status" in c.body.lower() and abs((ops["timestamp"] - c["created"]).total_seconds()) <= 10:
+            created_time = ensure_timezone_aware(c["created"])
+            ops_time = ensure_timezone_aware(ops["timestamp"])
+            if "!sbi status" in c.body.lower() and abs((ops_time - created_time).total_seconds()) <= 10:
 
                 rshares_denom = member_data[ops["author"]]["rewarded_rshares"] + member_data[ops["author"]]["balance_rshares"]
 
