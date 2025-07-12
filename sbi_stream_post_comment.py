@@ -120,7 +120,7 @@ def run():
     node_list = nodes.get_nodes(hive=hive_blockchain)
     stm = Steem(node=node_list, keys=keys_list, num_retries=5, call_num_retries=3, timeout=15, nobroadcast=nobroadcast)
 
-    b = Blockchain(steem_instance = stm)
+    b = Blockchain(mode="irreversible",steem_instance = stm)
     print("deleting old posts")
     # postTrx.delete_old_posts(1)
     # print("reading all authorperm")
