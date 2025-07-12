@@ -11,7 +11,6 @@ import random
 from steembi.transfer_ops_storage import PostsTrx
 from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB, KeysDB, BlacklistDB
 from steembi.member import Member
-from steembi.version import version as sbiversion
 from steembi.utils import ensure_timezone_aware
 
 def run():
@@ -223,11 +222,11 @@ def run():
 
                 account_name = account_list[random.randint(0, len(account_list) - 1)]
                 try:
-                    logging.info(f"Replying to @{c['author']}/{c['permlink']} with account {account_name}")
+                    print(f"Replying to @{c['author']}/{c['permlink']} with account {account_name}")
                     c.reply(reply_body, author=account_name)
                     time.sleep(4)
                 except Exception as e:
-                    logging.error(f"Error replying to status comment: {e}")
+                    print(f"Error replying to status comment: {e}")
                     continue
 
 
