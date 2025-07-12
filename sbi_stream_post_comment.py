@@ -223,11 +223,11 @@ def run():
 
                 account_name = account_list[random.randint(0, len(account_list) - 1)]
                 try:
-                    stm.post("", reply_body, app="steembasicincome/%s" % sbiversion, author=account_name, reply_identifier=c.identifier)
-                    # c.reply(reply_body, author=account_name)
+                    logging.info(f"Replying to @{c['author']}/{c['permlink']} with account {account_name}")
+                    c.reply(reply_body, author=account_name)
                     time.sleep(4)
                 except Exception as e:
-                    print("Error replying to status comment: %s" % e)
+                    logging.error(f"Error replying to status comment: {e}")
                     continue
 
 
