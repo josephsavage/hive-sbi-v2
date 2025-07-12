@@ -188,7 +188,7 @@ def run():
             member_data[ops["author"]]["last_comment"] = c["created"]
             created_time = ensure_timezone_aware(c["created"])
             ops_time = ensure_timezone_aware(ops["timestamp"])
-            if "!sbi status" in c.body.lower() and abs((ops_time - created_time).total_seconds()) <= 10:
+            if "!sbi status" in c.body.lower() and abs((ops_time - created_time).total_seconds()) <= 30:
 
                 rshares_denom = member_data[ops["author"]]["rewarded_rshares"] + member_data[ops["author"]]["balance_rshares"]
 
@@ -226,7 +226,8 @@ def run():
                     stm.post("", reply_body, app="steembasicincome/%s" % sbiversion, author=account_name, reply_identifier=c.identifier)
                     # c.reply(reply_body, author=account_name)
                     time.sleep(4)
-                except Exception:
+                except Exception as e:
+                    print("Error replying to status comment: %s" % e)
                     continue
 
 
@@ -258,7 +259,7 @@ def run():
 #            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
 #                skip = True
         for s in blacklist_body:
-            if s in c.body:
+            if s in c.body.lower():
                 skip = True
 
         vote_delay = member_data[ops["author"]]["upvote_delay"]
