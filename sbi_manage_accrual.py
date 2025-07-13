@@ -1,17 +1,16 @@
 #!/usr/bin/env python
-from datetime import datetime, timezone
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 import dataset
 from nectar import Steem
 from nectar.account import Account
 from nectar.nodelist import NodeList
 
-from steembi.storage import ConfigurationDB
+from steembi.storage import AccountsDB, ConfigurationDB
 from steembi.utils import ensure_timezone_aware
-
 
 if __name__ == "__main__":
     # Load configuration from config.json (same as other SBI scripts)
@@ -24,12 +23,15 @@ if __name__ == "__main__":
 
     databaseConnector2 = config_data["databaseConnector2"]
     hive_blockchain = config_data["hive_blockchain"]
-    account_names = config_data["accounts"]
 
     # Open configuration database
     db2 = dataset.connect(databaseConnector2)
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
+
+    # Fetch account list from the accounts table instead of config.json
+    accountStorage = AccountsDB(db2)
+    account_names = accountStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
