@@ -12,6 +12,6 @@ python3 -u /root/steembasicincome/sbi_upvote_post_comment.py
 
 python3 -u /root/steembasicincome/sbi_stream_post_comment.py
 
-
+python3 -u /root/steembasicincome/sbi_manage_accrual.py
 
 #python3 -u /root/steembasicincome/sbi_reset_rshares.py
