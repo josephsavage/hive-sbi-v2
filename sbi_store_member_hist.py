@@ -183,8 +183,27 @@ def run():
             if op["voter"] not in member_accounts and op["voter"] not in accounts:
                 continue
             if op["author"] in member_accounts and op["voter"] in accounts:
-                authorperm=construct_authorperm(op["author"], op["permlink"])
-                vote = Vote(op["voter"], authorperm=authorperm, steem_instance=stm)
+                authorperm = construct_authorperm(op["author"], op["permlink"])
+                try:
+                    vote = Vote(op["voter"], authorperm=authorperm, steem_instance=stm)
+                except Exception as e:
+                    # Occasionally the default node returns VoteDoesNotExist even though the vote exists.
+                    # Retry the call with the remaining nodes in the list until one succeeds.
+                    vote = None
+                    for alt_node in node_list:
+                        try:
+                            alt_stm = Steem(node=[alt_node], num_retries=3, timeout=10)
+                            vote = Vote(op["voter"], authorperm=authorperm, steem_instance=alt_stm)
+                            # Switch to the working node for subsequent operations
+                            stm = alt_stm
+                            break
+                        except Exception:
+                            # Try next node
+                            continue
+                    if vote is None:
+                        # Skip processing this vote if it still cannot be fetched
+                        print("Failed to fetch vote for %s by %s: %s" % (authorperm, op["voter"], str(e)))
+                        continue
                 print("member %s upvoted with %d" % (op["author"], int(vote["rshares"])))
                 member_data[op["author"]]["rewarded_rshares"] += int(vote["rshares"])
                 member_data[op["author"]]["balance_rshares"] -= int(vote["rshares"])
@@ -194,7 +213,7 @@ def run():
                     upvote_delay = 300
                 performance = 0
                 c = Comment(authorperm, steem_instance=stm)
-
+                vote_SBD = stm.rshares_to_sbd(int(vote["rshares"]))
                 try:
 
                     curation_rewards_SBD = c.get_curation_rewards(pending_payout_SBD=True)
@@ -208,7 +227,6 @@ def run():
                     curation_rewards_SBD = None
 
                 rshares = int(vote["rshares"])
-                vote_SBD = stm.rshares_to_sbd(int(vote["rshares"]))
 
                 best_performance = 0
                 best_time_delay = 0
