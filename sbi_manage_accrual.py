@@ -38,7 +38,7 @@ if __name__ == "__main__":
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
 
-    # Determine whether a new cycle should run (same logic as sbi_reset_rshares)
+    # Determine whether a new cycle should run (proper logic from example)
     elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
     print(f"sbi_manage_accrual: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)")
     if (
