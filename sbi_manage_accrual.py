@@ -41,47 +41,54 @@ if __name__ == "__main__":
     # Determine whether a new cycle should run (same logic as sbi_reset_rshares)
     elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
     print(f"sbi_manage_accrual: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)")
+    if (
+        last_cycle is not None
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
+        > 60 * share_cycle_min
+    ):
+        # Build Steem instance and collect mana for each account
+        nodes = NodeList()
+        nodes.update_nodes()
+        node_list = nodes.get_nodes(hive=hive_blockchain)
+        stm = Steem(node=node_list, num_retries=5, call_num_retries=3, timeout=15)
 
-    if elapsed_min < share_cycle_min:
+        total_current_mana = 0
+        total_max_mana = 0
+        accounts_processed = 0
+        for acc in account_names:
+            try:
+                mana = Account(acc, steem_instance=stm).get_manabar()
+                total_current_mana += mana.get("current_mana", 0)
+                total_max_mana += mana.get("max_mana", 0)
+                accounts_processed += 1
+            except Exception as e:
+                print(f"Could not fetch mana for {acc}: {e}")
+
+        if total_max_mana == 0:
+            print("Unable to retrieve mana information for any account. Exiting.")
+            sys.exit(1)
+
+        overall_mana_pct = (total_current_mana / total_max_mana) * 100
         print(
-            f"Not time for a new cycle yet (share_cycle_min={share_cycle_min}). Exiting."
+            f"Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
         )
+
+        # Adjust accrual rates based on 50% threshold
+        factor = 1.01 if overall_mana_pct > 50 else 0.99
+        rshares_per_cycle *= factor
+        del_rshares_per_cycle *= factor
+
+        # Persist updated values and reset last_cycle
+        confStorage.update(
+            {
+                "rshares_per_cycle": rshares_per_cycle,
+                "del_rshares_per_cycle": del_rshares_per_cycle,
+                # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
+            }
+        )
+    else:
+        print("Not time for a new cycle yet. Exiting.")
         sys.exit(0)
-
-    # Build Steem instance and collect mana for each account
-    nodes = NodeList()
-    nodes.update_nodes()
-    node_list = nodes.get_nodes(hive=hive_blockchain)
-    stm = Steem(node=node_list, num_retries=5, call_num_retries=3, timeout=15)
-
-    mana_pcts = []
-    for acc in account_names:
-        try:
-            mana = Account(acc, steem_instance=stm).get_manabar()
-            mana_pcts.append(mana.get("current_mana_pct", 0))
-        except Exception as e:
-            print(f"Could not fetch mana for {acc}: {e}")
-
-    if not mana_pcts:
-        print("Unable to retrieve mana for any account. Exiting.")
-        sys.exit(1)
-
-    avg_mana_pct = sum(mana_pcts) / len(mana_pcts)
-    print(f"Average mana across {len(mana_pcts)} accounts: {avg_mana_pct:.2f}%")
-
-    # Adjust accrual rates based on 50% threshold
-    factor = 1.01 if avg_mana_pct > 50 else 0.99
-    rshares_per_cycle *= factor
-    del_rshares_per_cycle *= factor
-
-    # Persist updated values and reset last_cycle
-    confStorage.update(
-        {
-            "rshares_per_cycle": rshares_per_cycle,
-            "del_rshares_per_cycle": del_rshares_per_cycle,
-            # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
-        }
-    )
 
     print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
     print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
