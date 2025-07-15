@@ -11,7 +11,6 @@ import random
 from steembi.transfer_ops_storage import PostsTrx
 from steembi.storage import TrxDB, MemberDB, ConfigurationDB, AccountsDB, KeysDB, BlacklistDB
 from steembi.member import Member
-from steembi.version import version as sbiversion
 from steembi.utils import ensure_timezone_aware
 
 def run():
@@ -120,7 +119,7 @@ def run():
     node_list = nodes.get_nodes(hive=hive_blockchain)
     stm = Steem(node=node_list, keys=keys_list, num_retries=5, call_num_retries=3, timeout=15, nobroadcast=nobroadcast)
 
-    b = Blockchain(steem_instance = stm)
+    b = Blockchain(mode="irreversible",steem_instance = stm)
     print("deleting old posts")
     # postTrx.delete_old_posts(1)
     # print("reading all authorperm")
@@ -186,8 +185,9 @@ def run():
                 member_data[ops["author"]]["comment_upvote"] = 0
         else:
             member_data[ops["author"]]["last_comment"] = c["created"]
-            status_command = c.body.find("!sbi status")
-            if status_command > -1 and abs((ops["timestamp"] - c["created"]).total_seconds()) <= 10:
+            created_time = ensure_timezone_aware(c["created"])
+            ops_time = ensure_timezone_aware(ops["timestamp"])
+            if "!sbi status" in c.body.lower() and abs((ops_time - created_time).total_seconds()) <= 30:
 
                 rshares_denom = member_data[ops["author"]]["rewarded_rshares"] + member_data[ops["author"]]["balance_rshares"]
 
@@ -222,10 +222,11 @@ def run():
 
                 account_name = account_list[random.randint(0, len(account_list) - 1)]
                 try:
-                    stm.post("", reply_body, app="steembasicincome/%s" % sbiversion, author=account_name, reply_identifier=c.identifier)
-                    # c.reply(reply_body, author=account_name)
+                    print(f"Replying to @{c['author']}/{c['permlink']} with account {account_name}")
+                    c.reply(reply_body, author=account_name)
                     time.sleep(4)
-                except Exception:
+                except Exception as e:
+                    print(f"Error replying to status comment: {e}")
                     continue
 
 
@@ -257,7 +258,7 @@ def run():
 #            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
 #                skip = True
         for s in blacklist_body:
-            if c.body.find(s) > -1:
+            if s in c.body.lower():
                 skip = True
 
         vote_delay = member_data[ops["author"]]["upvote_delay"]
