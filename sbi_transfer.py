@@ -363,7 +363,12 @@ def run():
                 json_op = json.loads(op["op_dict"])
                 json_op["index"] = op["op_acc_index"] + start_index_offset
                 if account_name != "steembasicincome" and json_op["type"] == "transfer":
-                    if float(Amount(json_op["amount"], steem_instance=stm)) < 1:
+                    amount = float(Amount(json_op["amount"], steem_instance=stm))
+                    # Skip micro transfers below the minimum threshold
+                    if amount < 0.005:
+                        continue
+                    # Handle point transfers between 0.005 and 1 HIVE/HBD
+                    if amount < 1:
                         handle_point_transfer(
                             json_op,
                             member_data,
@@ -374,6 +379,7 @@ def run():
                             rshares_per_hbd,
                         )
                         continue
+                    # Skip large transfers that are purely URL promotions
                     if json_op["memo"][:8] == "https://":
                         continue
 
