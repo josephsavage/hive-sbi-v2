@@ -195,6 +195,10 @@ class ParseAccountHist(list):
         # Replace original sponsee dict with filtered one
         sponsee = filtered_sponsee
         
+        # Log if self-sponsorship was detected
+        if self_sponsorship:
+            print(f"Self-sponsorship detected and filtered for {sponsor}")
+        
         sponsee_amount = 0
         for a in sponsee:
             sponsee_amount += sponsee[a]
@@ -202,12 +206,22 @@ class ParseAccountHist(list):
         
         if sponsee_amount == 0 and not account_error and True:
             sponsee_account = self.get_highest_avg_share_age_account()
-            sponsee = {sponsee_account: shares}
-            print("%s sponsers %s with %d shares" % (sponsor, sponsee_account, shares))
-            self.new_transfer_record(index, processed_memo, account, sponsor, json.dumps(sponsee), shares, timestamp, share_type=share_type)
-            self.memberStorage.update_avg_share_age(sponsee_account, 0)
-            self.member_data[sponsee_account]["avg_share_age"] = 0            
-            return
+            # Check if sponsee_account is None or same as sponsor
+            if sponsee_account is None or sponsee_account == sponsor:
+                # If no valid sponsee account is available or it's the same as sponsor,
+                # use LessOrNoSponsee status
+                sponsee = {}
+                message = op["timestamp"] + " to: " + self.account["name"] + " from: " + sponsor + ' amount: ' + str(amount) + ' memo: ' + processed_memo + '\n'
+                self.new_transfer_record(index, processed_memo, account, sponsor, json.dumps(sponsee), shares, timestamp, status="LessOrNoSponsee", share_type=share_type)
+                return
+            else:
+                # Normal processing with valid sponsee account
+                sponsee = {sponsee_account: shares}
+                print("%s sponsers %s with %d shares" % (sponsor, sponsee_account, shares))
+                self.new_transfer_record(index, processed_memo, account, sponsor, json.dumps(sponsee), shares, timestamp, share_type=share_type)
+                self.memberStorage.update_avg_share_age(sponsee_account, 0)
+                self.member_data[sponsee_account]["avg_share_age"] = 0            
+                return
         elif sponsee_amount == 0 and not account_error:
             sponsee = {}
             message = op["timestamp"] + " to: " + self.account["name"] + " from: " + sponsor + ' amount: ' + str(amount) + ' memo: ' + processed_memo + '\n'
