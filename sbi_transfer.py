@@ -113,25 +113,16 @@ def handle_point_transfer(
         # standard share-transfer reports, similar to how transfers
         # are logged in ParseAccountHist.
         # ------------------------------------------------------------
+        # Use the actual operation index for the transaction
         try:
-            base_index = op.get("op_acc_index", 0)
+            # First try to get the index directly from the operation
+            base_index = op.get("index", 0)
+            if base_index == 0:
+                # If not available, try op_acc_index which is used in some contexts
+                base_index = op.get("op_acc_index", 0)
         except AttributeError:
             base_index = 0
-            
-        # Generate a unique base index if the original is 0
-        if base_index == 0:
-            # Use timestamp as part of the unique index
-            timestamp_obj = op.get("timestamp")
-            if timestamp_obj is None:
-                timestamp_obj = datetime.now(timezone.utc)
-            if isinstance(timestamp_obj, str):
-                timestamp_obj = datetime.fromisoformat(timestamp_obj.replace('Z', '+00:00'))
-            # Create a unique base index based on timestamp microseconds
-            base_index = int(timestamp_obj.timestamp() * 1000000) % 1000000000
-            
-        # Create different indices for sender and nominee to avoid collision
-        sender_index = base_index * 2  # Even number
-        #nominee_index = base_index * 2 + 1  # Odd number
+                            
         # Build a common sponsee json string as used elsewhere in the
         # code-base ( {account: shares} )
         sponsee_json = json.dumps({nominee: units})
@@ -146,7 +137,7 @@ def handle_point_transfer(
         )
         # Sender (negative shares)
         data_sender = {
-            "index": sender_index,
+            "index": base_index,
             "source": "member_transfer_out",
             "memo": f"Transfer to {nominee}",
             "account": sender,
