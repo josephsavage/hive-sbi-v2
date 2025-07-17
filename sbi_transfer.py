@@ -117,6 +117,17 @@ def handle_point_transfer(
             index = op.get("op_acc_index", 0)
         except AttributeError:
             index = 0
+            
+        # Generate a unique index if the original is 0 to avoid primary key conflicts
+        if index == 0:
+            # Use timestamp as part of the unique index
+            timestamp_obj = op.get("timestamp")
+            if timestamp_obj is None:
+                timestamp_obj = datetime.now(timezone.utc)
+            if isinstance(timestamp_obj, str):
+                timestamp_obj = datetime.fromisoformat(timestamp_obj.replace('Z', '+00:00'))
+            # Create a unique index based on timestamp microseconds
+            index = int(timestamp_obj.timestamp() * 1000000) % 1000000000
         # Build a common sponsee json string as used elsewhere in the
         # code-base ( {account: shares} )
         sponsee_json = json.dumps({nominee: units})
