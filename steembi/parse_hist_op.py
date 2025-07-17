@@ -195,10 +195,6 @@ class ParseAccountHist(list):
         # Replace original sponsee dict with filtered one
         sponsee = filtered_sponsee
         
-        # Log if self-sponsorship was detected
-        if self_sponsorship:
-            print(f"Self-sponsorship detected and filtered for {sponsor}")
-        
         sponsee_amount = 0
         for a in sponsee:
             sponsee_amount += sponsee[a]
