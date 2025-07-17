@@ -81,11 +81,11 @@ def handle_point_transfer(
         if "shares" not in nominee_member:
             nominee_member["shares"] = 0
 
-        #sender_member["shares"] -= units
-        #nominee_member["shares"] += units
+        sender_member["shares"] -= units
+        nominee_member["shares"] += units
 
-        #memberStorage.update(sender_member)
-        #memberStorage.update(nominee_member)
+        memberStorage.update(sender_member)
+        memberStorage.update(nominee_member)
 
         add_audit_log(
             auditStorage,
