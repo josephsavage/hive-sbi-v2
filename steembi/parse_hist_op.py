@@ -182,6 +182,19 @@ class ParseAccountHist(list):
         if amount.symbol == self.steem.sbd_symbol:
             share_type = self.steem.sbd_symbol
         
+        # Check if any sponsee is the same as the sponsor and remove them
+        self_sponsorship = False
+        filtered_sponsee = {}
+        for a in sponsee:
+            if a != sponsor:  # Only keep sponsees that are not the sponsor
+                filtered_sponsee[a] = sponsee[a]
+            else:
+                self_sponsorship = True
+                print(f"Removed self-sponsorship attempt by {sponsor}")
+        
+        # Replace original sponsee dict with filtered one
+        sponsee = filtered_sponsee
+        
         sponsee_amount = 0
         for a in sponsee:
             sponsee_amount += sponsee[a]
