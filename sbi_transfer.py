@@ -81,11 +81,11 @@ def handle_point_transfer(
         if "shares" not in nominee_member:
             nominee_member["shares"] = 0
 
-        sender_member["shares"] -= units
-        nominee_member["shares"] += units
+        #sender_member["shares"] -= units
+        #nominee_member["shares"] += units
 
-        memberStorage.update(sender_member)
-        memberStorage.update(nominee_member)
+        #memberStorage.update(sender_member)
+        #memberStorage.update(nominee_member)
 
         add_audit_log(
             auditStorage,
@@ -114,20 +114,24 @@ def handle_point_transfer(
         # are logged in ParseAccountHist.
         # ------------------------------------------------------------
         try:
-            index = op.get("op_acc_index", 0)
+            base_index = op.get("op_acc_index", 0)
         except AttributeError:
-            index = 0
+            base_index = 0
             
-        # Generate a unique index if the original is 0 to avoid primary key conflicts
-        if index == 0:
+        # Generate a unique base index if the original is 0
+        if base_index == 0:
             # Use timestamp as part of the unique index
             timestamp_obj = op.get("timestamp")
             if timestamp_obj is None:
                 timestamp_obj = datetime.now(timezone.utc)
             if isinstance(timestamp_obj, str):
                 timestamp_obj = datetime.fromisoformat(timestamp_obj.replace('Z', '+00:00'))
-            # Create a unique index based on timestamp microseconds
-            index = int(timestamp_obj.timestamp() * 1000000) % 1000000000
+            # Create a unique base index based on timestamp microseconds
+            base_index = int(timestamp_obj.timestamp() * 1000000) % 1000000000
+            
+        # Create different indices for sender and nominee to avoid collision
+        sender_index = base_index * 2  # Even number
+        #nominee_index = base_index * 2 + 1  # Odd number
         # Build a common sponsee json string as used elsewhere in the
         # code-base ( {account: shares} )
         sponsee_json = json.dumps({nominee: units})
@@ -142,8 +146,8 @@ def handle_point_transfer(
         )
         # Sender (negative shares)
         data_sender = {
-            "index": index,
-            "source": "member_transfer",
+            "index": sender_index,
+            "source": "member_transfer_out",
             "memo": f"Transfer to {nominee}",
             "account": sender,
             "sponsor": sender,
@@ -155,21 +159,21 @@ def handle_point_transfer(
             "share_type": "Transfer",
         }
         # Nominee (positive shares)
-        data_nominee = {
-            "index": index,
-            "source": "member_transfer",
-            "memo": f"Received from {sender}",
-            "account": nominee,
-            "sponsor": sender,
-            "sponsee": sponsee_json,
-            "shares": units,
-            "vests": 0.0,
-            "timestamp": timestamp_str,
-            "status": "Valid",
-            "share_type": "Transfer",
-        }
+        #data_nominee = {
+        #    "index": nominee_index,
+        #    "source": "member_transfer_in",
+        #    "memo": f"Received from {sender}",
+        #    "account": nominee,
+        #    "sponsor": sender,
+        #    "sponsee": sponsee_json,
+        #    "shares": units,
+        #    "vests": 0.0,
+        #    "timestamp": timestamp_str,
+        #    "status": "Valid",
+        #    "share_type": "Transfer",
+        #}
         trxStorage.add(data_sender)
-        trxStorage.add(data_nominee)
+        #trxStorage.add(data_nominee)
     else:
         # Convert the micro amount to an HBD-equivalent value and then to rshares.
         # 1 HBD worth of rshares = rshares_per_hbd (minimum_vote_threshold / 0.021)
