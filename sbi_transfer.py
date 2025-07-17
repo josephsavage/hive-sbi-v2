@@ -61,6 +61,8 @@ def handle_point_transfer(
         return
     if nominee not in member_data:
         return
+    if sender == nominee:
+        return
 
     sender_member = member_data[sender]
     nominee_member = member_data[nominee]
