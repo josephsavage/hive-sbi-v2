@@ -73,7 +73,7 @@ def handle_point_transfer(
         if old_sender_shares < units:
             units = old_sender_shares
 
-        if units <= 0:
+        if units < 0:
             return
 
         if "shares" not in sender_member:
