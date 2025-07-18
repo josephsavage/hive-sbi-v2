@@ -38,7 +38,7 @@ class AccountTrx(object):
 
         """
         table = self.db[self.__tablename__]
-        table.insert(data)    
+        table.upsert(data, ['op_acc_index'])    
         self.db.commit()
 
     def get_all(self, op_types = []):
@@ -66,7 +66,7 @@ class AccountTrx(object):
         table = self.db[self.__tablename__]
         self.db.begin()
         for d in data:
-            table.insert(d)
+            table.upsert(d, ['op_acc_index'])
             
         self.db.commit()
 
