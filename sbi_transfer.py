@@ -383,7 +383,7 @@ def run():
                         if amount < 0.005:
                             pass  # Let them fall through to parse_op for logging
                         # Handle point transfers between 0.005 and 1 HIVE/HBD
-                        if amount < 1:
+                        elif amount < 1:
                             handle_point_transfer(
                                 json_op,
                                 member_data,
