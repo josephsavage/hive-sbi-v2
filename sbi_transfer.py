@@ -379,9 +379,9 @@ def run():
                 if json_op["type"] == "transfer":
                     amount = float(Amount(json_op["amount"], steem_instance=stm))
                     if account_name == "steembasicincome":
-                        # Skip micro transfers below the minimum threshold
+                        # Log micro transfers below the minimum threshold but don't process them as point transfers
                         if amount < 0.005:
-                            continue
+                            pass  # Let them fall through to parse_op for logging
                         # Handle point transfers between 0.005 and 1 HIVE/HBD
                         if amount < 1:
                             handle_point_transfer(
