@@ -140,7 +140,7 @@ def handle_point_transfer(
         # Sender (negative shares)
         data_sender = {
             "index": base_index,
-            "source": "member_transfer_out",
+            "source": "steembasicincome",
             "memo": f"Transfer to {nominee}",
             "account": sender,
             "sponsor": sender,
