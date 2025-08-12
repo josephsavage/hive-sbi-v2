@@ -360,13 +360,8 @@ def run():
 
             if ops[-1]["op_acc_index"] < start_index - start_index_offset:
                 continue
-            # Sort operations by amount (descending) so that larger transfers are handled first.
-            ops_sorted = sorted(
-                ops,
-                key=lambda o: float(o.get("amount", 0)),
-                reverse=True,
-            )
-            for op in ops_sorted:
+            # Process operations in natural chronological order (op_acc_index)
+            for op in ops:
                 if op["op_acc_index"] < start_index - start_index_offset:
                     continue
                 if (
