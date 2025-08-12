@@ -75,7 +75,7 @@ def handle_point_transfer(
         if old_sender_shares < units:
             units = old_sender_shares
 
-        if units < 0:
+        if units <= 0:
             return
 
         if "shares" not in sender_member:
@@ -165,7 +165,13 @@ def handle_point_transfer(
         #    "status": "Valid",
         #    "share_type": "Transfer",
         #}
-        trxStorage.add(data_sender)
+        # Idempotency: avoid duplicate key errors on reruns
+        try:
+            existing = trxStorage.get(data_sender["index"], data_sender["source"])  # (index, source)
+        except Exception:
+            existing = None
+        if existing is None:
+            trxStorage.add(data_sender)
         #trxStorage.add(data_nominee)
     else:
         # Convert the micro amount to an HBD-equivalent value and then to rshares.
