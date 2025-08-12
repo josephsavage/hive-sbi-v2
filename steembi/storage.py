@@ -152,7 +152,9 @@ class TrxDB(object):
 
         """
         table = self.db[self.__tablename__]
-        table.upsert(data, ['virtual_op', 'block', 'trx_in_block', 'op_in_trx'])    
+        # Upsert by the composite key used throughout this class
+        # to identify trx rows: (index, source)
+        table.upsert(data, ['index', 'source'])    
         self.db.commit()
 
     def delete(self, index, source):
