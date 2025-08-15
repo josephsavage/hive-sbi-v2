@@ -74,7 +74,7 @@ if __name__ == "__main__":
         )
 
         # Adjust accrual rates based on 50% threshold
-        factor = 1.01 if overall_mana_pct > 50 else 0.99
+        factor = 1.025 if overall_mana_pct > 50 else 0.99
         rshares_per_cycle *= factor
         del_rshares_per_cycle *= factor
 
