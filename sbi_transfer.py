@@ -50,12 +50,17 @@ def handle_point_transfer(
     amount_obj = Amount(op["amount"], steem_instance=stm)
     amount = float(amount_obj)
     sender = op["from"]
-    memo = op["memo"]
-
-    if memo.startswith("@"):
-        nominee = memo[1:]
-    else:
-        nominee = memo
+    memo_raw = op.get("memo", "")
+    # Normalize memo before parsing for username:
+    # - collapse multiple whitespaces
+    # - trim
+    # - lowercase
+    # - take first token only
+    # - strip leading '@'
+    memo_norm = " ".join(memo_raw.split()).strip().lower()
+    nominee = memo_norm.split()[0] if memo_norm else ""
+    if nominee.startswith("@"):
+        nominee = nominee[1:]
 
     if sender not in member_data:
         return
