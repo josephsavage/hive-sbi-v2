@@ -88,15 +88,6 @@ if __name__ == "__main__":
         )
     else:
         print("Not time for a new cycle yet. Exiting.")
-        sys.exit(0)
-
-    print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
-    print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
-
-# ---------------------------------------------------------
-    # NEW SECTION: Call sbi_reporting.python_call_usp_list()
-    # ---------------------------------------------------------
-    if cycle_ran:
         try:
             # Get dbconnector3 from config.json
             databaseConnector3 = config_data["dbconnector3"]
@@ -116,3 +107,8 @@ if __name__ == "__main__":
 
         except Exception as e:
             print(f"Error calling stored procedure: {e}")
+
+        sys.exit(0)
+
+    print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
+    print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
