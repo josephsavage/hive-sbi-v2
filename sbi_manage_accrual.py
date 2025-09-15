@@ -86,17 +86,13 @@ if __name__ == "__main__":
                 # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
             }
         )
+        print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
+        print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
     else:
-        print("Not time for a new cycle yet. Exiting.")
-        sys.exit(0)
-
-    print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
-    print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
-
-    # ---------------------------------------------------------
-    # NEW SECTION: Call sbi_reporting.python_call_usp_list()
-    # ---------------------------------------------------------
-    try:
+        # ---------------------------------------------------------
+        # NEW SECTION: Call sbi_reporting.python_call_usp_list()
+        # ---------------------------------------------------------
+        try:
             # Get dbconnector3 from config.json
             databaseConnector3 = config_data["dbconnector3"]
 
@@ -113,8 +109,6 @@ if __name__ == "__main__":
                     # row can be a tuple or Row object depending on driver
                     print("LOG:", *row)
 
-    except Exception as e:
-        print(f"Error calling stored procedure: {e}")
-
-    print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
-    print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
+        except Exception as e:
+            print(f"Error calling stored procedure: {e}")
+        print("Not time for a new cycle yet. Exiting.")
