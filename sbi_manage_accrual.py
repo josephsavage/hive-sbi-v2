@@ -92,3 +92,27 @@ if __name__ == "__main__":
 
     print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
     print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
+
+# ---------------------------------------------------------
+    # NEW SECTION: Call sbi_reporting.python_call_usp_list()
+    # ---------------------------------------------------------
+    if cycle_ran:
+        try:
+            # Get dbconnector3 from config.json
+            databaseConnector3 = config_data["dbconnector3"]
+
+            # Connect to dbconnector3
+            db3 = dataset.connect(databaseConnector3)
+
+            # Get the raw SQLAlchemy connection so we can call the stored procedure
+            with db3.engine.begin() as conn:
+                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
+                result = conn.execute("CALL sbi_reporting.python_call_usp_list();")
+
+                # Iterate over any returned rows and print them
+                for row in result:
+                    # row can be a tuple or Row object depending on driver
+                    print("LOG:", *row)
+
+        except Exception as e:
+            print(f"Error calling stored procedure: {e}")
