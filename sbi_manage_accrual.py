@@ -94,7 +94,7 @@ if __name__ == "__main__":
         # ---------------------------------------------------------
         try:
             # Get dbconnector3 from config.json
-            databaseConnector3 = config_data["dbconnector3"]
+            databaseConnector3 = config_data["databaseConnector3"]
 
             # Connect to dbconnector3
             db3 = dataset.connect(databaseConnector3)
@@ -102,7 +102,7 @@ if __name__ == "__main__":
             # Get the raw SQLAlchemy connection so we can call the stored procedure
             with db3.engine.begin() as conn:
                 print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-                result = conn.execute("CALL sbi_reporting.python_call_usp_list();")
+                result = conn.exec_driver_sql("CALL sbi_reporting.python_call_usp_list()")
 
                 # Iterate over any returned rows and print them
                 for row in result:
