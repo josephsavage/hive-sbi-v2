@@ -1,6 +1,5 @@
 from datetime import datetime
 
-from nectar import Steem
 from nectar.utils import addTzInfo
 from nectar import Steem
 
