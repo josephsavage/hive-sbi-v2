@@ -31,9 +31,9 @@ def estimate_rshares_for_hbd(stm: Steem, target_hbd: float, author_share: bool =
     recent_claims = int(fund["recent_claims"])
 
     feed = stm.get_feed_history()
-    hive_to_hbd_price = (
-        float(feed["current_median_history"]["base"].split()[0]) /
-        float(feed["current_median_history"]["quote"].split()[0])
+    hive_to_hbd_price = float(
+    float(fh["current_median_history"]["base"]["amount"])
+    / float(fh["current_median_history"]["quote"]["amount"])
     )
 
     effective_target = target_hbd * (2 if author_share else 1)
