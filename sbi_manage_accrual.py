@@ -46,6 +46,29 @@ if __name__ == "__main__":
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
+        # ---------------------------------------------------------
+        # NEW SECTION: Call sbi_reporting.python_call_usp_list()
+        # ---------------------------------------------------------
+        try:
+            # Get dbconnector3 from config.json
+            databaseConnector3 = config_data["databaseConnector3"]
+
+            # Connect to dbconnector3
+            db3 = dataset.connect(databaseConnector3)
+
+            # Get the raw SQLAlchemy connection so we can call the stored procedure
+            with db3.engine.begin() as conn:
+                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
+                result = conn.exec_driver_sql("CALL sbi_reporting.python_call_usp_list()")
+
+                # Iterate over any returned rows and print them
+                for row in result:
+                    # row can be a tuple or Row object depending on driver
+                    print("LOG:", *row)
+
+        except Exception as e:
+            print(f"Error calling stored procedure: {e}")
+            
         # Build Steem instance and collect mana for each account
         nodes = NodeList()
         nodes.update_nodes()
@@ -89,26 +112,4 @@ if __name__ == "__main__":
         print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
         print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
     else:
-        # ---------------------------------------------------------
-        # NEW SECTION: Call sbi_reporting.python_call_usp_list()
-        # ---------------------------------------------------------
-        try:
-            # Get dbconnector3 from config.json
-            databaseConnector3 = config_data["databaseConnector3"]
-
-            # Connect to dbconnector3
-            db3 = dataset.connect(databaseConnector3)
-
-            # Get the raw SQLAlchemy connection so we can call the stored procedure
-            with db3.engine.begin() as conn:
-                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-                result = conn.exec_driver_sql("CALL sbi_reporting.python_call_usp_list()")
-
-                # Iterate over any returned rows and print them
-                for row in result:
-                    # row can be a tuple or Row object depending on driver
-                    print("LOG:", *row)
-
-        except Exception as e:
-            print(f"Error calling stored procedure: {e}")
         print("Not time for a new cycle yet. Exiting.")
