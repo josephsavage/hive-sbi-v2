@@ -10,7 +10,7 @@ from nectar.account import Account
 from nectar.nodelist import NodeList
 
 from steembi.storage import AccountsDB, ConfigurationDB
-from steembi.utils import ensure_timezone_aware
+from steembi.utils import ensure_timezone_aware, estimate_rshares_for_hbd, estimate_hbd_for_rshares
 
 if __name__ == "__main__":
     # Load configuration from config.json (same as other SBI scripts)
@@ -75,6 +75,10 @@ if __name__ == "__main__":
         node_list = nodes.get_nodes(hive=hive_blockchain)
         stm = Steem(node=node_list, num_retries=5, call_num_retries=3, timeout=15)
 
+        
+        rshares_needed = estimate_rshares_for_hbd(stm, 0.021)
+        print(f"Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(stm, rshares_needed):.5f} HBD)")
+
         total_current_mana = 0
         total_max_mana = 0
         accounts_processed = 0
@@ -100,12 +104,14 @@ if __name__ == "__main__":
         factor = 1.025 if overall_mana_pct > 50 else 0.99
         rshares_per_cycle *= factor
         del_rshares_per_cycle *= factor
+        calc_min_threshold = rshares_needed
 
         # Persist updated values and reset last_cycle
         confStorage.update(
             {
                 "rshares_per_cycle": rshares_per_cycle,
                 "del_rshares_per_cycle": del_rshares_per_cycle,
+                "calc_min_threshold": calc_min_threshold,
                 # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
             }
         )
