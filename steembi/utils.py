@@ -1,8 +1,7 @@
 from datetime import datetime
 
-from nectar.utils import addTzInfo
 from nectar import Steem
-
+from nectar.utils import addTzInfo
 
 
 def ensure_timezone_aware(dt):
@@ -24,8 +23,9 @@ def ensure_timezone_aware(dt):
     return dt
 
 
-
-def estimate_rshares_for_hbd(stm: Steem, target_hbd: float, author_share: bool = True) -> int:
+def estimate_rshares_for_hbd(
+    stm: Steem, target_hbd: float, author_share: bool = True
+) -> int:
     """
     Estimate the rshares required to produce a target HBD payout.
     """
@@ -36,7 +36,6 @@ def estimate_rshares_for_hbd(stm: Steem, target_hbd: float, author_share: bool =
     feed = stm.get_feed_history()
     hive_to_hbd_price = float(feed["current_median_history"]["base"]["amount"]) / float(
         feed["current_median_history"]["quote"]["amount"]
-
     )
 
     effective_target = target_hbd * (2 if author_share else 1)
@@ -44,8 +43,9 @@ def estimate_rshares_for_hbd(stm: Steem, target_hbd: float, author_share: bool =
     return int(rshares)
 
 
-
-def estimate_hbd_for_rshares(stm: Steem, rshares: int, author_share: bool = True) -> float:
+def estimate_hbd_for_rshares(
+    stm: Steem, rshares: int, author_share: bool = True
+) -> float:
     """
     Estimate the HBD payout value of a given rshares amount.
     """
@@ -57,7 +57,6 @@ def estimate_hbd_for_rshares(stm: Steem, rshares: int, author_share: bool = True
     hive_to_hbd_price = float(
         feed["current_median_history"]["base"]["amount"]
     ) / float(feed["current_median_history"]["quote"]["amount"])
-
 
     vote_value_hbd = (rshares / recent_claims) * reward_balance * hive_to_hbd_price
     if author_share:
