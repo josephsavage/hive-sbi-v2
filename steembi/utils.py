@@ -29,7 +29,7 @@ def estimate_rshares_for_hbd(
     """
     Estimate the rshares required to produce a target HBD payout.
     """
-    fund = stm.get_reward_fund("post")
+    fund = stm.get_reward_funds()
     reward_balance = float(fund["reward_balance"]["amount"])
     recent_claims = int(fund["recent_claims"])
 
@@ -49,7 +49,7 @@ def estimate_hbd_for_rshares(
     """
     Estimate the HBD payout value of a given rshares amount.
     """
-    fund = stm.get_reward_fund("post")
+    fund = stm.get_reward_funds()
     reward_balance = float(fund["reward_balance"]["amount"])
     recent_claims = int(fund["recent_claims"])
 
