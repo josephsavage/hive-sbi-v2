@@ -25,7 +25,7 @@ from hivesbi.transfer_ops_storage import AccountTrx
 from hivesbi.utils import ensure_timezone_aware
 
 
-def memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol="STEEM"):
+def memo_welcome(transferMemos, memo_transfer_acc, sponsor, HIVE_symbol="HIVE"):
     if "welcome" not in transferMemos:
         return
 
@@ -35,15 +35,15 @@ def memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol="STEEM"
         return
     try:
         memo_text = transferMemos["welcome"]["memo"]
-        memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
+        memo_transfer_acc.transfer(sponsor, 0.001, HIVE_symbol, memo=memo_text)
         sleep(4)
     except Exception:
         print(
-            f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}"
+            f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {sponsor}"
         )
 
 
-def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="STEEM"):
+def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, HIVE_symbol="HIVE"):
     if "sponsoring" not in transferMemos:
         return
     if transferMemos["sponsoring"]["enabled"] == 0:
@@ -55,14 +55,14 @@ def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="
             memo_text = transferMemos["sponsoring"]["memo"] % sponsor
         else:
             memo_text = transferMemos["sponsoring"]["memo"]
-        memo_transfer_acc.transfer(s, 0.001, STEEM_symbol, memo=memo_text)
+        memo_transfer_acc.transfer(s, 0.001, HIVE_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print(f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {s}")
+        print(f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {s}")
 
 
 def memo_update_shares(
-    transferMemos, memo_transfer_acc, sponsor, shares, STEEM_symbol="STEEM"
+    transferMemos, memo_transfer_acc, sponsor, shares, HIVE_symbol="HIVE"
 ):
     if "update_shares" not in transferMemos:
         return
@@ -75,16 +75,16 @@ def memo_update_shares(
             memo_text = transferMemos["update_shares"]["memo"] % shares
         else:
             memo_text = transferMemos["update_shares"]["memo"]
-        memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
+        memo_transfer_acc.transfer(sponsor, 0.001, HIVE_symbol, memo=memo_text)
         sleep(4)
     except Exception:
         print(
-            f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}"
+            f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {sponsor}"
         )
 
 
 def memo_sponsoring_update_shares(
-    transferMemos, memo_transfer_acc, s, sponsor, shares, STEEM_symbol="STEEM"
+    transferMemos, memo_transfer_acc, s, sponsor, shares, HIVE_symbol="HIVE"
 ):
     if "sponsoring_update_shares" not in transferMemos:
         return
@@ -113,10 +113,10 @@ def memo_sponsoring_update_shares(
             memo_text = transferMemos["sponsoring_update_shares"]["memo"] % sponsor
         else:
             memo_text = transferMemos["sponsoring_update_shares"]["memo"]
-        memo_transfer_acc.transfer(s, 0.001, STEEM_symbol, memo=memo_text)
+        memo_transfer_acc.transfer(s, 0.001, HIVE_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print("Could not sent 0.001 %s to %s" % (STEEM_symbol, s))
+        print("Could not sent 0.001 %s to %s" % (HIVE_symbol, s))
 
 
 def run():
@@ -150,7 +150,7 @@ def run():
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
+    hp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
@@ -284,8 +284,8 @@ def run():
                         delegation[op["sponsor"]] = op["shares"]
                     elif op["vests"] > 0 and op["sponsor"] in member_data:
                         sp = hv.vests_to_hp(float(op["vests"]))
-                        delegation[op["sponsor"]] = int(sp / sp_share_ratio)
-                    # memo_sp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], sp_share_ratio)
+                        delegation[op["sponsor"]] = int(sp / hp_share_ratio)
+                    # memo_hp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], hp_share_ratio)
                     delegation_timestamp[op["sponsor"]] = timestamp
                 elif share_type.lower() in ["removeddelegation"]:
                     delegation[op["sponsor"]] = 0
@@ -346,7 +346,7 @@ def run():
                             transferMemos,
                             memo_transfer_acc,
                             sponsor,
-                            STEEM_symbol=hv.steem_symbol,
+                            STEEM_symbol=hv.hive_symbol,
                         )
 
                         member = Member(sponsor, shares, timestamp)
@@ -365,7 +365,7 @@ def run():
                             memo_transfer_acc,
                             sponsor,
                             member_data[sponsor]["shares"],
-                            STEEM_symbol=hv.steem_symbol,
+                            STEEM_symbol=hv.hive_symbol,
                         )
                         member_data[sponsor].append_share_age(timestamp, shares)
 
@@ -380,7 +380,7 @@ def run():
                                 memo_transfer_acc,
                                 s,
                                 sponsor,
-                                STEEM_symbol=hv.steem_symbol,
+                                STEEM_symbol=hv.hive_symbol,
                             )
 
                             member = Member(s, shares, timestamp)
@@ -399,7 +399,7 @@ def run():
                                 s,
                                 sponsor,
                                 member_data[s]["shares"],
-                                STEEM_symbol=hv.steem_symbol,
+                                STEEM_symbol=hv.hive_symbol,
                             )
                             member_data[s].append_share_age(timestamp, shares)
 
