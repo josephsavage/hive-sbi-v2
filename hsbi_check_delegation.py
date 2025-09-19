@@ -37,7 +37,7 @@ def run():
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
-    hp_share_ratio = conf_setup["hp_share_ratio"]
+    hp_share_ratio = conf_setup["sp_share_ratio"]
     last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
 
     print(

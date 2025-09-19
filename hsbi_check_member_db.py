@@ -29,7 +29,7 @@ if __name__ == "__main__":
     accounts = accStorage.get()
     other_accounts = accStorage.get_transfer()
 
-    hp_share_ratio = confStorage.get()["hp_share_ratio"]
+    hp_share_ratio = confStorage.get()["sp_share_ratio"]
 
     nodes = NodeList()
     try:
