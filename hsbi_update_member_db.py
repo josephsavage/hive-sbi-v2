@@ -346,7 +346,7 @@ def run():
                             transferMemos,
                             memo_transfer_acc,
                             sponsor,
-                            STEEM_symbol=hv.hive_symbol,
+                            HIVE_symbol=hv.hive_symbol,
                         )
 
                         member = Member(sponsor, shares, timestamp)
@@ -365,7 +365,7 @@ def run():
                             memo_transfer_acc,
                             sponsor,
                             member_data[sponsor]["shares"],
-                            STEEM_symbol=hv.hive_symbol,
+                            HIVE_symbol=hv.hive_symbol,
                         )
                         member_data[sponsor].append_share_age(timestamp, shares)
 
@@ -380,7 +380,7 @@ def run():
                                 memo_transfer_acc,
                                 s,
                                 sponsor,
-                                STEEM_symbol=hv.hive_symbol,
+                                HIVE_symbol=hv.hive_symbol,
                             )
 
                             member = Member(s, shares, timestamp)
@@ -399,7 +399,7 @@ def run():
                                 s,
                                 sponsor,
                                 member_data[s]["shares"],
-                                STEEM_symbol=hv.hive_symbol,
+                                HIVE_symbol=hv.hive_symbol,
                             )
                             member_data[s].append_share_age(timestamp, shares)
 
