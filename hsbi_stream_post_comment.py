@@ -125,8 +125,7 @@ def run():
     else:
         latest_update_block = start_block
     print(
-        "latest update %s - %d to %d"
-        % (str(latest_update), latest_update_block, stop_block)
+        f"hsbi_stream_post_comment: latest update {str(latest_update)} - {latest_update_block} to {stop_block}"
     )
 
     start_block = max([latest_update_block, start_block]) + 1
@@ -150,8 +149,7 @@ def run():
         if ops["block_num"] - last_block_print > 50:
             last_block_print = ops["block_num"]
             print(
-                "blocks left %d - post found: %d"
-                % (ops["block_num"] - stop_block, len(posts_dict))
+                f"hsbi_stream_post_comment: blocks left {ops['block_num'] - stop_block} - post found: {len(posts_dict)}"
             )
         authorperm = construct_authorperm(ops)
         c = None
@@ -216,7 +214,7 @@ def run():
                 account_name = account_list[random.randint(0, len(account_list) - 1)]
                 try:
                     print(
-                        f"Replying to @{c['author']}/{c['permlink']} with account {account_name}"
+                        f"hsbi_stream_post_comment: Replying to @{c['author']}/{c['permlink']} with account {account_name}"
                     )
                     c.reply(reply_body, author=account_name)
                     time.sleep(4)
@@ -269,8 +267,7 @@ def run():
             start_time = time.time()
             postTrx.add_batch(posts_dict)
             print(
-                "Adding %d post took %.2f seconds"
-                % (len(posts_dict), time.time() - start_time)
+                f"hsbi_stream_post_comment: Adding {len(posts_dict)} post took {time.time() - start_time:.2f} seconds"
             )
             posts_dict = {}
 
@@ -289,8 +286,7 @@ def run():
         start_time = time.time()
         postTrx.add_batch(posts_dict)
         print(
-            "Adding %d post took %.2f seconds"
-            % (len(posts_dict), time.time() - start_time)
+            f"hsbi_stream_post_comment: Adding {len(posts_dict)} post took {time.time() - start_time:.2f} seconds"
         )
         posts_dict = {}
 
