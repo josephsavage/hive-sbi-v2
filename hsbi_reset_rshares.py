@@ -45,16 +45,12 @@ def run():
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
 
     print(
-        "last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_reset_rshares: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
     if True:
         last_cycle = datetime.now(timezone.utc) - timedelta(seconds=60 * 145)
         confStorage.update({"last_cycle": last_cycle})
-        print("update member database")
+        print("hsbi_reset_rshares: update member database")
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
 
@@ -67,7 +63,7 @@ def run():
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
-        print("reset rshares")
+        print("hsbi_reset_rshares: reset rshares")
         if True:
             for m in member_data:
                 total_share_days = member_data[m]["total_share_days"]
@@ -91,7 +87,7 @@ def run():
                 _acc = Account(acc_name, blockchain_instance=hv)
 
                 a = AccountVotes(acc_name, blockchain_instance=hv)
-                print(acc_name)
+                print(f"hsbi_reset_rshares: {acc_name}")
                 for vote in a:
                     author = vote["author"]
                     if author in member_data:
@@ -103,7 +99,7 @@ def run():
             wallet = Wallet(blockchain_instance=hv)
             accountTrx = {}
             for acc_name in accounts:
-                print(acc_name)
+                print(f"hsbi_reset_rshares: {acc_name}")
                 db = dataset.connect(databaseConnector)
                 accountTrx[acc_name] = AccountTrx(db, acc_name)
 
@@ -114,7 +110,7 @@ def run():
                 for o in ops:
                     cnt += 1
                     if cnt % 10000 == 0:
-                        print("%d/%d" % (cnt, len(ops)))
+                        print(f"hsbi_reset_rshares: {cnt}/{len(ops)}")
                     op = json.loads(o["op_dict"])
                     if op["memo"] == "":
                         continue
@@ -127,7 +123,9 @@ def run():
                     authorperm = construct_authorperm(c["author"], c["permlink"])
                     if authorperm not in comments_transfer:
                         comments_transfer.append(authorperm)
-                print("%d comments with transfer found" % len(comments_transfer))
+                print(
+                    f"hsbi_reset_rshares: {len(comments_transfer)} comments with transfer found"
+                )
                 del ops
 
                 ops = accountTrx[acc_name].get_all(op_types=["comment"])
@@ -143,21 +141,20 @@ def run():
                     authorperm = construct_authorperm(c["author"], c["permlink"])
                     if authorperm not in comments:
                         comments.append(authorperm)
-                print("%d comments found" % len(comments))
+                print(f"hsbi_reset_rshares: {len(comments)} comments found")
                 del ops
                 cnt = 0
                 cnt2 = 0
                 for authorperm in comments:
                     cnt += 1
                     if cnt % 100 == 0:
-                        print("%d/%d" % (cnt, len(comments)))
+                        print(f"hsbi_reset_rshares: {cnt}/{len(comments)}")
                     if authorperm in comments_transfer:
                         print(
-                            "Will check vote signer %d/%d - %s"
-                            % (cnt2, len(comments_transfer), authorperm)
+                            f"hsbi_reset_rshares: Will check vote signer {cnt2}/{len(comments_transfer)} - {authorperm}"
                         )
                         if cnt2 % 10 == 0 and cnt2 > 0:
-                            print("write member database")
+                            print("hsbi_reset_rshares: write member database")
                             memberStorage.db = dataset.connect(databaseConnector2)
                             member_data_list = []
                             for m in member_data:
@@ -188,7 +185,7 @@ def run():
                             try:
                                 if cnt3 % 10 == 0:
                                     print(
-                                        "%d/%d votes" % (cnt3, len(c["active_votes"]))
+                                        f"hsbi_reset_rshares: {cnt3}/{len(c['active_votes'])} votes"
                                     )
                                 block_num = b.get_estimated_block_num(vote["time"])
                                 current_block_num = b.get_current_block_num()
@@ -269,7 +266,7 @@ def run():
                                     if vote["voter"] == a:
                                         continue
                                     if a not in ["quarry", "steemdunk"]:
-                                        print(a)
+                                        print(f"hsbi_reset_rshares: {a}")
                                     if a in [
                                         "smartsteem",
                                         "smartmarket",

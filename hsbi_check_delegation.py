@@ -13,8 +13,8 @@ from hivesbi.transfer_ops_storage import TransferTrx
 from hivesbi.utils import ensure_timezone_aware
 
 
-def calculate_shares(delegation_shares, sp_share_ratio):
-    return int(delegation_shares / sp_share_ratio)
+def calculate_shares(delegation_shares, hp_share_ratio):
+    return int(delegation_shares / hp_share_ratio)
 
 
 def run():
@@ -37,15 +37,11 @@ def run():
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
+    hp_share_ratio = conf_setup["hp_share_ratio"]
     last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
 
     print(
-        "sbi_check_delegation: last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_check_delegation: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
 
     if (
@@ -57,7 +53,7 @@ def run():
         try:
             nodes.update_nodes()
         except Exception:
-            print("could not update nodes")
+            print("hsbi_check_delegation: could not update nodes")
         hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
         set_shared_blockchain_instance(hv)
 
@@ -65,18 +61,13 @@ def run():
         trxStorage = TrxDB(db2)
 
         delegation = {}
-        sum_sp = {}
-        sum_sp_shares = {}
-        sum_sp_leased = {}
-        account = "steembasicincome"
-        delegation = {}
         delegation_shares = {}
-        sum_sp = 0
-        sum_sp_leased = 0
-        sum_sp_shares = 0
+        sum_hp = 0
+        sum_hp_leased = 0
+        sum_hp_shares = 0
         delegation_timestamp = {}
-
-        print("load delegation")
+        account = "steembasicincome"
+        print("hsbi_check_delegation: load delegation")
         delegation_list = []
         for d in trxStorage.get_share_type(share_type="Delegation"):
             if d["share_type"] == "Delegation":
@@ -98,7 +89,7 @@ def run():
 
         for d in sorted_delegation_list:
             if d["share_type"] == "Delegation":
-                delegation[d["account"]] = hv.vests_to_sp(float(d["vests"]))
+                delegation[d["account"]] = hv.vests_to_hp(float(d["vests"]))
                 delegation_timestamp[d["account"]] = ensure_timezone_aware(
                     d["timestamp"]
                 )
@@ -118,7 +109,7 @@ def run():
 
         delegation_leased = {}
         delegation_shares = {}
-        print("update delegation")
+        print("hsbi_check_delegation: update delegation")
         delegation_account = delegation
         for acc in delegation_account:
             if delegation_account[acc] == 0:
@@ -137,31 +128,30 @@ def run():
                 last_delegation_check = delegation_timestamp[acc]
             # if acc in delegation_shares and delegation_shares[acc] > 0:
             #    continue
-            print(acc)
+            print(f"hsbi_check_delegation: {acc}")
             leased = transferStorage.find(acc, account)
             if len(leased) == 0:
                 delegation_shares[acc] = delegation_account[acc]
-                shares = calculate_shares(delegation_account[acc], sp_share_ratio)
+                shares = calculate_shares(delegation_account[acc], hp_share_ratio)
                 trxStorage.update_delegation_shares(account, acc, shares)
                 continue
             delegation_leased[acc] = delegation_account[acc]
             trxStorage.update_delegation_state(
                 account, acc, "Delegation", "DelegationLeased"
             )
-            print("set delegation from %s to leased" % acc)
+            print(f"hsbi_check_delegation: set delegation from {acc} to leased")
 
         dd = delegation
         for d in dd:
-            sum_sp += dd[d]
+            sum_hp += dd[d]
         dd = delegation_leased
         for d in dd:
-            sum_sp_leased += dd[d]
+            sum_hp_leased += dd[d]
         dd = delegation_shares
         for d in dd:
-            sum_sp_shares += dd[d]
+            sum_hp_shares += dd[d]
         print(
-            "%s: sum %.6f SP - shares %.6f SP - leased %.6f SP"
-            % (account, sum_sp, sum_sp_shares, sum_sp_leased)
+            f"hsbi_check_delegation: {account}: sum {sum_hp:.6f} HP - shares {sum_hp_shares:.6f} HP - leased {sum_hp_leased:.6f} HP"
         )
 
         confStorage.update({"last_delegation_check": last_delegation_check})

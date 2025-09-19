@@ -39,7 +39,7 @@ if __name__ == "__main__":
     hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     # print(str(hv))
 
-    print("Check account history ops.")
+    print("hsbi_compare_ops_db: Check account history ops.")
 
     blockchain = Blockchain(blockchain_instance=hv)
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     )
 
     ops2 = accountTrx["sbi"].get_all(op_types=["transfer", "delegate_vesting_shares"])
-    print("ops loaded: length: %d - %d" % (len(ops1), len(ops2)))
+    print(f"hsbi_compare_ops_db: ops loaded: length: {len(ops1)} - {len(ops2)}")
 
     index = 0
     while index < len(ops1) and index < len(ops2):
@@ -78,7 +78,9 @@ if __name__ == "__main__":
         dict1 = json.loads(op1["op_dict"])
         dict2 = json.loads(op2["op_dict"])
         if dict1["timestamp"] != dict2["timestamp"]:
-            print("%s - %s" % (dict1["timestamp"], dict2["timestamp"]))
-            print("block: %d - %d" % (op1["block"], op2["block"]))
-            print("index: %d - %d" % (op1["op_acc_index"], op2["op_acc_index"]))
+            print(f"hsbi_compare_ops_db: {dict1['timestamp']} - {dict2['timestamp']}")
+            print(f"hsbi_compare_ops_db: block: {op1['block']} - {op2['block']}")
+            print(
+                f"hsbi_compare_ops_db: index: {op1['op_acc_index']} - {op2['op_acc_index']}"
+            )
         index += 1

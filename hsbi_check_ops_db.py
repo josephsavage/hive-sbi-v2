@@ -42,7 +42,7 @@ if __name__ == "__main__":
     hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     # print(str(hv))
 
-    print("Fetch new account history ops.")
+    print("hsbi_check_ops_db: Fetch new account history ops.")
 
     blockchain = Blockchain(blockchain_instance=hv)
 
@@ -66,7 +66,7 @@ if __name__ == "__main__":
         start_index = accountTrx[account_name].get_latest_index()
         if start_index is not None:
             start_index = start_index["op_acc_index"] + 1
-            print("account %s - %d" % (account["name"], start_index))
+            print(f"hsbi_check_ops_db: account {account['name']} - {start_index}")
         else:
             start_index = 0
         start_index = 0
@@ -90,12 +90,12 @@ if __name__ == "__main__":
                 }
                 data.append(d)
                 if cnt % 1000 == 0:
-                    print(op["timestamp"])
+                    print(f"hsbi_check_ops_db: {op['timestamp']}")
                     accountTrx[account_name].add_batch(data)
                     data = []
                 cnt += 1
             if len(data) > 0:
-                print(op["timestamp"])
+                print(f"hsbi_check_ops_db: {op['timestamp']}")
                 accountTrx[account_name].add_batch(data)
                 data = []
     for account_name in accounts:
@@ -181,12 +181,14 @@ if __name__ == "__main__":
             }
             data.append(d)
             if cnt % 1000 == 0:
-                print(op["timestamp"])
+                print(f"hsbi_check_ops_db: {op['timestamp']}")
                 trxStorage.add_batch(data)
                 data = []
             cnt += 1
         if len(data) > 0:
-            print(op["timestamp"])
+            print(f"hsbi_check_ops_db: {op['timestamp']}")
             trxStorage.add_batch(data)
             data = []
-    print("store ops script run %.2f s" % (time.time() - start_prep_time))
+    print(
+        f"hsbi_check_ops_db: store ops script run {time.time() - start_prep_time:.2f} s"
+    )

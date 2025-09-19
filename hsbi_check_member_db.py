@@ -29,17 +29,17 @@ if __name__ == "__main__":
     accounts = accStorage.get()
     other_accounts = accStorage.get_transfer()
 
-    sp_share_ratio = confStorage.get()["sp_share_ratio"]
+    hp_share_ratio = confStorage.get()["hp_share_ratio"]
 
     nodes = NodeList()
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")
+        print("hsbi_check_member_db: could not update nodes")
     hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
 
     # Update current node list from @fullnodeupdate
-    print("check member database")
+    print("hsbi_check_member_db: check member database")
     # memberStorage.wipe(True)
     member_accounts = memberStorage.get_all_accounts()
     data = trxStorage.get_all_data()
@@ -58,12 +58,14 @@ if __name__ == "__main__":
         bonus_shares += member_data[m]["bonus_shares"]
         balance_rshares += member_data[m]["balance_rshares"]
 
-    print("units: %d" % shares)
-    print("bonus units: %d" % bonus_shares)
-    print("total units: %d" % (shares + bonus_shares))
-    print("----------")
-    print("balance_rshares: %d" % balance_rshares)
-    print("balance_rshares: %.3f $" % hv.rshares_to_hbd(balance_rshares))
+    print(f"hsbi_check_member_db: units: {shares}")
+    print(f"hsbi_check_member_db: bonus units: {bonus_shares}")
+    print(f"hsbi_check_member_db: total units: {shares + bonus_shares}")
+    print("hsbi_check_member_db: ----------")
+    print(f"hsbi_check_member_db: balance_rshares: {balance_rshares}")
+    print(
+        f"hsbi_check_member_db: balance_rshares: {hv.rshares_to_hbd(balance_rshares):.3f} $"
+    )
     if len(missing_accounts) > 0:
-        print("%d not existing accounts: " % len(missing_accounts))
+        print(f"hsbi_check_member_db: {len(missing_accounts)} not existing accounts: ")
         print(missing_accounts)

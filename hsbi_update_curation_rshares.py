@@ -86,16 +86,16 @@ def update_account(
             continue
 
         if comment["parent_author"] == "" and created > addTzInfo(last_paid_post):
-            print("add post %s" % comment["authorperm"])
+            print(f"hsbi_update_curation_rshares: add post {comment['authorperm']}")
             blog.append(comment["authorperm"])
         elif comment["parent_author"] != "" and created > addTzInfo(last_paid_comment):
-            print("add comment %s" % comment["authorperm"])
+            print(f"hsbi_update_curation_rshares: add comment {comment['authorperm']}")
             posts.append(comment["authorperm"])
 
     post_rshares = 0
     for authorperm in blog:
         post = Comment(authorperm, blockchain_instance=hv)
-        print("Checking post %s" % post["authorperm"])
+        print(f"hsbi_update_curation_rshares: Checking post {post['authorperm']}")
         if post["created"] > addTzInfo(new_paid_post):
             new_paid_post = post["created"].replace(tzinfo=None)
         last_paid_post = post["created"].replace(tzinfo=None)
@@ -136,8 +136,12 @@ def update_account(
                 comment_rshares += rshares
     accounts_data[account["name"]]["last_paid_comment"] = last_paid_comment
     accounts_data[account["name"]]["last_paid_post"] = last_paid_post
-    print("%d new curation rshares for posts" % post_rshares)
-    print("%d new curation rshares for comments" % comment_rshares)
+    print(
+        f"hsbi_update_curation_rshares: {post_rshares} new curation rshares for posts"
+    )
+    print(
+        f"hsbi_update_curation_rshares: {comment_rshares} new curation rshares for comments"
+    )
 
     return accounts_data
 
@@ -182,15 +186,10 @@ def run():
             accountTrx[account] = AccountTrx(db, account)
 
     print(
-        "sbi_update_curation_rshares: last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_update_curation_rshares: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
     print(
-        "last_paid_post: %s - last_paid_comment: %s"
-        % (formatTimeString(last_paid_post), formatTimeString(last_paid_comment))
+        f"hsbi_update_curation_rshares: last_paid_post: {formatTimeString(last_paid_post)} - last_paid_comment: {formatTimeString(last_paid_comment)}"
     )
 
     if (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
@@ -198,7 +197,9 @@ def run():
             datetime.now(timezone.utc) - last_cycle
         ).total_seconds() > 60 * share_cycle_min
 
-        print("Update member database, new cycle: %s" % str(new_cycle))
+        print(
+            f"hsbi_update_curation_rshares: Update member database, new cycle: {new_cycle}"
+        )
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
 
@@ -213,7 +214,9 @@ def run():
             member_data[m] = Member(memberStorage.get(m))
 
         if True:
-            print("reward voted steembasicincome post and comments")
+            print(
+                "hsbi_update_curation_rshares: reward voted steembasicincome post and comments"
+            )
             # account = Account("steembasicincome", blockchain_instance=hv)
 
             if last_paid_post is None:
@@ -239,7 +242,7 @@ def run():
                     hv2,
                 )
 
-        print("write member database")
+        print("hsbi_update_curation_rshares: write member database")
         memberStorage.db = dataset.connect(databaseConnector2)
         member_data_list = []
         for m in member_data:
@@ -249,7 +252,9 @@ def run():
         for acc in accounts_data:
             accountStorage.update(accounts_data[acc])
 
-    print("update curation rshares script run %.2f s" % (time.time() - start_prep_time))
+    print(
+        f"hsbi_update_curation_rshares: update curation rshares script run {time.time() - start_prep_time:.2f} s"
+    )
 
 
 if __name__ == "__main__":

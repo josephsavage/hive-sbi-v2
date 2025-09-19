@@ -13,7 +13,7 @@ if __name__ == "__main__":
     else:
         with open(config_file) as json_data_file:
             config_data = json.load(json_data_file)
-        print(config_data)
+        print(f"hsbi_check_trx_database: {config_data}")
         accounts = config_data["accounts"]
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
@@ -46,15 +46,15 @@ if __name__ == "__main__":
             share_type[op["share_type"]] = 1
         shares += op["shares"]
         n_records += 1
-    print("the trx database has %d records" % (n_records))
-    print("Number of shares:")
-    print("shares: %d" % shares)
-    print("status:")
+    print(f"hsbi_check_trx_database: the trx database has {n_records} records")
+    print("hsbi_check_trx_database: Number of shares:")
+    print(f"hsbi_check_trx_database: shares: {shares}")
+    print("hsbi_check_trx_database: status:")
     for s in status:
-        print("%d status entries with %s" % (status[s], s))
-    print("share_types:")
+        print(f"hsbi_check_trx_database: {status[s]} status entries with {s}")
+    print("hsbi_check_trx_database: share_types:")
     for s in share_type:
-        print("%d share_type entries with %s" % (share_type[s], s))
+        print(f"hsbi_check_trx_database: {share_type[s]} share_type entries with {s}")
 
     accountTrx = {}
     for account in accounts:

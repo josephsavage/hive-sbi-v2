@@ -20,7 +20,7 @@ if __name__ == "__main__":
     # Load configuration from config.json (same as other SBI scripts)
     config_file = "config.json"
     if not os.path.isfile(config_file):
-        print("config.json is missing!")
+        print("hsbi_manage_accrual: config.json is missing!")
         sys.exit(1)
     with open(config_file) as f:
         config_data = json.load(f)
@@ -44,12 +44,15 @@ if __name__ == "__main__":
 
     # Determine whether a new cycle should run (proper logic from example)
     elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
-    print(f"sbi_manage_accrual: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)")
+    print(
+        f"hsbi_manage_accrual: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)"
+    )
     if (
         last_cycle is not None
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
+
 #        try:
 #            # Get dbconnector3 from config.json
 #            databaseConnector3 = config_data["databaseConnector3"]
@@ -72,6 +75,7 @@ if __name__ == "__main__":
 #        except Exception as e:
 #            print(f"Error calling stored procedure: {e}")
 
+
         # Build Hive instance and collect mana for each account
         nodes = NodeList()
         nodes.update_nodes()
@@ -80,7 +84,7 @@ if __name__ == "__main__":
 
         rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
         print(
-            f"Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
+            f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
         )
 
         total_current_mana = 0
@@ -93,15 +97,17 @@ if __name__ == "__main__":
                 total_max_mana += mana.get("max_mana", 0)
                 accounts_processed += 1
             except Exception as e:
-                print(f"Could not fetch mana for {acc}: {e}")
+                print(f"hsbi_manage_accrual: Could not fetch mana for {acc}: {e}")
 
         if total_max_mana == 0:
-            print("Unable to retrieve mana information for any account. Exiting.")
+            print(
+                "hsbi_manage_accrual: Unable to retrieve mana information for any account. Exiting."
+            )
             sys.exit(1)
 
         overall_mana_pct = (total_current_mana / total_max_mana) * 100
         print(
-            f"Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
+            f"hsbi_manage_accrual: Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
         )
 
         # Adjust accrual rates based on 50% threshold
@@ -119,7 +125,11 @@ if __name__ == "__main__":
                 # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
             }
         )
-        print(f"Updated rshares_per_cycle to {rshares_per_cycle:.6f}")
-        print(f"Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}")
+        print(
+            f"hsbi_manage_accrual: Updated rshares_per_cycle to {rshares_per_cycle:.6f}"
+        )
+        print(
+            f"hsbi_manage_accrual: Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}"
+        )
     else:
-        print("Not time for a new cycle yet. Exiting.")
+        print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")

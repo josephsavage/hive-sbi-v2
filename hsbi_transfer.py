@@ -257,11 +257,7 @@ def run():
         rshares_per_hbd = minimum_vote_threshold / 0.021
 
     print(
-        "sbi_transfer: last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_transfer: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
 
     if (
@@ -270,7 +266,7 @@ def run():
         > 60 * share_cycle_min
     ):
         key_list = []
-        print("Parse new transfers.")
+        print("hsbi_transfer: Parse new transfers.")
         key = keyStorage.get("steembasicincome", "memo")
         if key is not None:
             key_list.append(key["wif"])
@@ -279,7 +275,7 @@ def run():
         try:
             nodes.update_nodes()
         except Exception:
-            print("could not update nodes")
+            print("hsbi_transfer: could not update nodes")
         hv = Hive(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
         # set_shared_blockchain_instance(hv)
 
@@ -290,7 +286,7 @@ def run():
             member_data[m] = Member(memberStorage.get(m))
 
         if True:
-            print("delete from transaction_memo... ")
+            print("hsbi_transfer: delete from transaction_memo... ")
             #            transactionStorage.delete_sender("dtube.rewards")
             #            transactionStorage.delete_sender("reward.app")
             #            transactionStorage.delete_to("sbi2")
@@ -302,7 +298,7 @@ def run():
             #            transactionStorage.delete_to("sbi8")
             #            transactionStorage.delete_to("sbi9")
             #            transactionStorage.delete_to("sbi10")
-            print("done.")
+            print("hsbi_transfer: done.")
 
         stop_index = None
         # stop_index = addTzInfo(datetime(2018, 7, 21, 23, 46, 00))
@@ -391,7 +387,9 @@ def run():
 
                 pah.parse_op(json_op, parse_vesting=parse_vesting)
 
-        print("transfer script run %.2f s" % (time.time() - start_prep_time))
+        print(
+            f"hsbi_transfer: transfer script run {time.time() - start_prep_time:.2f} s"
+        )
 
 
 if __name__ == "__main__":

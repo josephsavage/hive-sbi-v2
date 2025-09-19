@@ -32,7 +32,7 @@ if __name__ == "__main__":
     else:
         with open(config_file) as json_data_file:
             config_data = json.load(json_data_file)
-        print(config_data)
+        print(f"hsbi_stream_test_data: {config_data}")
         accounts = config_data["accounts"]
         path = config_data["path"]
         database = config_data["database"]
@@ -52,9 +52,9 @@ if __name__ == "__main__":
     try:
         nodes.update_nodes(weights={"hist": 1})
     except Exception:
-        print("could not update nodes")
+        print("hsbi_stream_test_data: could not update nodes")
     hv = Hive(node=nodes.get_nodes())
-    print(str(hv))
+    print(f"hsbi_stream_test_data: {hv}")
     set_shared_blockchain_instance(hv)
 
     blockchain = Blockchain()
@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     for account_name in accounts:
         account = Account(account_name)
-        print("account %s" % account["name"])
+        print(f"hsbi_stream_test_data: account {account['name']}")
         # Go trough all transfer ops
         cnt = 0
         cnt = 0
@@ -77,8 +77,7 @@ if __name__ == "__main__":
         for op in ops:
             if op["op_acc_index"] - last_op_index != 1:
                 print(
-                    "%s - has missing ops %d - %d != 1"
-                    % (account_name, op["op_acc_index"], last_op_index)
+                    f"hsbi_stream_test_data: {account_name} - has missing ops {op['op_acc_index']} - {last_op_index} != 1"
                 )
             else:
                 last_op_index = op["op_acc_index"]
@@ -86,15 +85,14 @@ if __name__ == "__main__":
 
     for account in other_accounts:
         account = Account(account)
-        print("account %s" % account["name"])
+        print(f"hsbi_stream_test_data: account {account['name']}")
         cnt = 0
         ops = accountTrx[account_name].get_all()
         last_op_index = -1
         for op in ops:
             if op["op_acc_index"] - last_op_index != 1:
                 print(
-                    "%s - has missing ops %d - %d != 1"
-                    % (account_name, op["op_acc_index"], last_op_index)
+                    f"hsbi_stream_test_data: {account_name} - has missing ops {op['op_acc_index']} - {last_op_index} != 1"
                 )
             else:
                 last_op_index = op["op_acc_index"]
