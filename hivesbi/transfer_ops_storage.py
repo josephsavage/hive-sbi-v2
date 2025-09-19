@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import and_
-from steembi.utils import ensure_timezone_aware
+from hivesbi.utils import ensure_timezone_aware
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)

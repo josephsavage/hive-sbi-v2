@@ -1,7 +1,7 @@
 # This Python file uses the following encoding: utf-8
 from datetime import datetime, timezone
 
-from steembi.utils import ensure_timezone_aware
+from hivesbi.utils import ensure_timezone_aware
 
 
 class Member(dict):

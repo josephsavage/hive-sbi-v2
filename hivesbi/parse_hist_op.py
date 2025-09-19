@@ -12,7 +12,7 @@ from nectar.utils import (
     addTzInfo,
     formatTimeString,
 )
-from steembi.memo_parser import MemoParser
+from hivesbi.memo_parser import MemoParser
 
 log = logging.getLogger(__name__)
 
