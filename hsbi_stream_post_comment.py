@@ -221,7 +221,9 @@ def run():
                     c.reply(reply_body, author=account_name)
                     time.sleep(4)
                 except Exception as e:
-                    print(f"hsbi_stream_post_comment: Error replying to status comment: {e}")
+                    print(
+                        f"hsbi_stream_post_comment: Error replying to status comment: {e}"
+                    )
                     continue
 
         already_voted = False
@@ -292,7 +294,9 @@ def run():
         )
         posts_dict = {}
 
-    print(f"hsbi_stream_post_comment: stream posts script run {time.time() - start_prep_time:.2f} s")
+    print(
+        f"hsbi_stream_post_comment: stream posts script run {time.time() - start_prep_time:.2f} s"
+    )
 
 
 if __name__ == "__main__":

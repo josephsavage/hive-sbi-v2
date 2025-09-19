@@ -63,7 +63,9 @@ if __name__ == "__main__":
     print(f"hsbi_check_member_db: total units: {shares + bonus_shares}")
     print("hsbi_check_member_db: ----------")
     print(f"hsbi_check_member_db: balance_rshares: {balance_rshares}")
-    print(f"hsbi_check_member_db: balance_rshares: {hv.rshares_to_hbd(balance_rshares):.3f} $")
+    print(
+        f"hsbi_check_member_db: balance_rshares: {hv.rshares_to_hbd(balance_rshares):.3f} $"
+    )
     if len(missing_accounts) > 0:
         print(f"hsbi_check_member_db: {len(missing_accounts)} not existing accounts: ")
         print(missing_accounts)

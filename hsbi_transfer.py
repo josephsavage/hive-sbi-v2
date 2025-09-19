@@ -387,7 +387,9 @@ def run():
 
                 pah.parse_op(json_op, parse_vesting=parse_vesting)
 
-        print(f"hsbi_transfer: transfer script run {time.time() - start_prep_time:.2f} s")
+        print(
+            f"hsbi_transfer: transfer script run {time.time() - start_prep_time:.2f} s"
+        )
 
 
 if __name__ == "__main__":

@@ -125,7 +125,9 @@ if __name__ == "__main__":
                         continue
                     if c["authorperm"] not in comments_transfer:
                         comments_transfer.append(c["authorperm"])
-                print(f"hsbi_check_promotion_post: {len(comments_transfer)} comments with transfer found")
+                print(
+                    f"hsbi_check_promotion_post: {len(comments_transfer)} comments with transfer found"
+                )
                 for authorperm in comments_transfer:
                     c = Comment(authorperm, blockchain_instance=hv)
                     print(f"hsbi_check_promotion_post: {c['authorperm']}")

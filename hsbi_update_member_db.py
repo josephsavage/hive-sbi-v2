@@ -38,7 +38,9 @@ def memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol="STEEM"
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print(f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}")
+        print(
+            f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}"
+        )
 
 
 def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="STEEM"):
@@ -76,7 +78,9 @@ def memo_update_shares(
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print(f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}")
+        print(
+            f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}"
+        )
 
 
 def memo_sponsoring_update_shares(
@@ -556,7 +560,9 @@ def run():
         print(f"hsbi_update_member_db: delegation bonus shares: {delegation_shares}")
         print(f"hsbi_update_member_db: Mngt bonus shares {mngt_shares}")
 
-    print(f"hsbi_update_member_db: update member script run {time.time() - start_prep_time:.2f} s")
+    print(
+        f"hsbi_update_member_db: update member script run {time.time() - start_prep_time:.2f} s"
+    )
 
 
 if __name__ == "__main__":

@@ -136,8 +136,12 @@ def update_account(
                 comment_rshares += rshares
     accounts_data[account["name"]]["last_paid_comment"] = last_paid_comment
     accounts_data[account["name"]]["last_paid_post"] = last_paid_post
-    print(f"hsbi_update_curation_rshares: {post_rshares} new curation rshares for posts")
-    print(f"hsbi_update_curation_rshares: {comment_rshares} new curation rshares for comments")
+    print(
+        f"hsbi_update_curation_rshares: {post_rshares} new curation rshares for posts"
+    )
+    print(
+        f"hsbi_update_curation_rshares: {comment_rshares} new curation rshares for comments"
+    )
 
     return accounts_data
 
@@ -193,7 +197,9 @@ def run():
             datetime.now(timezone.utc) - last_cycle
         ).total_seconds() > 60 * share_cycle_min
 
-        print(f"hsbi_update_curation_rshares: Update member database, new cycle: {new_cycle}")
+        print(
+            f"hsbi_update_curation_rshares: Update member database, new cycle: {new_cycle}"
+        )
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
 
@@ -208,7 +214,9 @@ def run():
             member_data[m] = Member(memberStorage.get(m))
 
         if True:
-            print("hsbi_update_curation_rshares: reward voted steembasicincome post and comments")
+            print(
+                "hsbi_update_curation_rshares: reward voted steembasicincome post and comments"
+            )
             # account = Account("steembasicincome", blockchain_instance=hv)
 
             if last_paid_post is None:
@@ -244,7 +252,9 @@ def run():
         for acc in accounts_data:
             accountStorage.update(accounts_data[acc])
 
-    print(f"hsbi_update_curation_rshares: update curation rshares script run {time.time() - start_prep_time:.2f} s")
+    print(
+        f"hsbi_update_curation_rshares: update curation rshares script run {time.time() - start_prep_time:.2f} s"
+    )
 
 
 if __name__ == "__main__":

@@ -220,7 +220,9 @@ def run():
             if len(data_batch) > 0:
                 trxStorage.add_batch(data_batch)
                 data_batch = []
-        print(f"hsbi_store_ops_db: store ops script run {time.time() - start_prep_time:.2f} s")
+        print(
+            f"hsbi_store_ops_db: store ops script run {time.time() - start_prep_time:.2f} s"
+        )
 
 
 if __name__ == "__main__":

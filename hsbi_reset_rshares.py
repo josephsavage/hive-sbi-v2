@@ -123,7 +123,9 @@ def run():
                     authorperm = construct_authorperm(c["author"], c["permlink"])
                     if authorperm not in comments_transfer:
                         comments_transfer.append(authorperm)
-                print(f"hsbi_reset_rshares: {len(comments_transfer)} comments with transfer found")
+                print(
+                    f"hsbi_reset_rshares: {len(comments_transfer)} comments with transfer found"
+                )
                 del ops
 
                 ops = accountTrx[acc_name].get_all(op_types=["comment"])
@@ -182,7 +184,9 @@ def run():
                         ):
                             try:
                                 if cnt3 % 10 == 0:
-                                    print(f"hsbi_reset_rshares: {cnt3}/{len(c['active_votes'])} votes")
+                                    print(
+                                        f"hsbi_reset_rshares: {cnt3}/{len(c['active_votes'])} votes"
+                                    )
                                 block_num = b.get_estimated_block_num(vote["time"])
                                 current_block_num = b.get_current_block_num()
                                 transaction = None

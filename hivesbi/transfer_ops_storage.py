@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import and_
+
 from hivesbi.utils import ensure_timezone_aware
 
 log = logging.getLogger(__name__)

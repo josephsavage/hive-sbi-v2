@@ -99,7 +99,9 @@ def run():
     if end_block > start_block + 6000:
         end_block = start_block + 6000
 
-    print(f"hsbi_store_member_hist: Checking member upvotes from {start_block} to {end_block}")
+    print(
+        f"hsbi_store_member_hist: Checking member upvotes from {start_block} to {end_block}"
+    )
 
     date_now = datetime.now(timezone.utc)
     date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
@@ -317,7 +319,9 @@ def run():
             print(
                 f"hsbi_store_member_hist: Duration for {block_diff_for_db_storage} blocks: {time_for_blocks:.2f} s ({time_for_blocks / block_diff_for_db_storage:.3f} s per block) -- {running_hours:.2f} hours to go"
             )
-            print(f"hsbi_store_member_hist: {comment_cnt}  new comments, {vote_cnt} new votes")
+            print(
+                f"hsbi_store_member_hist: {comment_cnt}  new comments, {vote_cnt} new votes"
+            )
             start_time = time.time()
             comment_cnt = 0
             vote_cnt = 0
@@ -363,7 +367,9 @@ def run():
         curationOptimTrx.add_batch(curation_vote_list)
         curation_vote_list = []
 
-    print(f"hsbi_store_member_hist: member hist script run {time.time() - start_prep_time:.2f} s")
+    print(
+        f"hsbi_store_member_hist: member hist script run {time.time() - start_prep_time:.2f} s"
+    )
 
 
 if __name__ == "__main__":

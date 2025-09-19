@@ -256,7 +256,9 @@ def run():
                         time.sleep(6)
                         if cnt > 0:
                             c.blockchain.rpc.next()
-                        print(f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}")
+                        print(
+                            f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}"
+                        )
                     cnt += 1
                 if vote_sucessfull:
                     print(
@@ -360,7 +362,9 @@ def run():
                                 time.sleep(6)
                                 if cnt > 0:
                                     c.blockchain.rpc.next()
-                                print(f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}")
+                                print(
+                                    f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}"
+                                )
                             cnt += 1
                         if vote_sucessfull:
                             print(
@@ -438,7 +442,9 @@ def run():
                             time.sleep(6)
                             if cnt > 0:
                                 c.blockchain.rpc.next()
-                            print(f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}")
+                            print(
+                                f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}"
+                            )
                         cnt += 1
                     if vote_sucessfull:
                         print(
@@ -449,7 +455,9 @@ def run():
                     postTrx.update_voted(author, created, vote_sucessfull, voted_after)
 
             print(f"hsbi_upvote_post_comment: rshares_sum {rshares_sum}")
-    print(f"hsbi_upvote_post_comment: upvote script run {time.time() - start_prep_time:.2f} s")
+    print(
+        f"hsbi_upvote_post_comment: upvote script run {time.time() - start_prep_time:.2f} s"
+    )
 
 
 if __name__ == "__main__":

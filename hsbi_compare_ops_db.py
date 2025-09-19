@@ -80,5 +80,7 @@ if __name__ == "__main__":
         if dict1["timestamp"] != dict2["timestamp"]:
             print(f"hsbi_compare_ops_db: {dict1['timestamp']} - {dict2['timestamp']}")
             print(f"hsbi_compare_ops_db: block: {op1['block']} - {op2['block']}")
-            print(f"hsbi_compare_ops_db: index: {op1['op_acc_index']} - {op2['op_acc_index']}")
+            print(
+                f"hsbi_compare_ops_db: index: {op1['op_acc_index']} - {op2['op_acc_index']}"
+            )
         index += 1

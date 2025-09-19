@@ -189,4 +189,6 @@ if __name__ == "__main__":
             print(f"hsbi_check_ops_db: {op['timestamp']}")
             trxStorage.add_batch(data)
             data = []
-    print(f"hsbi_check_ops_db: store ops script run {time.time() - start_prep_time:.2f} s")
+    print(
+        f"hsbi_check_ops_db: store ops script run {time.time() - start_prep_time:.2f} s"
+    )
