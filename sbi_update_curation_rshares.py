@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.account import Account
 from nectar.comment import Comment
 from nectar.nodelist import NodeList
@@ -14,18 +14,18 @@ from nectar.utils import (
 )
 from nectar.vote import ActiveVotes
 
-from steembi.member import Member
-from steembi.storage import (
+from hivesbi.member import Member
+from hivesbi.storage import (
     AccountsDB,
     ConfigurationDB,
     KeysDB,
     MemberDB,
     TransactionMemoDB,
     TransferMemoDB,
-    TrxDB
+    TrxDB,
 )
-from steembi.transfer_ops_storage import AccountTrx, TransferTrx
-from steembi.utils import ensure_timezone_aware
+from hivesbi.transfer_ops_storage import AccountTrx, TransferTrx
+from hivesbi.utils import ensure_timezone_aware
 
 
 def increment_rshares(member_data, vote, rshares):
@@ -43,26 +43,30 @@ def update_account(account, new_paid_post, new_paid_comment):
     if accounts_data[account]["last_paid_post"] is not None:
         last_paid_post = accounts_data[account]["last_paid_post"]
 
-    account = Account(account, steem_instance=stm)
+    account = Account(account, steem_instance=hv)
     if last_paid_post < last_paid_comment:
         oldest_timestamp = last_paid_post
     else:
         oldest_timestamp = last_paid_comment
     if account["name"] == "steembasicincome":
-        ops = accountTrx["sbi"].get_newest(oldest_timestamp, op_types=["comment"], limit=500)
+        ops = accountTrx["sbi"].get_newest(
+            oldest_timestamp, op_types=["comment"], limit=500
+        )
     else:
-        ops = accountTrx[account["name"]].get_newest(oldest_timestamp, op_types=["comment"], limit=50)
+        ops = accountTrx[account["name"]].get_newest(
+            oldest_timestamp, op_types=["comment"], limit=50
+        )
     blog = []
     posts = []
     for op in ops[::-1]:
         try:
-            comment = (json.loads(op["op_dict"]))
+            comment = json.loads(op["op_dict"])
             created = formatTimeString(comment["timestamp"])
         except Exception:
             op_dict = op["op_dict"]
-            comment = json.loads(op_dict[:op_dict.find("body") - 3] + '}')
+            comment = json.loads(op_dict[: op_dict.find("body") - 3] + "}")
         try:
-            comment = Comment(comment, steem_instance=stm)
+            comment = Comment(comment, steem_instance=hv)
             comment.refresh()
             created = comment["created"]
         except Exception:
@@ -81,7 +85,7 @@ def update_account(account, new_paid_post, new_paid_comment):
 
     post_rshares = 0
     for authorperm in blog:
-        post = Comment(authorperm, steem_instance=stm)
+        post = Comment(authorperm, steem_instance=hv)
         print("Checking post %s" % post["authorperm"])
         if post["created"] > addTzInfo(new_paid_post):
             new_paid_post = post["created"].replace(tzinfo=None)
@@ -96,14 +100,16 @@ def update_account(account, new_paid_post, new_paid_comment):
                     if rshares < rshares_per_cycle:
                         rshares = rshares_per_cycle
                 else:
-                    rshares = vote["rshares"] * upvote_multiplier * upvote_multiplier_adjusted
+                    rshares = (
+                        vote["rshares"] * upvote_multiplier * upvote_multiplier_adjusted
+                    )
 
                 increment_rshares(member_data, vote, rshares)
                 post_rshares += rshares
 
     comment_rshares = 0
     for authorperm in posts:
-        post = Comment(authorperm, steem_instance=stm)
+        post = Comment(authorperm, steem_instance=hv)
         if post["created"] > addTzInfo(new_paid_comment):
             new_paid_comment = post["created"].replace(tzinfo=None)
         last_paid_comment = post["created"].replace(tzinfo=None)
@@ -126,8 +132,9 @@ def update_account(account, new_paid_post, new_paid_comment):
 
     return accounts_data
 
+
 def run():
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -180,14 +187,22 @@ def run():
         else:
             accountTrx[account] = AccountTrx(db, account)
 
-    print("sbi_update_curation_rshares: last_cycle: %s - %.2f min" % (
-        formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
-    print("last_paid_post: %s - last_paid_comment: %s" % (
-        formatTimeString(last_paid_post), formatTimeString(last_paid_comment)))
+    print(
+        "sbi_update_curation_rshares: last_cycle: %s - %.2f min"
+        % (
+            formatTimeString(last_cycle),
+            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
+        )
+    )
+    print(
+        "last_paid_post: %s - last_paid_comment: %s"
+        % (formatTimeString(last_paid_post), formatTimeString(last_paid_comment))
+    )
 
     if (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
-
-        new_cycle = (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
+        new_cycle = (
+            datetime.now(timezone.utc) - last_cycle
+        ).total_seconds() > 60 * share_cycle_min
         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
 
         print("Update member database, new cycle: %s" % str(new_cycle))
@@ -197,8 +212,8 @@ def run():
         # print(key_list)
         nodes = NodeList()
         nodes.update_nodes()
-        stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
-        stm2 = Steem(node=nodes.get_nodes(hive=hive_blockchain), use_condenser=True)
+        hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
+        stm2 = Hive(node=nodes.get_nodes(hive=hive_blockchain), use_condenser=True)
 
         member_data = {}
         n_records = 0
@@ -208,7 +223,7 @@ def run():
 
         if True:
             print("reward voted steembasicincome post and comments")
-            # account = Account("steembasicincome", steem_instance=stm)
+            # account = Account("steembasicincome", steem_instance=hv)
 
             if last_paid_post is None:
                 last_paid_post = datetime(2018, 8, 9, 3, 36, 48)

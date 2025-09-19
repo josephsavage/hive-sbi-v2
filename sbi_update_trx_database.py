@@ -2,13 +2,13 @@ import json
 import os
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.nodelist import NodeList
 
-from steembi.storage import MemberDB, TrxDB
+from hivesbi.storage import MemberDB, TrxDB
 
 if __name__ == "__main__":
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -21,7 +21,6 @@ if __name__ == "__main__":
         other_accounts = config_data["other_accounts"]
         mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
-        
 
     db2 = dataset.connect(databaseConnector2)
     # Create keyStorage
@@ -33,8 +32,8 @@ if __name__ == "__main__":
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")       
-    stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
+        print("could not update nodes")
+    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     data = trxStorage.get_all_data()
     status = {}
     share_type = {}

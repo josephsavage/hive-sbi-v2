@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.blockchain import Blockchain
 from nectar.comment import Comment
 from nectar.instance import set_shared_steem_instance
@@ -12,13 +12,14 @@ from nectar.nodelist import NodeList
 from nectar.utils import addTzInfo, construct_authorperm, formatTimeString
 from nectar.vote import Vote
 
-from steembi.member import Member
-from steembi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
-from steembi.transfer_ops_storage import CurationOptimizationTrx, MemberHistDB
-from steembi.utils import ensure_timezone_aware
+from hivesbi.member import Member
+from hivesbi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
+from hivesbi.transfer_ops_storage import CurationOptimizationTrx, MemberHistDB
+from hivesbi.utils import ensure_timezone_aware
+
 
 def run():
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -33,8 +34,6 @@ def run():
     # databaseConnector = "sqlite:///" + sqlDataBaseFile
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)
-
-
 
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
@@ -66,18 +65,23 @@ def run():
     for m in member_accounts:
         member_data[m] = Member(memberStorage.get(m))
         if latest_enrollment is None:
-            latest_enrollment = ensure_timezone_aware(member_data[m]["latest_enrollment"])
-        elif latest_enrollment < ensure_timezone_aware(member_data[m]["latest_enrollment"]):
-            latest_enrollment = ensure_timezone_aware(member_data[m]["latest_enrollment"])
+            latest_enrollment = ensure_timezone_aware(
+                member_data[m]["latest_enrollment"]
+            )
+        elif latest_enrollment < ensure_timezone_aware(
+            member_data[m]["latest_enrollment"]
+        ):
+            latest_enrollment = ensure_timezone_aware(
+                member_data[m]["latest_enrollment"]
+            )
 
     print("latest member enrollment %s" % str(latest_enrollment))
-
 
     updated_member_data = []
 
     db = dataset.connect(databaseConnector)
     curationOptimTrx = CurationOptimizationTrx(db)
-#    curationOptimTrx.delete_old_posts(days=7)
+    #    curationOptimTrx.delete_old_posts(days=7)
     # Update current node list from @fullnodeupdate
     nodes = NodeList()
     # nodes.update_nodes(weights={"hist": 1})
@@ -87,19 +91,18 @@ def run():
         print("could not update nodes")
 
     node_list = nodes.get_nodes(hive=hive_blockchain)
-    stm = Steem(node=node_list, num_retries=3, timeout=10)
-    # print(str(stm))
-    set_shared_steem_instance(stm)
+    hv = Hive(node=node_list, num_retries=3, timeout=10)
+    # print(str(hv))
+    set_shared_steem_instance(hv)
 
     accountTrx = {}
     accountTrx = MemberHistDB(db)
 
-    b = Blockchain(steem_instance=stm)
+    b = Blockchain(steem_instance=hv)
     current_block = b.get_current_block()
     stop_time = latest_enrollment
     stop_time = current_block["timestamp"]
     start_time = stop_time - timedelta(seconds=30 * 24 * 60 * 60)
-
 
     blocks_per_day = 20 * 60 * 24
 
@@ -123,7 +126,7 @@ def run():
     date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))
     date_72h_before = addTzInfo(date_now - timedelta(seconds=72 * 60 * 60))
     print("delete old hist data")
-#    accountTrx.delete_old_data(end_block - (20 * 60 * 24 * 7))
+    #    accountTrx.delete_old_data(end_block - (20 * 60 * 24 * 7))
     print("delete done")
 
     # print("start to stream")
@@ -131,13 +134,19 @@ def run():
     curation_vote_list = []
 
     last_block_num = None
-    last_trx_id = '0' * 40
+    last_trx_id = "0" * 40
     op_num = 0
     cnt = 0
     comment_cnt = 0
     vote_cnt = 0
     # print("Check rshares from %d - %d" % (int(start_block), int(end_block)))
-    for op in b.stream(start=int(start_block), stop=int(end_block), opNames=["vote", "comment"], threading=False, thread_num=8):
+    for op in b.stream(
+        start=int(start_block),
+        stop=int(end_block),
+        opNames=["vote", "comment"],
+        threading=False,
+        thread_num=8,
+    ):
         block_num = op["block_num"]
         if last_block_num is None:
             start_time = time.time()
@@ -150,14 +159,22 @@ def run():
             trx_num = op["trx_num"]
         else:
             trx_num = 0
-        data = {"block_num": block_num, "block_id": op["_id"], "trx_id": op["trx_id"], "trx_num": trx_num, "op_num": op_num, "timestamp": formatTimeString(op["timestamp"]), "type": op["type"]}
-        if op["trx_id"] in trx_id_list :
+        data = {
+            "block_num": block_num,
+            "block_id": op["_id"],
+            "trx_id": op["trx_id"],
+            "trx_num": trx_num,
+            "op_num": op_num,
+            "timestamp": formatTimeString(op["timestamp"]),
+            "type": op["type"],
+        }
+        if op["trx_id"] in trx_id_list:
             continue
         if op["type"] == "comment":
             if op["author"] not in member_accounts:
                 continue
             try:
-                c = Comment(op, steem_instance=stm)
+                c = Comment(op, steem_instance=hv)
                 c.refresh()
             except Exception:
                 continue
@@ -185,26 +202,35 @@ def run():
             if op["author"] in member_accounts and op["voter"] in accounts:
                 authorperm = construct_authorperm(op["author"], op["permlink"])
                 try:
-                    vote = Vote(op["voter"], authorperm=authorperm, steem_instance=stm)
+                    vote = Vote(op["voter"], authorperm=authorperm, steem_instance=hv)
                 except Exception as e:
                     # Occasionally the default node returns VoteDoesNotExist even though the vote exists.
                     # Retry the call with the remaining nodes in the list until one succeeds.
                     vote = None
                     for alt_node in node_list:
                         try:
-                            alt_stm = Steem(node=[alt_node], num_retries=3, timeout=10)
-                            vote = Vote(op["voter"], authorperm=authorperm, steem_instance=alt_stm)
+                            alt_stm = Hive(node=[alt_node], num_retries=3, timeout=10)
+                            vote = Vote(
+                                op["voter"],
+                                authorperm=authorperm,
+                                steem_instance=alt_stm,
+                            )
                             # Switch to the working node for subsequent operations
-                            stm = alt_stm
+                            hv = alt_stm
                             break
                         except Exception:
                             # Try next node
                             continue
                     if vote is None:
                         # Skip processing this vote if it still cannot be fetched
-                        print("Failed to fetch vote for %s by %s: %s" % (authorperm, op["voter"], str(e)))
+                        print(
+                            "Failed to fetch vote for %s by %s: %s"
+                            % (authorperm, op["voter"], str(e))
+                        )
                         continue
-                print("member %s upvoted with %d" % (op["author"], int(vote["rshares"])))
+                print(
+                    "member %s upvoted with %d" % (op["author"], int(vote["rshares"]))
+                )
                 member_data[op["author"]]["rewarded_rshares"] += int(vote["rshares"])
                 member_data[op["author"]]["balance_rshares"] -= int(vote["rshares"])
 
@@ -212,14 +238,15 @@ def run():
                 if upvote_delay is None:
                     upvote_delay = 300
                 performance = 0
-                c = Comment(authorperm, steem_instance=stm)
-                vote_SBD = stm.rshares_to_sbd(int(vote["rshares"]))
+                c = Comment(authorperm, steem_instance=hv)
+                vote_SBD = hv.rshares_to_sbd(int(vote["rshares"]))
                 try:
-
-                    curation_rewards_SBD = c.get_curation_rewards(pending_payout_SBD=True)
+                    curation_rewards_SBD = c.get_curation_rewards(
+                        pending_payout_SBD=True
+                    )
                     curation_SBD = curation_rewards_SBD["active_votes"][vote["voter"]]
                     if vote_SBD > 0:
-                        performance = (float(curation_SBD) / vote_SBD * 100)
+                        performance = float(curation_SBD) / vote_SBD * 100
                     else:
                         performance = 0
                 except Exception:
@@ -231,36 +258,56 @@ def run():
                 best_performance = 0
                 best_time_delay = 0
                 for v in c.get_votes():
-                    v_SBD = stm.rshares_to_sbd(int(v["rshares"]))
-                    if v_SBD > 0 and int(v["rshares"]) > rshares * 0.5 and curation_rewards_SBD is not None:
-                        p = float(curation_rewards_SBD["active_votes"][v["voter"]]) / v_SBD * 100
+                    v_SBD = hv.rshares_to_sbd(int(v["rshares"]))
+                    if (
+                        v_SBD > 0
+                        and int(v["rshares"]) > rshares * 0.5
+                        and curation_rewards_SBD is not None
+                    ):
+                        p = (
+                            float(curation_rewards_SBD["active_votes"][v["voter"]])
+                            / v_SBD
+                            * 100
+                        )
                         if p > best_performance:
                             best_performance = p
                             if "time" in v:
-                                best_time_delay = ((v["time"]) - c["created"]).total_seconds()
+                                best_time_delay = (
+                                    (v["time"]) - c["created"]
+                                ).total_seconds()
                             elif "last_update" in v:
-                                best_time_delay = ((v["last_update"]) - c["created"]).total_seconds()
+                                best_time_delay = (
+                                    (v["last_update"]) - c["created"]
+                                ).total_seconds()
                             else:
                                 best_time_delay = upvote_delay
 
                 if best_performance > performance * 1.05:
-                    member_data[op["author"]]["upvote_delay"] = (upvote_delay * 19 + best_time_delay) / 20
+                    member_data[op["author"]]["upvote_delay"] = (
+                        upvote_delay * 19 + best_time_delay
+                    ) / 20
                     if member_data[op["author"]]["upvote_delay"] > 300:
                         member_data[op["author"]]["upvote_delay"] = 300
                     elif member_data[op["author"]]["upvote_delay"] < 100:
                         member_data[op["author"]]["upvote_delay"] = 100
                 updated_member_data.append(member_data[op["author"]])
 
-                curation_data = {"authorperm": authorperm, "member": op["author"], "created": c["created"], "best_time_delay": best_time_delay, "best_curation_performance": best_performance,
-                                 "vote_rshares": int(vote["rshares"]), "updated": datetime.now(timezone.utc), "vote_delay": ((op["timestamp"]) - c["created"]).total_seconds(),
-                                 "performance": performance}
+                curation_data = {
+                    "authorperm": authorperm,
+                    "member": op["author"],
+                    "created": c["created"],
+                    "best_time_delay": best_time_delay,
+                    "best_curation_performance": best_performance,
+                    "vote_rshares": int(vote["rshares"]),
+                    "updated": datetime.now(timezone.utc),
+                    "vote_delay": ((op["timestamp"]) - c["created"]).total_seconds(),
+                    "performance": performance,
+                }
                 curation_vote_list.append(curation_data)
             data["permlink"] = op["permlink"]
             data["author"] = op["author"]
             data["voter"] = op["voter"]
             data["weight"] = op["weight"]
-
-
 
             vote_cnt += 1
         else:
@@ -275,10 +322,29 @@ def run():
             if block_diff_for_db_storage == 0:
                 block_diff_for_db_storage = 1
             print("\n---------------------\n")
-            percentage_done = (block_num - start_block) / (end_block - start_block) * 100
-            print("Block %d -- Datetime %s -- %.2f %% finished" % (block_num, op["timestamp"], percentage_done))
-            running_hours = (end_block - block_num) * time_for_blocks / block_diff_for_db_storage / 60 / 60
-            print("Duration for %d blocks: %.2f s (%.3f s per block) -- %.2f hours to go" % (block_diff_for_db_storage, time_for_blocks, time_for_blocks / block_diff_for_db_storage, running_hours))
+            percentage_done = (
+                (block_num - start_block) / (end_block - start_block) * 100
+            )
+            print(
+                "Block %d -- Datetime %s -- %.2f %% finished"
+                % (block_num, op["timestamp"], percentage_done)
+            )
+            running_hours = (
+                (end_block - block_num)
+                * time_for_blocks
+                / block_diff_for_db_storage
+                / 60
+                / 60
+            )
+            print(
+                "Duration for %d blocks: %.2f s (%.3f s per block) -- %.2f hours to go"
+                % (
+                    block_diff_for_db_storage,
+                    time_for_blocks,
+                    time_for_blocks / block_diff_for_db_storage,
+                    running_hours,
+                )
+            )
             print("%d  new comments, %d new votes" % (comment_cnt, vote_cnt))
             start_time = time.time()
             comment_cnt = 0
@@ -295,7 +361,6 @@ def run():
             if len(updated_member_data) > 0:
                 memberStorage.add_batch(updated_member_data)
                 updated_member_data = []
-
 
             if len(curation_vote_list) > 0:
                 curationOptimTrx.add_batch(curation_vote_list)
@@ -314,10 +379,12 @@ def run():
         memberStorage.add_batch(updated_member_data)
         updated_member_data = []
 
-
         print("\n---------------------\n")
         percentage_done = (block_num - start_block) / (end_block - start_block) * 100
-        print("Block %d -- Datetime %s -- %.2f %% finished" % (block_num, op["timestamp"], percentage_done))
+        print(
+            "Block %d -- Datetime %s -- %.2f %% finished"
+            % (block_num, op["timestamp"], percentage_done)
+        )
 
     if len(curation_vote_list) > 0:
         db = dataset.connect(databaseConnector)
@@ -326,6 +393,7 @@ def run():
         curation_vote_list = []
 
     print("member hist script run %.2f s" % (time.time() - start_prep_time))
+
 
 if __name__ == "__main__":
     run()

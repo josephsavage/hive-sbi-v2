@@ -5,13 +5,16 @@ import sys
 from datetime import datetime, timezone
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.account import Account
 from nectar.nodelist import NodeList
 
-from steembi.storage import AccountsDB, ConfigurationDB
-from steembi.utils import ensure_timezone_aware, estimate_rshares_for_hbd, estimate_hbd_for_rshares
-
+from hivesbi.storage import AccountsDB, ConfigurationDB
+from hivesbi.utils import (
+    ensure_timezone_aware,
+    estimate_hbd_for_rshares,
+    estimate_rshares_for_hbd,
+)
 
 if __name__ == "__main__":
     # Load configuration from config.json (same as other SBI scripts)
@@ -60,7 +63,9 @@ if __name__ == "__main__":
             # Get the raw SQLAlchemy connection so we can call the stored procedure
             with db3.engine.begin() as conn:
                 print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-                result = conn.exec_driver_sql("CALL sbi_reporting.python_call_usp_list()")
+                result = conn.exec_driver_sql(
+                    "CALL sbi_reporting.python_call_usp_list()"
+                )
 
                 # Iterate over any returned rows and print them
                 for row in result:
@@ -69,24 +74,24 @@ if __name__ == "__main__":
 
         except Exception as e:
             print(f"Error calling stored procedure: {e}")
-            
-        # Build Steem instance and collect mana for each account
+
+        # Build Hive instance and collect mana for each account
         nodes = NodeList()
         nodes.update_nodes()
         node_list = nodes.get_nodes(hive=hive_blockchain)
-        stm = Steem(node=node_list, num_retries=5, call_num_retries=3, timeout=15)
+        hv = Hive(node=node_list, num_retries=5, call_num_retries=3, timeout=15)
 
+        rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
+        print(
+            f"Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
+        )
 
-        
-        rshares_needed = estimate_rshares_for_hbd(stm, 0.021)
-        print(f"Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(stm, rshares_needed):.5f} HBD)")
-        
         total_current_mana = 0
         total_max_mana = 0
         accounts_processed = 0
         for acc in account_names:
             try:
-                mana = Account(acc, steem_instance=stm).get_manabar()
+                mana = Account(acc, steem_instance=hv).get_manabar()
                 total_current_mana += mana.get("current_mana", 0)
                 total_max_mana += mana.get("max_mana", 0)
                 accounts_processed += 1

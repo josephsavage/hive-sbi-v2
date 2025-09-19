@@ -4,26 +4,26 @@ import time
 from datetime import datetime, timezone
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.account import Account
 from nectar.amount import Amount
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
-from steembi.member import Member
-from steembi.parse_hist_op import ParseAccountHist
-from steembi.storage import (
+from hivesbi.member import Member
+from hivesbi.parse_hist_op import ParseAccountHist
+from hivesbi.storage import (
     AccountsDB,
+    AuditDB,
     ConfigurationDB,
     KeysDB,
     MemberDB,
     TransactionMemoDB,
     TransactionOutDB,
     TrxDB,
-    AuditDB,
 )
-from steembi.transfer_ops_storage import AccountTrx
-from steembi.utils import ensure_timezone_aware
+from hivesbi.transfer_ops_storage import AccountTrx
+from hivesbi.utils import ensure_timezone_aware
 
 
 def add_audit_log(
@@ -45,9 +45,9 @@ def add_audit_log(
 
 
 def handle_point_transfer(
-    op, member_data, memberStorage, stm, auditStorage, trxStorage, rshares_per_hbd
+    op, member_data, memberStorage, hv, auditStorage, trxStorage, rshares_per_hbd
 ):
-    amount_obj = Amount(op["amount"], steem_instance=stm)
+    amount_obj = Amount(op["amount"], steem_instance=hv)
     amount = float(amount_obj)
     sender = op["from"]
     memo_raw = op.get("memo", "")
@@ -129,7 +129,7 @@ def handle_point_transfer(
                 base_index = op.get("op_acc_index", 0)
         except AttributeError:
             base_index = 0
-                            
+
         # Build a common sponsee json string as used elsewhere in the
         # code-base ( {account: shares} )
         sponsee_json = json.dumps({nominee: units})
@@ -157,7 +157,7 @@ def handle_point_transfer(
             "share_type": "Transfer",
         }
         # Nominee (positive shares)
-        #data_nominee = {
+        # data_nominee = {
         #    "index": nominee_index,
         #    "source": "member_transfer_in",
         #    "memo": f"Received from {sender}",
@@ -169,15 +169,17 @@ def handle_point_transfer(
         #    "timestamp": timestamp_str,
         #    "status": "Valid",
         #    "share_type": "Transfer",
-        #}
+        # }
         # Idempotency: avoid duplicate key errors on reruns
         try:
-            existing = trxStorage.get(data_sender["index"], data_sender["source"])  # (index, source)
+            existing = trxStorage.get(
+                data_sender["index"], data_sender["source"]
+            )  # (index, source)
         except Exception:
             existing = None
         if existing is None:
             trxStorage.add(data_sender)
-        #trxStorage.add(data_nominee)
+        # trxStorage.add(data_nominee)
     else:
         # Convert the micro amount to an HBD-equivalent value and then to rshares.
         # 1 HBD worth of rshares = rshares_per_hbd (minimum_vote_threshold / 0.021)
@@ -294,8 +296,8 @@ def run():
             nodes.update_nodes()
         except Exception:
             print("could not update nodes")
-        stm = Steem(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
-        # set_shared_steem_instance(stm)
+        hv = Hive(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
+        # set_shared_steem_instance(hv)
 
         # print("load member database")
         member_accounts = memberStorage.get_all_accounts()
@@ -331,7 +333,7 @@ def run():
                 account_trx_name = account_name
             parse_vesting = account_name == "steembasicincome"
             accountTrx[account_trx_name].db = dataset.connect(databaseConnector)
-            account = Account(account_name, steem_instance=stm)
+            account = Account(account_name, steem_instance=hv)
             # print(account["name"])
             pah = ParseAccountHist(
                 account,
@@ -341,7 +343,7 @@ def run():
                 transactionOutStorage,
                 member_data,
                 memberStorage=memberStorage,
-                steem_instance=stm,
+                steem_instance=hv,
             )
 
             op_index = trxStorage.get_all_op_index(account["name"])
@@ -383,7 +385,7 @@ def run():
                 json_op = json.loads(op["op_dict"])
                 json_op["index"] = op["op_acc_index"] + start_index_offset
                 if json_op["type"] == "transfer":
-                    amount = float(Amount(json_op["amount"], steem_instance=stm))
+                    amount = float(Amount(json_op["amount"], steem_instance=hv))
                     if account_name == "steembasicincome":
                         # Log micro transfers below the minimum threshold but don't process them as point transfers
                         if amount < 0.005:
@@ -394,7 +396,7 @@ def run():
                                 json_op,
                                 member_data,
                                 memberStorage,
-                                stm,
+                                hv,
                                 auditStorage,
                                 trxStorage,
                                 rshares_per_hbd,

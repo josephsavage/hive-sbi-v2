@@ -3,11 +3,11 @@ import os
 
 import dataset
 
-from steembi.storage import MemberDB, TrxDB
-from steembi.transfer_ops_storage import AccountTrx
+from hivesbi.storage import MemberDB, TrxDB
+from hivesbi.transfer_ops_storage import AccountTrx
 
 if __name__ == "__main__":
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -25,11 +25,11 @@ if __name__ == "__main__":
     # Create keyStorage
     trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
-    
+
     # Update current node list from @fullnodeupdate
     # nodes = NodeList()
     # nodes.update_nodes()
-    # stm = Steem(node=nodes.get_nodes())
+    # hv = Hive(node=nodes.get_nodes())
     data = trxStorage.get_all_data()
     status = {}
     share_type = {}
@@ -55,16 +55,14 @@ if __name__ == "__main__":
     print("share_types:")
     for s in share_type:
         print("%d share_type entries with %s" % (share_type[s], s))
-        
+
     accountTrx = {}
     for account in accounts:
         accountTrx[account] = AccountTrx(db, account)
     sbi_ops = accountTrx["steembasicincome"].get_all()
-    last_index = - 1
+    last_index = -1
     for op in trxStorage.get_all_data_sorted():
         if op["source"] != "steembasicincome":
             continue
         if op["index"] - last_index:
             start_index = last_index
-            
-        
