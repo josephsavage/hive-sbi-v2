@@ -4,26 +4,26 @@ import time
 from datetime import datetime, timezone
 
 import dataset
-from nectar import Hive
+from nectar import Steem
 from nectar.account import Account
 from nectar.amount import Amount
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
-from hivesbi.member import Member
-from hivesbi.parse_hist_op import ParseAccountHist
-from hivesbi.storage import (
+from steembi.member import Member
+from steembi.parse_hist_op import ParseAccountHist
+from steembi.storage import (
     AccountsDB,
-    AuditDB,
     ConfigurationDB,
     KeysDB,
     MemberDB,
     TransactionMemoDB,
     TransactionOutDB,
     TrxDB,
+    AuditDB,
 )
-from hivesbi.transfer_ops_storage import AccountTrx
-from hivesbi.utils import ensure_timezone_aware
+from steembi.transfer_ops_storage import AccountTrx
+from steembi.utils import ensure_timezone_aware
 
 
 def add_audit_log(
@@ -45,22 +45,17 @@ def add_audit_log(
 
 
 def handle_point_transfer(
-    op, member_data, memberStorage, hv, auditStorage, trxStorage, rshares_per_hbd
+    op, member_data, memberStorage, stm, auditStorage, trxStorage, rshares_per_hbd
 ):
-    amount_obj = Amount(op["amount"], blockchain_instance=hv)
+    amount_obj = Amount(op["amount"], steem_instance=stm)
     amount = float(amount_obj)
     sender = op["from"]
-    memo_raw = op.get("memo", "")
-    # Normalize memo before parsing for username:
-    # - collapse multiple whitespaces
-    # - trim
-    # - lowercase
-    # - take first token only
-    # - strip leading '@'
-    memo_norm = " ".join(memo_raw.split()).strip().lower()
-    nominee = memo_norm.split()[0] if memo_norm else ""
-    if nominee.startswith("@"):
-        nominee = nominee[1:]
+    memo = op["memo"]
+
+    if memo.startswith("@"):
+        nominee = memo[1:]
+    else:
+        nominee = memo
 
     if sender not in member_data:
         return
@@ -129,7 +124,7 @@ def handle_point_transfer(
                 base_index = op.get("op_acc_index", 0)
         except AttributeError:
             base_index = 0
-
+                            
         # Build a common sponsee json string as used elsewhere in the
         # code-base ( {account: shares} )
         sponsee_json = json.dumps({nominee: units})
@@ -156,16 +151,28 @@ def handle_point_transfer(
             "status": "Valid",
             "share_type": "Transfer",
         }
+        # Nominee (positive shares)
+        #data_nominee = {
+        #    "index": nominee_index,
+        #    "source": "member_transfer_in",
+        #    "memo": f"Received from {sender}",
+        #    "account": nominee,
+        #    "sponsor": sender,
+        #    "sponsee": sponsee_json,
+        #    "shares": units,
+        #    "vests": 0.0,
+        #    "timestamp": timestamp_str,
+        #    "status": "Valid",
+        #    "share_type": "Transfer",
+        #}
         # Idempotency: avoid duplicate key errors on reruns
         try:
-            existing = trxStorage.get(
-                data_sender["index"], data_sender["source"]
-            )  # (index, source)
+            existing = trxStorage.get(data_sender["index"], data_sender["source"])  # (index, source)
         except Exception:
             existing = None
         if existing is None:
             trxStorage.add(data_sender)
-        # trxStorage.add(data_nominee)
+        #trxStorage.add(data_nominee)
     else:
         # Convert the micro amount to an HBD-equivalent value and then to rshares.
         # 1 HBD worth of rshares = rshares_per_hbd (minimum_vote_threshold / 0.021)
@@ -219,6 +226,7 @@ def run():
         # print(config_data)
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
+        mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
 
     start_prep_time = time.time()
@@ -227,6 +235,7 @@ def run():
 
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
+    other_accounts = accountStorage.get_transfer()
 
     accountTrx = {}
     for account in accounts:
@@ -280,12 +289,14 @@ def run():
             nodes.update_nodes()
         except Exception:
             print("could not update nodes")
-        hv = Hive(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
-        # set_shared_blockchain_instance(hv)
+        stm = Steem(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
+        # set_shared_steem_instance(stm)
 
         # print("load member database")
         member_accounts = memberStorage.get_all_accounts()
         member_data = {}
+        n_records = 0
+        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
@@ -315,7 +326,7 @@ def run():
                 account_trx_name = account_name
             parse_vesting = account_name == "steembasicincome"
             accountTrx[account_trx_name].db = dataset.connect(databaseConnector)
-            account = Account(account_name, blockchain_instance=hv)
+            account = Account(account_name, steem_instance=stm)
             # print(account["name"])
             pah = ParseAccountHist(
                 account,
@@ -325,21 +336,27 @@ def run():
                 transactionOutStorage,
                 member_data,
                 memberStorage=memberStorage,
-                blockchain_instance=hv,
+                steem_instance=stm,
             )
 
             op_index = trxStorage.get_all_op_index(account["name"])
 
             if len(op_index) == 0:
                 start_index = 0
+                op_counter = 0
                 start_index_offset = 0
             else:
                 op = trxStorage.get(op_index[-1], account["name"])
                 start_index = op["index"] + 1
+                op_counter = op_index[-1] + 1
                 if account_name == "steembasicincome":
                     start_index_offset = 316
                 else:
                     start_index_offset = 0
+
+            # print("start_index %d" % start_index)
+            # ops = []
+            #
 
             ops = accountTrx[account_trx_name].get_all(
                 op_types=["transfer", "delegate_vesting_shares"]
@@ -361,7 +378,7 @@ def run():
                 json_op = json.loads(op["op_dict"])
                 json_op["index"] = op["op_acc_index"] + start_index_offset
                 if json_op["type"] == "transfer":
-                    amount = float(Amount(json_op["amount"], blockchain_instance=hv))
+                    amount = float(Amount(json_op["amount"], steem_instance=stm))
                     if account_name == "steembasicincome":
                         # Log micro transfers below the minimum threshold but don't process them as point transfers
                         if amount < 0.005:
@@ -372,7 +389,7 @@ def run():
                                 json_op,
                                 member_data,
                                 memberStorage,
-                                hv,
+                                stm,
                                 auditStorage,
                                 trxStorage,
                                 rshares_per_hbd,
