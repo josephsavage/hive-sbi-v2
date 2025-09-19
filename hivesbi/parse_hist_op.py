@@ -201,7 +201,7 @@ class ParseAccountHist(list):
         if amount.symbol == self.hive.hbd_symbol:
             # self.trxStorage.get_account(op["to"], share_type="SBD")
             shares = -int(amount.amount)
-            if "http" in op["memo"] or self.hive.steem_symbol not in op["memo"]:
+            if "http" in op["memo"] or self.hive.hive_symbol not in op["memo"]:
                 data = {
                     "index": index,
                     "sender": account,
