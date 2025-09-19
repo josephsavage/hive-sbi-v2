@@ -1,6 +1,6 @@
-# steembasicincome
+# Hive Stake Based Income
 
-python scripts for automation of steembasicincome
+python scripts for automation of Hive Stake Based Income
 
 ## How to start
 
@@ -13,10 +13,10 @@ apt-get install libmariadbclient-dev
 ```
 
 ```bash
-pip3 install hive-nectar dataset  mysqlclient
+pip3 install hive-nectar dataset mysqlclient
 ```
 
-Compile and install steembi, the helper library for all steembasicincome scripts
+Compile and install hivesbi, the helper library for all Hive Stake Based Income scripts
 
 ```bash
 python setup.py install
@@ -73,19 +73,19 @@ A file `config.json` needs to be created:
 }
 ```
 
-For STEEM set hive_blockchain to false.
-
-## Running steembasicincome
+## Running Hive Stake Based Income
 
 The following scripts need to run:
 
 ```bash
-python3 sbi_upvote_post_comment.py
-python3 sbi_store_ops_db.py
-python3 sbi_transfer.py
-python3 sbi_update_member_db.py
-python3 sbi_store_member_hist.py
-python3 sbi_update_post_count.py
-python3 sbi_stream_post_comment.py
-python3 sbi_check_delegation.py
+python3 hsbi_store_ops_db.py
+python3 hsbi_transfer.py
+python3 hsbi_check_delegation.py
+# python3 hsbi_update_curation_rshares.py  # currently disabled in runner
+python3 hsbi_manage_accrual.py
+python3 hsbi_update_member_db.py
+python3 hsbi_store_member_hist.py
+python3 hsbi_upvote_post_comment.py
+python3 hsbi_stream_post_comment.py
+# python3 hsbi_reset_rshares.py  # currently disabled in runner
 ```
