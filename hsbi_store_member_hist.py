@@ -43,7 +43,7 @@ def run():
 
     # print("Count rshares of upvoted members.")
     member_accounts = memberStorage.get_all_accounts()
-    print("%d members in list" % len(member_accounts))
+    print(f"hsbi_store_member_hist: {len(member_accounts)} members in list")
 
     member_data = {}
     latest_enrollment = None
@@ -60,7 +60,7 @@ def run():
                 member_data[m]["latest_enrollment"]
             )
 
-    print("latest member enrollment %s" % str(latest_enrollment))
+    print(f"hsbi_store_member_hist: latest member enrollment {str(latest_enrollment)}")
 
     updated_member_data = []
 
@@ -72,7 +72,7 @@ def run():
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")
+        print("hsbi_store_member_hist: could not update nodes")
 
     node_list = nodes.get_nodes(hive=hive_blockchain)
     hv = Hive(node=node_list, num_retries=3, timeout=10)
@@ -99,7 +99,7 @@ def run():
     if end_block > start_block + 6000:
         end_block = start_block + 6000
 
-    print("Checking member upvotes from %d to %d" % (start_block, end_block))
+    print(f"hsbi_store_member_hist: Checking member upvotes from {start_block} to {end_block}")
 
     date_now = datetime.now(timezone.utc)
     date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
@@ -204,12 +204,11 @@ def run():
                     if vote is None:
                         # Skip processing this vote if it still cannot be fetched
                         print(
-                            "Failed to fetch vote for %s by %s: %s"
-                            % (authorperm, op["voter"], str(e))
+                            f"hsbi_store_member_hist: Failed to fetch vote for {authorperm} by {op['voter']}: {str(e)}"
                         )
                         continue
                 print(
-                    "member %s upvoted with %d" % (op["author"], int(vote["rshares"]))
+                    f"hsbi_store_member_hist: member {op['author']} upvoted with {int(vote['rshares'])}"
                 )
                 member_data[op["author"]]["rewarded_rshares"] += int(vote["rshares"])
                 member_data[op["author"]]["balance_rshares"] -= int(vote["rshares"])
@@ -301,13 +300,12 @@ def run():
             block_diff_for_db_storage = block_num - last_block_num
             if block_diff_for_db_storage == 0:
                 block_diff_for_db_storage = 1
-            print("\n---------------------\n")
+            print("hsbi_store_member_hist: ---------------------")
             percentage_done = (
                 (block_num - start_block) / (end_block - start_block) * 100
             )
             print(
-                "Block %d -- Datetime %s -- %.2f %% finished"
-                % (block_num, op["timestamp"], percentage_done)
+                f"hsbi_store_member_hist: Block {block_num} -- Datetime {op['timestamp']} -- {percentage_done:.2f} % finished"
             )
             running_hours = (
                 (end_block - block_num)
@@ -317,15 +315,9 @@ def run():
                 / 60
             )
             print(
-                "Duration for %d blocks: %.2f s (%.3f s per block) -- %.2f hours to go"
-                % (
-                    block_diff_for_db_storage,
-                    time_for_blocks,
-                    time_for_blocks / block_diff_for_db_storage,
-                    running_hours,
-                )
+                f"hsbi_store_member_hist: Duration for {block_diff_for_db_storage} blocks: {time_for_blocks:.2f} s ({time_for_blocks / block_diff_for_db_storage:.3f} s per block) -- {running_hours:.2f} hours to go"
             )
-            print("%d  new comments, %d new votes" % (comment_cnt, vote_cnt))
+            print(f"hsbi_store_member_hist: {comment_cnt}  new comments, {vote_cnt} new votes")
             start_time = time.time()
             comment_cnt = 0
             vote_cnt = 0
@@ -348,7 +340,7 @@ def run():
 
         cnt += 1
     if len(db_data) > 0:
-        print(op["timestamp"])
+        print(f"hsbi_store_member_hist: {op['timestamp']}")
         db = dataset.connect(databaseConnector)
         accountTrx.db = db
         accountTrx.add_batch(db_data)
@@ -359,11 +351,10 @@ def run():
         memberStorage.add_batch(updated_member_data)
         updated_member_data = []
 
-        print("\n---------------------\n")
+        print("hsbi_store_member_hist: ---------------------")
         percentage_done = (block_num - start_block) / (end_block - start_block) * 100
         print(
-            "Block %d -- Datetime %s -- %.2f %% finished"
-            % (block_num, op["timestamp"], percentage_done)
+            f"hsbi_store_member_hist: Block {block_num} -- Datetime {op['timestamp']} -- {percentage_done:.2f} % finished"
         )
 
     if len(curation_vote_list) > 0:
@@ -372,7 +363,7 @@ def run():
         curationOptimTrx.add_batch(curation_vote_list)
         curation_vote_list = []
 
-    print("member hist script run %.2f s" % (time.time() - start_prep_time))
+    print(f"hsbi_store_member_hist: member hist script run {time.time() - start_prep_time:.2f} s")
 
 
 if __name__ == "__main__":

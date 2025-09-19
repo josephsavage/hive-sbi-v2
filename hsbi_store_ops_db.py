@@ -27,7 +27,7 @@ def get_account_trx_data(account, start_block, start_index):
         virtual_op = start_block["virtual_op"]
         start_block = start_block["block"]
 
-        print("account %s - %d" % (account["name"], start_block))
+        print(f"hsbi_store_ops_db: account {account['name']} - {start_block}")
     else:
         start_block = 0
         trx_in_block = 0
@@ -94,7 +94,7 @@ def get_account_trx_data(account, start_block, start_index):
 def get_account_trx_storage_data(account, start_index, hv):
     if start_index is not None:
         start_index = start_index["op_acc_index"] + 1
-        print("account %s - %d" % (account["name"], start_index))
+        print(f"hsbi_store_ops_db: account {account['name']} - {start_index}")
 
     data = []
     for op in account.history(
@@ -151,11 +151,7 @@ def run():
     share_cycle_min = conf_setup["share_cycle_min"]
 
     print(
-        "sbi_store_ops_db: last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_store_ops_db: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
 
     if (
@@ -168,9 +164,9 @@ def run():
         nodes.update_nodes()
         # nodes.update_nodes(weights={"hist": 1})
         hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
-        print(str(hv))
+        print(f"hsbi_store_ops_db: {hv}")
 
-        print("Fetch new account history ops.")
+        print("hsbi_store_ops_db: Fetch new account history ops.")
 
         _blockchain = Blockchain(blockchain_instance=hv)
 
@@ -224,7 +220,7 @@ def run():
             if len(data_batch) > 0:
                 trxStorage.add_batch(data_batch)
                 data_batch = []
-        print("store ops script run %.2f s" % (time.time() - start_prep_time))
+        print(f"hsbi_store_ops_db: store ops script run {time.time() - start_prep_time:.2f} s")
 
 
 if __name__ == "__main__":

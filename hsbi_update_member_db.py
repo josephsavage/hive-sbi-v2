@@ -38,7 +38,7 @@ def memo_welcome(transferMemos, memo_transfer_acc, sponsor, STEEM_symbol="STEEM"
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print("Could not sent 0.001 %s to %s" % (STEEM_symbol, sponsor))
+        print(f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}")
 
 
 def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="STEEM"):
@@ -56,7 +56,7 @@ def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, STEEM_symbol="
         memo_transfer_acc.transfer(s, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print("Could not sent 0.001 %s to %s" % (STEEM_symbol, s))
+        print(f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {s}")
 
 
 def memo_update_shares(
@@ -76,7 +76,7 @@ def memo_update_shares(
         memo_transfer_acc.transfer(sponsor, 0.001, STEEM_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print("Could not sent 0.001 %s to %s" % (STEEM_symbol, sponsor))
+        print(f"hsbi_update_member_db: Could not send 0.001 {STEEM_symbol} to {sponsor}")
 
 
 def memo_sponsoring_update_shares(
@@ -162,15 +162,10 @@ def run():
             accountTrx[account] = AccountTrx(db, account)
 
     print(
-        "sbi_update_member_db: last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_update_member_db: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
     print(
-        "last_paid_post: %s - last_paid_comment: %s"
-        % (formatTimeString(last_paid_post), formatTimeString(last_paid_comment))
+        f"hsbi_update_member_db: last_paid_post: {formatTimeString(last_paid_post)} - last_paid_comment: {formatTimeString(last_paid_comment)}"
     )
     if last_cycle is None:
         last_cycle = datetime.now(timezone.utc) - timedelta(seconds=60 * 145)
@@ -183,7 +178,7 @@ def run():
         ).total_seconds() > 60 * share_cycle_min
         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
 
-        print("Update member database, new cycle: %s" % str(new_cycle))
+        print(f"hsbi_update_member_db: Update member database, new cycle: {new_cycle}")
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
@@ -226,8 +221,7 @@ def run():
                 memo_transfer_acc = Account(memo_transfer_acc, blockchain_instance=hv)
             except Exception:
                 print(
-                    "%s is not a valid hive account! Will be able to send transfer memos..."
-                    % memo_transfer_acc
+                    f"hsbi_update_member_db: {memo_transfer_acc} is not a valid hive account! Will be able to send transfer memos..."
                 )
 
         member_data = {}
@@ -249,7 +243,7 @@ def run():
         shares_sum = 0
         latest_share = trxStorage.get_lastest_share_type("Mgmt")
         mngt_shares_sum = (latest_share["index"] + 1) / len(mgnt_shares) * 100
-        print("mngt_shares sum %d" % mngt_shares_sum)
+        print(f"hsbi_update_member_db: mngt_shares sum {mngt_shares_sum}")
         latest_data_timestamp = None
 
         for op in data:
@@ -285,7 +279,7 @@ def run():
                         # print("del. bonus_shares: %s - %d" % (op["sponsor"], op["shares"]))
                         delegation[op["sponsor"]] = op["shares"]
                     elif op["vests"] > 0 and op["sponsor"] in member_data:
-                        sp = hv.vests_to_sp(float(op["vests"]))
+                        sp = hv.vests_to_hp(float(op["vests"]))
                         delegation[op["sponsor"]] = int(sp / sp_share_ratio)
                     # memo_sp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], sp_share_ratio)
                     delegation_timestamp[op["sponsor"]] = timestamp
@@ -321,7 +315,7 @@ def run():
                         member.append_share_age(timestamp, op["shares"])
                         member_data[op["sponsor"]] = member
                         print(
-                            "mngt bonus_shares: %s - %d" % (op["sponsor"], op["shares"])
+                            f"hsbi_update_member_db: mngt bonus_shares: {op['sponsor']} - {op['shares']}"
                         )
                 else:
                     sponsor = op["sponsor"]
@@ -412,7 +406,7 @@ def run():
         if (mngt_shares * 20) < shares_sum - 100 and not mngt_shares_assigned:
             mngt_shares_assigned = True
             mngt_shares_sum += 100
-            print("add mngt shares")
+            print("hsbi_update_member_db: add mngt shares")
             latest_share = trxStorage.get_lastest_share_type("Mgmt")
             if latest_share is not None:
                 start_index = latest_share["index"] + 1
@@ -434,7 +428,7 @@ def run():
                     "share_type": "Mgmt",
                 }
                 start_index += 1
-                print(mgmt_data)
+                print(f"hsbi_update_member_db: {mgmt_data}")
                 trxStorage.add(mgmt_data)
 
         # add bonus_shares from active delegation
@@ -448,7 +442,7 @@ def run():
             ):
                 member_data[m].append_share_age(delegation_timestamp[m], delegation[m])
 
-        print("update share age")
+        print("hsbi_update_member_db: update share age")
 
         empty_shares = []
         latest_enrollment = None
@@ -465,8 +459,7 @@ def run():
                 latest_enrollment = member_data[m]["latest_enrollment"]
 
         print(
-            "latest data timestamp: %s - latest member enrollment %s"
-            % (str(latest_data_timestamp), str(latest_enrollment))
+            f"hsbi_update_member_db: latest data timestamp: {str(latest_data_timestamp)} - latest member enrollment {str(latest_enrollment)}"
         )
 
         if new_cycle:
@@ -498,7 +491,7 @@ def run():
 
         # print("%d new curation rshares for posts" % post_rshares)
         # print("%d new curation rshares for comments" % comment_rshares)
-        print("write member database")
+        print("hsbi_update_member_db: write member database")
         memberStorage.db = dataset.connect(databaseConnector2)
         member_data_list = []
         member_data_json = []
@@ -547,7 +540,7 @@ def run():
 
         if new_cycle:
             last_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
-        print("update last_cycle to %s" % str(last_cycle))
+        print(f"hsbi_update_member_db: update last_cycle to {str(last_cycle)}")
 
         # Statistics
         shares = 0
@@ -559,11 +552,11 @@ def run():
             bonus_shares += member_data[m]["bonus_shares"]
             if m in delegation:
                 delegation_shares += delegation[m]
-        print("shares: %d" % shares)
-        print("delegation bonus shares: %d" % delegation_shares)
-        print("Mngt bonus shares %d" % (mngt_shares))
+        print(f"hsbi_update_member_db: shares: {shares}")
+        print(f"hsbi_update_member_db: delegation bonus shares: {delegation_shares}")
+        print(f"hsbi_update_member_db: Mngt bonus shares {mngt_shares}")
 
-    print("update member script run %.2f s" % (time.time() - start_prep_time))
+    print(f"hsbi_update_member_db: update member script run {time.time() - start_prep_time:.2f} s")
 
 
 if __name__ == "__main__":

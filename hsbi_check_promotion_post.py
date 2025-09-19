@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
+    hp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
     last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
@@ -80,16 +80,12 @@ if __name__ == "__main__":
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
 
     print(
-        "last_cycle: %s - %.2f min"
-        % (
-            formatTimeString(last_cycle),
-            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
-        )
+        f"hsbi_check_promotion_post: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
     )
     if True:
         last_cycle = datetime.now(timezone.utc) - timedelta(seconds=60 * 145)
         confStorage.update({"last_cycle": last_cycle})
-        print("update member database")
+        print("hsbi_check_promotion_post: update member database")
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
@@ -110,14 +106,14 @@ if __name__ == "__main__":
             wallet = Wallet(blockchain_instance=hv)
 
             for acc_name in accounts:
-                print(acc_name)
+                print(f"hsbi_check_promotion_post: {acc_name}")
                 comments_transfer = []
                 ops = accountTrx[acc_name].get_all(op_types=["transfer"])
                 cnt = 0
                 for o in ops:
                     cnt += 1
                     if cnt % 10 == 0:
-                        print("%d/%d" % (cnt, len(ops)))
+                        print(f"hsbi_check_promotion_post: {cnt}/{len(ops)}")
                     op = json.loads(o["op_dict"])
                     if op["memo"] == "":
                         continue
@@ -129,10 +125,10 @@ if __name__ == "__main__":
                         continue
                     if c["authorperm"] not in comments_transfer:
                         comments_transfer.append(c["authorperm"])
-                print("%d comments with transfer found" % len(comments_transfer))
+                print(f"hsbi_check_promotion_post: {len(comments_transfer)} comments with transfer found")
                 for authorperm in comments_transfer:
                     c = Comment(authorperm, blockchain_instance=hv)
-                    print(c["authorperm"])
+                    print(f"hsbi_check_promotion_post: {c['authorperm']}")
                     for vote in c["active_votes"]:
                         if vote["rshares"] == 0:
                             continue
@@ -222,7 +218,7 @@ if __name__ == "__main__":
                                     if vote["voter"] == a:
                                         continue
                                     if a not in ["quarry", "steemdunk"]:
-                                        print(a)
+                                        print(f"hsbi_check_promotion_post: {a}")
                                     if a in [
                                         "smartsteem",
                                         "smartmarket",

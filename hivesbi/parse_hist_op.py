@@ -141,21 +141,21 @@ class ParseAccountHist(list):
 
         self.delegated_vests_out = new_deleg
 
-        delegated_sp_in = {}
+        delegated_hp_in = {}
         for acc in self.delegated_vests_in:
             vests = Amount(self.delegated_vests_in[acc])
-            delegated_sp_in[acc] = str(self.hive.vests_to_sp(vests))
-        delegated_sp_out = {}
+            delegated_hp_in[acc] = str(self.hive.vests_to_hp(vests))
+        delegated_hp_out = {}
         for acc in self.delegated_vests_out:
             vests = Amount(self.delegated_vests_out[acc])
-            delegated_sp_out[acc] = str(self.hive.vests_to_sp(vests))
+            delegated_hp_out[acc] = str(self.hive.vests_to_hp(vests))
 
         if self.path is None:
             return
         # with open(self.path + 'sbi_delegation_in_'+self.account["name"]+'.txt', 'w') as the_file:
-        #    the_file.write(str(delegated_sp_in) + '\n')
+        #    the_file.write(str(delegated_hp_in) + '\n')
         # with open(self.path + 'sbi_delegation_out_'+self.account["name"]+'.txt', 'w') as the_file:
-        #    the_file.write(str(delegated_sp_out) + '\n')
+        #    the_file.write(str(delegated_hp_out) + '\n')
 
     def parse_transfer_out_op(self, op):
         amount = Amount(op["amount"], blockchain_instance=self.hive)

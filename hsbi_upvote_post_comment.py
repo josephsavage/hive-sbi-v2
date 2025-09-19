@@ -58,14 +58,14 @@ def run():
     # print("%d members in list" % len(member_accounts))
     postTrx = PostsTrx(db)
 
-    print("Upvote posts/comments")
+    print("hsbi_upvote_post_comment: Upvote posts/comments")
     start_timestamp = ensure_timezone_aware(datetime(2018, 12, 14, 9, 18, 20))
 
     nodes = NodeList()
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")
+        print("hsbi_upvote_post_comment: could not update nodes")
 
     keys = []
     for acc in accounts:
@@ -142,7 +142,7 @@ def run():
                 c = None
                 hv.rpc.next()
         if c is None:
-            print("Error getting %s" % authorperm)
+            print(f"hsbi_upvote_post_comment: Error getting {authorperm}")
             continue
         _main_post = c.is_main_post()
         already_voted = False
@@ -220,15 +220,13 @@ def run():
             )
 
             if nobroadcast and voter is not None:
-                print(c["authorperm"])
+                print(f"hsbi_upvote_post_comment: {c['authorperm']}")
                 print(
-                    "Comment Vote %s from %s with %.2f %%"
-                    % (author, voter, vote_percentage)
+                    f"hsbi_upvote_post_comment: Comment Vote {author} from {voter} with {vote_percentage:.2f} %"
                 )
             elif voter is not None:
                 print(
-                    "Comment Upvote %s from %s with %.2f %%"
-                    % (author, voter, vote_percentage)
+                    f"hsbi_upvote_post_comment: Comment Upvote {author} from {voter} with {vote_percentage:.2f} %"
                 )
                 vote_sucessfull = False
                 voted_after = 300
@@ -258,11 +256,11 @@ def run():
                         time.sleep(6)
                         if cnt > 0:
                             c.blockchain.rpc.next()
-                        print("retry to vote %s" % c["authorperm"])
+                        print(f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}")
                     cnt += 1
                 if vote_sucessfull:
                     print(
-                        "Vote for %s at %s was sucessfully" % (author, str(vote_time))
+                        f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
                     )
                     memberStorage.update_last_vote(author, vote_time)
                     upvote_counter[author] += 1
@@ -290,7 +288,7 @@ def run():
                     voter = acc
 
             if voter is None:
-                print("Could not find voter for %s" % author)
+                print(f"hsbi_upvote_post_comment: Could not find voter for {author}")
                 current_mana = {}
                 pool_rshars = []
                 pool_completed = False
@@ -333,15 +331,13 @@ def run():
                     if vote_percentage > 100:
                         vote_percentage = 100
                     if nobroadcast:
-                        print(c["authorperm"])
+                        print(f"hsbi_upvote_post_comment: {c['authorperm']}")
                         print(
-                            "Vote %s from %s with %.2f %%"
-                            % (author, voter, vote_percentage)
+                            f"hsbi_upvote_post_comment: Vote {author} from {voter} with {vote_percentage:.2f} %"
                         )
                     else:
                         print(
-                            "Upvote %s from %s with %.2f %%"
-                            % (author, voter, vote_percentage)
+                            f"hsbi_upvote_post_comment: Upvote {author} from {voter} with {vote_percentage:.2f} %"
                         )
                         vote_sucessfull = False
                         cnt = 0
@@ -364,12 +360,11 @@ def run():
                                 time.sleep(6)
                                 if cnt > 0:
                                     c.blockchain.rpc.next()
-                                print("retry to vote %s" % c["authorperm"])
+                                print(f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}")
                             cnt += 1
                         if vote_sucessfull:
                             print(
-                                "Vote for %s at %s was sucessfully"
-                                % (author, str(vote_time))
+                                f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
                             )
                             memberStorage.update_last_vote(author, vote_time)
                     rshares_sum += (
@@ -403,15 +398,13 @@ def run():
                     / 100
                 )
                 if nobroadcast:
-                    print(c["authorperm"])
+                    print(f"hsbi_upvote_post_comment: {c['authorperm']}")
                     print(
-                        "Vote %s from %s with %.2f %%"
-                        % (author, voter, vote_percentage)
+                        f"hsbi_upvote_post_comment: Vote {author} from {voter} with {vote_percentage:.2f} %"
                     )
                 else:
                     print(
-                        "Upvote %s from %s with %.2f %%"
-                        % (author, voter, vote_percentage)
+                        f"hsbi_upvote_post_comment: Upvote {author} from {voter} with {vote_percentage:.2f} %"
                     )
                     vote_sucessfull = False
                     cnt = 0
@@ -445,19 +438,18 @@ def run():
                             time.sleep(6)
                             if cnt > 0:
                                 c.blockchain.rpc.next()
-                            print("retry to vote %s" % c["authorperm"])
+                            print(f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}")
                         cnt += 1
                     if vote_sucessfull:
                         print(
-                            "Vote for %s at %s was sucessfully"
-                            % (author, str(vote_time))
+                            f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
                         )
                         memberStorage.update_last_vote(author, vote_time)
                         upvote_counter[author] += 1
                     postTrx.update_voted(author, created, vote_sucessfull, voted_after)
 
-            print("rshares_sum %d" % rshares_sum)
-    print("upvote script run %.2f s" % (time.time() - start_prep_time))
+            print(f"hsbi_upvote_post_comment: rshares_sum {rshares_sum}")
+    print(f"hsbi_upvote_post_comment: upvote script run {time.time() - start_prep_time:.2f} s")
 
 
 if __name__ == "__main__":

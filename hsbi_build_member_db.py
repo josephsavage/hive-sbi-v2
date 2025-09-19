@@ -16,7 +16,7 @@ if __name__ == "__main__":
     else:
         with open(config_file) as json_data_file:
             config_data = json.load(json_data_file)
-        print(config_data)
+        print(f"hsbi_build_member_db: {config_data}")
         accounts = config_data["accounts"]
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
@@ -40,7 +40,7 @@ if __name__ == "__main__":
         memberStorage.create_table()
 
     # Update current node list from @fullnodeupdate
-    print("build member database")
+    print("hsbi_build_member_db: build member database")
     # memberStorage.wipe(True)
     accs = memberStorage.get_all_accounts()
     for a in accs:
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")
+        print("hsbi_build_member_db: could not update nodes")
     hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     data = trxStorage.get_all_data()
     status = {}
@@ -112,9 +112,9 @@ if __name__ == "__main__":
         member_data[m].calc_share_age()
         shares += member_data[m]["shares"]
         bonus_shares += member_data[m]["bonus_shares"]
-    print("shares: %d" % shares)
-    print("bonus shares: %d" % bonus_shares)
-    print("total shares: %d" % (shares + bonus_shares))
+    print(f"hsbi_build_member_db: shares: {shares}")
+    print(f"hsbi_build_member_db: bonus shares: {bonus_shares}")
+    print(f"hsbi_build_member_db: total shares: {shares + bonus_shares}")
 
     member_list = []
     for m in member_data:

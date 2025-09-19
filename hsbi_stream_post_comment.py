@@ -67,7 +67,7 @@ def run():
     comment_footer = conf_setup["comment_footer"]
 
     member_accounts = memberStorage.get_all_accounts()
-    print("%d members in list" % len(member_accounts))
+    print(f"hsbi_stream_post_comment: {len(member_accounts)} members in list")
 
     nobroadcast = False
     # nobroadcast = True
@@ -78,7 +78,7 @@ def run():
 
     postTrx = PostsTrx(db)
 
-    print("stream new posts")
+    print("hsbi_stream_post_comment: stream new posts")
 
     max_batch_size = 50
     threading = False
@@ -86,7 +86,7 @@ def run():
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")
+        print("hsbi_stream_post_comment: could not update nodes")
 
     keys = []
     account_list = []
@@ -108,7 +108,7 @@ def run():
     )
 
     b = Blockchain(mode="irreversible", blockchain_instance=hv)
-    print("deleting old posts")
+    print("hsbi_stream_post_comment: deleting old posts")
     # postTrx.delete_old_posts(1)
     start_block = b.get_current_block_num() - int(28800)
     stop_block = b.get_current_block_num()
@@ -221,7 +221,7 @@ def run():
                     c.reply(reply_body, author=account_name)
                     time.sleep(4)
                 except Exception as e:
-                    print(f"Error replying to status comment: {e}")
+                    print(f"hsbi_stream_post_comment: Error replying to status comment: {e}")
                     continue
 
         already_voted = False
@@ -274,7 +274,7 @@ def run():
 
         cnt += 1
 
-    print("write member database")
+    print("hsbi_stream_post_comment: write member database")
     member_data_list = []
     for m in changed_member_data:
         member_data_list.append(member_data[m])
@@ -292,7 +292,7 @@ def run():
         )
         posts_dict = {}
 
-    print("stream posts script run %.2f s" % (time.time() - start_prep_time))
+    print(f"hsbi_stream_post_comment: stream posts script run {time.time() - start_prep_time:.2f} s")
 
 
 if __name__ == "__main__":
