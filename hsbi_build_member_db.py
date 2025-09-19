@@ -2,15 +2,15 @@ import json
 import os
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
-from steembi.member import Member
-from steembi.storage import MemberDB, TrxDB
+from hivesbi.member import Member
+from hivesbi.storage import MemberDB, TrxDB
 
 if __name__ == "__main__":
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -28,12 +28,12 @@ if __name__ == "__main__":
     # Create keyStorage
     trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
-    
+
     newTrxStorage = False
     if not trxStorage.exists_table():
         newTrxStorage = True
         trxStorage.create_table()
-    
+
     newMemberStorage = False
     if not memberStorage.exists_table():
         newMemberStorage = True
@@ -49,8 +49,8 @@ if __name__ == "__main__":
     try:
         nodes.update_nodes()
     except Exception:
-        print("could not update nodes")    
-    stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
+        print("could not update nodes")
+    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     data = trxStorage.get_all_data()
     status = {}
     share_type = {}
@@ -59,7 +59,13 @@ if __name__ == "__main__":
     for op in data:
         if op["status"] == "Valid":
             share_type = op["share_type"]
-            if share_type in ["RemovedDelegation", "Delegation", "DelegationLeased", "Mgmt", "MgmtTransfer"]:
+            if share_type in [
+                "RemovedDelegation",
+                "Delegation",
+                "DelegationLeased",
+                "Mgmt",
+                "MgmtTransfer",
+            ]:
                 continue
             sponsor = op["sponsor"]
             sponsee = json.loads(op["sponsee"])
@@ -92,14 +98,13 @@ if __name__ == "__main__":
                     member_data[s]["shares"] += shares
                     member_data[s].append_share_age(timestamp, shares)
 
-    empty_shares = []       
+    empty_shares = []
     for m in member_data:
         if member_data[m]["shares"] <= 0:
             empty_shares.append(m)
-    
+
     for del_acc in empty_shares:
         del member_data[del_acc]
-    
 
     shares = 0
     bonus_shares = 0
@@ -110,7 +115,7 @@ if __name__ == "__main__":
     print("shares: %d" % shares)
     print("bonus shares: %d" % bonus_shares)
     print("total shares: %d" % (shares + bonus_shares))
-    
+
     member_list = []
     for m in member_data:
         member_list.append(member_data[m])
