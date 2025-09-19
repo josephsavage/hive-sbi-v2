@@ -50,27 +50,29 @@ if __name__ == "__main__":
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
-        try:
-            # Get dbconnector3 from config.json
-            databaseConnector3 = config_data["databaseConnector3"]
 
-            # Connect to dbconnector3
-            db3 = dataset.connect(databaseConnector3)
+#        try:
+#            # Get dbconnector3 from config.json
+#            databaseConnector3 = config_data["databaseConnector3"]
+#
+#            # Connect to dbconnector3
+#            db3 = dataset.connect(databaseConnector3)
+#
+#            # Get the raw SQLAlchemy connection so we can call the stored procedure
+#            with db3.engine.begin() as conn:
+#                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
+#                result = conn.exec_driver_sql(
+#                    "CALL sbi_reporting.python_call_usp_list()"
+#                )
+#
+#                # Iterate over any returned rows and print them
+#                for row in result:
+#                    # row can be a tuple or Row object depending on driver
+#                    print("LOG:", *row)
+#
+#        except Exception as e:
+#            print(f"Error calling stored procedure: {e}")
 
-            # Get the raw SQLAlchemy connection so we can call the stored procedure
-            with db3.engine.begin() as conn:
-                print("hsbi_manage_accrual: Calling stored procedure: sbi_reporting.python_call_usp_list()")
-                result = conn.exec_driver_sql(
-                    "CALL sbi_reporting.python_call_usp_list()"
-                )
-
-                # Iterate over any returned rows and print them
-                for row in result:
-                    # row can be a tuple or Row object depending on driver
-                    print("hsbi_manage_accrual: LOG:", *row)
-
-        except Exception as e:
-            print(f"hsbi_manage_accrual: Error calling stored procedure: {e}")
 
         # Build Hive instance and collect mana for each account
         nodes = NodeList()
