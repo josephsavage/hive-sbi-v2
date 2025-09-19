@@ -1,5 +1,5 @@
 #!/bin/bash
-hive-nectar updatenodes --hive
+hive-nectar updatenodes
 
 python3 -u /root/steembasicincome/hsbi_store_ops_db.py
 python3 -u /root/steembasicincome/hsbi_transfer.py
