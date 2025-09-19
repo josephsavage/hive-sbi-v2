@@ -5,7 +5,7 @@ import dataset
 from nectar import Hive
 from nectar.account import Account
 from nectar.blockchain import Blockchain
-from nectar.instance import set_shared_steem_instance
+from nectar.instance import set_shared_blockchain_instance
 from nectar.nodelist import NodeList
 
 from hivesbi.transfer_ops_storage import AccountTrx
@@ -55,7 +55,7 @@ if __name__ == "__main__":
         print("could not update nodes")
     hv = Hive(node=nodes.get_nodes())
     print(str(hv))
-    set_shared_steem_instance(hv)
+    set_shared_blockchain_instance(hv)
 
     blockchain = Blockchain()
 

@@ -863,4 +863,3 @@ class AuditDB(object):
         else:
             table = self.db[self.__tablename__]
             table.drop
-

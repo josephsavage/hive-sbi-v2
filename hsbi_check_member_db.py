@@ -3,7 +3,6 @@ import os
 
 import dataset
 from nectar import Hive
-from nectar.account import Account
 from nectar.nodelist import NodeList
 
 from hivesbi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
@@ -50,22 +49,6 @@ if __name__ == "__main__":
     aborted = False
     for m in member_accounts:
         member_data[m] = memberStorage.get(m)
-    # Check wrong account names:
-    if False:
-        cnt = 0
-        for m in member_accounts:
-            if aborted:
-                continue
-            cnt += 1
-            if cnt % 100 == 0:
-                print("%d/%d scanned" % (cnt, len(member_accounts)))
-            try:
-                acc = Account(m, steem_instance=hv)
-            except KeyboardInterrupt:
-                aborted = True
-            except Exception:
-                print("%s is not a valid account" % m)
-                missing_accounts.append(m)
 
     shares = 0
     bonus_shares = 0
@@ -80,7 +63,7 @@ if __name__ == "__main__":
     print("total units: %d" % (shares + bonus_shares))
     print("----------")
     print("balance_rshares: %d" % balance_rshares)
-    print("balance_rshares: %.3f $" % hv.rshares_to_sbd(balance_rshares))
+    print("balance_rshares: %.3f $" % hv.rshares_to_hbd(balance_rshares))
     if len(missing_accounts) > 0:
         print("%d not existing accounts: " % len(missing_accounts))
         print(missing_accounts)

@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     print("Check account history ops.")
 
-    blockchain = Blockchain(steem_instance=hv)
+    blockchain = Blockchain(blockchain_instance=hv)
 
     accountTrx = {}
     for account in accounts:

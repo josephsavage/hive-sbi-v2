@@ -50,9 +50,6 @@ if __name__ == "__main__":
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
-        # ---------------------------------------------------------
-        # NEW SECTION: Call sbi_reporting.python_call_usp_list()
-        # ---------------------------------------------------------
         try:
             # Get dbconnector3 from config.json
             databaseConnector3 = config_data["databaseConnector3"]
@@ -91,7 +88,7 @@ if __name__ == "__main__":
         accounts_processed = 0
         for acc in account_names:
             try:
-                mana = Account(acc, steem_instance=hv).get_manabar()
+                mana = Account(acc, blockchain_instance=hv).get_manabar()
                 total_current_mana += mana.get("current_mana", 0)
                 total_max_mana += mana.get("max_mana", 0)
                 accounts_processed += 1

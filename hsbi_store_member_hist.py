@@ -7,13 +7,13 @@ import dataset
 from nectar import Hive
 from nectar.blockchain import Blockchain
 from nectar.comment import Comment
-from nectar.instance import set_shared_steem_instance
+from nectar.instance import set_shared_blockchain_instance
 from nectar.nodelist import NodeList
 from nectar.utils import addTzInfo, construct_authorperm, formatTimeString
 from nectar.vote import Vote
 
 from hivesbi.member import Member
-from hivesbi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
+from hivesbi.storage import AccountsDB, MemberDB
 from hivesbi.transfer_ops_storage import CurationOptimizationTrx, MemberHistDB
 from hivesbi.utils import ensure_timezone_aware
 
@@ -37,23 +37,9 @@ def run():
 
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
-    other_accounts = accountStorage.get_transfer()
 
     # Create keyStorage
-    trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
-    confStorage = ConfigurationDB(db2)
-
-    conf_setup = confStorage.get()
-
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
-    share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
-    rshares_per_cycle = conf_setup["rshares_per_cycle"]
-    upvote_multiplier = conf_setup["upvote_multiplier"]
-    last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
-    last_paid_comment = conf_setup["last_paid_comment"]
-    upvote_multiplier_adjusted = conf_setup["upvote_multiplier_adjusted"]
 
     # print("Count rshares of upvoted members.")
     member_accounts = memberStorage.get_all_accounts()
@@ -61,7 +47,6 @@ def run():
 
     member_data = {}
     latest_enrollment = None
-    share_age_member = {}
     for m in member_accounts:
         member_data[m] = Member(memberStorage.get(m))
         if latest_enrollment is None:
@@ -84,7 +69,6 @@ def run():
     #    curationOptimTrx.delete_old_posts(days=7)
     # Update current node list from @fullnodeupdate
     nodes = NodeList()
-    # nodes.update_nodes(weights={"hist": 1})
     try:
         nodes.update_nodes()
     except Exception:
@@ -93,29 +77,25 @@ def run():
     node_list = nodes.get_nodes(hive=hive_blockchain)
     hv = Hive(node=node_list, num_retries=3, timeout=10)
     # print(str(hv))
-    set_shared_steem_instance(hv)
+    set_shared_blockchain_instance(hv)
 
     accountTrx = {}
     accountTrx = MemberHistDB(db)
 
-    b = Blockchain(steem_instance=hv)
+    b = Blockchain(blockchain_instance=hv)
     current_block = b.get_current_block()
     stop_time = latest_enrollment
     stop_time = current_block["timestamp"]
     start_time = stop_time - timedelta(seconds=30 * 24 * 60 * 60)
 
-    blocks_per_day = 20 * 60 * 24
-
     start_block = accountTrx.get_latest_block_num()
 
     if start_block is None:
         start_block = b.get_estimated_block_num(addTzInfo(start_time))
-        # block_id_list = []
         trx_id_list = []
     else:
         trx_id_list = accountTrx.get_block_trx_id(start_block)
     end_block = current_block["id"]
-    # end_block = current_block["id"] - (20 * 10)
     if end_block > start_block + 6000:
         end_block = start_block + 6000
 
@@ -123,11 +103,9 @@ def run():
 
     date_now = datetime.now(timezone.utc)
     date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
-    date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))
-    date_72h_before = addTzInfo(date_now - timedelta(seconds=72 * 60 * 60))
-    print("delete old hist data")
+    # print("delete old hist data")
     #    accountTrx.delete_old_data(end_block - (20 * 60 * 24 * 7))
-    print("delete done")
+    # print("delete done")
 
     # print("start to stream")
     db_data = []
@@ -174,7 +152,7 @@ def run():
             if op["author"] not in member_accounts:
                 continue
             try:
-                c = Comment(op, steem_instance=hv)
+                c = Comment(op, blockchain_instance=hv)
                 c.refresh()
             except Exception:
                 continue
@@ -202,21 +180,23 @@ def run():
             if op["author"] in member_accounts and op["voter"] in accounts:
                 authorperm = construct_authorperm(op["author"], op["permlink"])
                 try:
-                    vote = Vote(op["voter"], authorperm=authorperm, steem_instance=hv)
+                    vote = Vote(
+                        op["voter"], authorperm=authorperm, blockchain_instance=hv
+                    )
                 except Exception as e:
                     # Occasionally the default node returns VoteDoesNotExist even though the vote exists.
                     # Retry the call with the remaining nodes in the list until one succeeds.
                     vote = None
                     for alt_node in node_list:
                         try:
-                            alt_stm = Hive(node=[alt_node], num_retries=3, timeout=10)
+                            alt_hv = Hive(node=[alt_node], num_retries=3, timeout=10)
                             vote = Vote(
                                 op["voter"],
                                 authorperm=authorperm,
-                                steem_instance=alt_stm,
+                                blockchain_instance=alt_hv,
                             )
                             # Switch to the working node for subsequent operations
-                            hv = alt_stm
+                            hv = alt_hv
                             break
                         except Exception:
                             # Try next node
@@ -238,8 +218,8 @@ def run():
                 if upvote_delay is None:
                     upvote_delay = 300
                 performance = 0
-                c = Comment(authorperm, steem_instance=hv)
-                vote_SBD = hv.rshares_to_sbd(int(vote["rshares"]))
+                c = Comment(authorperm, blockchain_instance=hv)
+                vote_SBD = hv.rshares_to_hbd(int(vote["rshares"]))
                 try:
                     curation_rewards_SBD = c.get_curation_rewards(
                         pending_payout_SBD=True
@@ -258,7 +238,7 @@ def run():
                 best_performance = 0
                 best_time_delay = 0
                 for v in c.get_votes():
-                    v_SBD = hv.rshares_to_sbd(int(v["rshares"]))
+                    v_SBD = hv.rshares_to_hbd(int(v["rshares"]))
                     if (
                         v_SBD > 0
                         and int(v["rshares"]) > rshares * 0.5

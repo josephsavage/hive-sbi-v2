@@ -9,7 +9,6 @@ from nectar import Hive
 from nectar.account import Account
 from nectar.nodelist import NodeList
 from nectar.utils import (
-    addTzInfo,
     formatTimeString,
 )
 
@@ -19,11 +18,10 @@ from hivesbi.storage import (
     ConfigurationDB,
     KeysDB,
     MemberDB,
-    TransactionMemoDB,
     TransferMemoDB,
     TrxDB,
 )
-from hivesbi.transfer_ops_storage import AccountTrx, TransferTrx
+from hivesbi.transfer_ops_storage import AccountTrx
 from hivesbi.utils import ensure_timezone_aware
 
 
@@ -134,20 +132,15 @@ def run():
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)
     db = dataset.connect(databaseConnector)
-    transferStorage = TransferTrx(db)
     # Create keyStorage
     trxStorage = TrxDB(db2)
     keyStorage = KeysDB(db2)
     memberStorage = MemberDB(db2)
     # accountStorage = MemberHistDB(db)
     confStorage = ConfigurationDB(db2)
-    transactionStorage = TransactionMemoDB(db2)
-
     transferMemosStorage = TransferMemoDB(db2)
-
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
-    other_accounts = accountStorage.get_transfer()
 
     conf_setup = confStorage.get()
 
@@ -156,12 +149,9 @@ def run():
     sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
-    upvote_multiplier = conf_setup["upvote_multiplier"]
     last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
     last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
-    last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
-    upvote_multiplier_adjusted = conf_setup["upvote_multiplier_adjusted"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
 
     accountTrx = {}
@@ -233,16 +223,14 @@ def run():
 
         if memo_transfer_acc is not None:
             try:
-                memo_transfer_acc = Account(memo_transfer_acc, steem_instance=hv)
-            except:
+                memo_transfer_acc = Account(memo_transfer_acc, blockchain_instance=hv)
+            except Exception:
                 print(
-                    "%s is not a valid steem account! Will be able to send transfer memos..."
+                    "%s is not a valid hive account! Will be able to send transfer memos..."
                     % memo_transfer_acc
                 )
 
         member_data = {}
-        n_records = 0
-        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
@@ -342,7 +330,6 @@ def run():
                     except Exception:
                         continue
                     shares = op["shares"]
-                    share_age = 0
                     if isinstance(op["timestamp"], str):
                         timestamp = formatTimeString(op["timestamp"])
                     else:
@@ -482,10 +469,6 @@ def run():
             % (str(latest_data_timestamp), str(latest_enrollment))
         )
 
-        # date_now = datetime.now(timezone.utc)
-        date_now = latest_enrollment
-        date_7_before = addTzInfo(date_now - timedelta(seconds=7 * 24 * 60 * 60))
-        date_28_before = addTzInfo(date_now - timedelta(seconds=28 * 24 * 60 * 60))
         if new_cycle:
             for m in member_data:
                 if member_data[m]["shares"] <= 0:
@@ -565,17 +548,6 @@ def run():
         if new_cycle:
             last_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
         print("update last_cycle to %s" % str(last_cycle))
-        confStorage.db = dataset.connect(databaseConnector2)
-        if False:
-            confStorage.update(
-                {
-                    "last_cycle": last_cycle,
-                    "last_paid_comment": new_paid_comment,
-                    "last_paid_post": new_paid_post,
-                }
-            )
-        else:
-            confStorage.update({"last_cycle": last_cycle})
 
         # Statistics
         shares = 0

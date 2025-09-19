@@ -6,7 +6,7 @@ from datetime import datetime
 
 from nectar.account import Account
 from nectar.amount import Amount
-from nectar.instance import shared_steem_instance
+from nectar.instance import shared_blockchain_instance
 from nectar.memo import Memo
 from nectar.utils import (
     addTzInfo,
@@ -27,17 +27,17 @@ class ParseAccountHist(list):
         transactionOutStorage,
         member_data,
         memberStorage=None,
-        steem_instance=None,
+        blockchain_instance=None,
     ):
-        self.steem = steem_instance or shared_steem_instance()
-        self.account = Account(account, steem_instance=self.steem)
+        self.hive = blockchain_instance or shared_blockchain_instance()
+        self.account = Account(account, blockchain_instance=self.hive)
         self.delegated_vests_in = {}
         self.delegated_vests_out = {}
         self.timestamp = addTzInfo(datetime(1970, 1, 1, 0, 0, 0, 0))
         self.path = path
         self.member_data = member_data
         self.memberStorage = memberStorage
-        self.memo_parser = MemoParser(steem_instance=self.steem)
+        self.memo_parser = MemoParser(blockchain_instance=self.hive)
         self.excluded_accounts = [
             "minnowbooster",
             "smartsteem",
@@ -86,8 +86,8 @@ class ParseAccountHist(list):
         :param Amount/float own: vests
         :param dict delegated_in: Incoming delegation
         :param dict delegated_out: Outgoing delegation
-        :param Amount/float steem: steem
-        :param Amount/float sbd: sbd
+        :param Amount/float hive: hive
+        :param Amount/float hbd: hbd
 
         """
 
@@ -144,11 +144,11 @@ class ParseAccountHist(list):
         delegated_sp_in = {}
         for acc in self.delegated_vests_in:
             vests = Amount(self.delegated_vests_in[acc])
-            delegated_sp_in[acc] = str(self.steem.vests_to_sp(vests))
+            delegated_sp_in[acc] = str(self.hive.vests_to_sp(vests))
         delegated_sp_out = {}
         for acc in self.delegated_vests_out:
             vests = Amount(self.delegated_vests_out[acc])
-            delegated_sp_out[acc] = str(self.steem.vests_to_sp(vests))
+            delegated_sp_out[acc] = str(self.hive.vests_to_sp(vests))
 
         if self.path is None:
             return
@@ -158,7 +158,7 @@ class ParseAccountHist(list):
         #    the_file.write(str(delegated_sp_out) + '\n')
 
     def parse_transfer_out_op(self, op):
-        amount = Amount(op["amount"], steem_instance=self.steem)
+        amount = Amount(op["amount"], blockchain_instance=self.hive)
         index = op["index"]
         account = op["from"]
         timestamp = op["timestamp"]
@@ -179,7 +179,7 @@ class ParseAccountHist(list):
                 processed_memo = processed_memo[1:-1]
             elif processed_memo[2] == "#":
                 processed_memo = processed_memo[2:-2]
-            memo = Memo(account, op["to"], steem_instance=self.steem)
+            memo = Memo(account, op["to"], blockchain_instance=self.hive)
             processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
             encrypted = True
 
@@ -197,10 +197,10 @@ class ParseAccountHist(list):
             }
             self.transactionOutStorage.add(data)
             return
-        if amount.symbol == self.steem.sbd_symbol:
+        if amount.symbol == self.hive.hbd_symbol:
             # self.trxStorage.get_account(op["to"], share_type="SBD")
             shares = -int(amount.amount)
-            if "http" in op["memo"] or self.steem.steem_symbol not in op["memo"]:
+            if "http" in op["memo"] or self.hive.steem_symbol not in op["memo"]:
                 data = {
                     "index": index,
                     "sender": account,
@@ -218,7 +218,7 @@ class ParseAccountHist(list):
                 op["to"],
                 shares,
                 formatTimeString(op["timestamp"]),
-                SBD_symbol=self.steem.sbd_symbol,
+                SBD_symbol=self.hive.hbd_symbol,
             )
             sponsee = json.dumps({})
             if trx:
@@ -264,7 +264,7 @@ class ParseAccountHist(list):
             return
 
     def parse_transfer_in_op(self, op):
-        amount = Amount(op["amount"], steem_instance=self.steem)
+        amount = Amount(op["amount"], blockchain_instance=self.hive)
         share_type = "Standard"
         index = op["index"]
         account = op["from"]
@@ -286,7 +286,7 @@ class ParseAccountHist(list):
                 processed_memo = processed_memo[1:-1]
             elif processed_memo[2] == "#":
                 processed_memo = processed_memo[2:-2]
-            memo = Memo(account, op["to"], steem_instance=self.steem)
+            memo = Memo(account, op["to"], blockchain_instance=self.hive)
             processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
 
         shares = int(amount.amount)
@@ -318,17 +318,15 @@ class ParseAccountHist(list):
             }
             self.transactionStorage.add(data)
             return
-        if amount.symbol == self.steem.sbd_symbol:
-            share_type = self.steem.sbd_symbol
+        if amount.symbol == self.hive.hbd_symbol:
+            share_type = self.hive.hbd_symbol
 
         # Check if any sponsee is the same as the sponsor and remove them
-        self_sponsorship = False
         filtered_sponsee = {}
         for a in sponsee:
             if a != sponsor:  # Only keep sponsees that are not the sponsor
                 filtered_sponsee[a] = sponsee[a]
             else:
-                self_sponsorship = True
                 print(f"Removed self-sponsorship attempt by {sponsor}")
 
         # Replace original sponsee dict with filtered one
@@ -345,17 +343,9 @@ class ParseAccountHist(list):
                 # If no valid sponsee account is available or it's the same as sponsor,
                 # use LessOrNoSponsee status
                 sponsee = {}
-                message = (
-                    op["timestamp"]
-                    + " to: "
-                    + self.account["name"]
-                    + " from: "
-                    + sponsor
-                    + " amount: "
-                    + str(amount)
-                    + " memo: "
-                    + processed_memo
-                    + "\n"
+                _message = (
+                    f"{op['timestamp']} to: {self.account['name']} from: {sponsor} "
+                    f"amount: {amount} memo: {processed_memo}\n"
                 )
                 self.new_transfer_record(
                     index,
@@ -390,17 +380,9 @@ class ParseAccountHist(list):
                 return
         elif sponsee_amount == 0 and not account_error:
             sponsee = {}
-            message = (
-                op["timestamp"]
-                + " to: "
-                + self.account["name"]
-                + " from: "
-                + sponsor
-                + " amount: "
-                + str(amount)
-                + " memo: "
-                + processed_memo
-                + "\n"
+            _message = (
+                f"{op['timestamp']} to: {self.account['name']} from: {sponsor} "
+                f"amount: {amount} memo: {processed_memo}\n"
             )
             self.new_transfer_record(
                 index,
@@ -451,17 +433,9 @@ class ParseAccountHist(list):
                 )
                 return
         elif sponsee_amount != shares and not account_error:
-            message = (
-                op["timestamp"]
-                + " to: "
-                + self.account["name"]
-                + " from: "
-                + sponsor
-                + " amount: "
-                + str(amount)
-                + " memo: "
-                + ascii(op["memo"])
-                + "\n"
+            _message = (
+                f"{op['timestamp']} to: {self.account['name']} from: {sponsor} "
+                f"amount: {amount} memo: {ascii(op['memo'])}\n"
             )
             self.new_transfer_record(
                 index,
@@ -477,17 +451,9 @@ class ParseAccountHist(list):
 
             return
         if account_error:
-            message = (
-                op["timestamp"]
-                + " to: "
-                + self.account["name"]
-                + " from: "
-                + sponsor
-                + " amount: "
-                + str(amount)
-                + " memo: "
-                + ascii(op["memo"])
-                + "\n"
+            _message = (
+                f"{op['timestamp']} to: {self.account['name']} from: {sponsor} "
+                f"amount: {amount} memo: {ascii(op['memo'])}\n"
             )
             self.new_transfer_record(
                 index,
@@ -561,7 +527,7 @@ class ParseAccountHist(list):
 
     def parse_op(self, op, parse_vesting=True):
         if op["type"] == "delegate_vesting_shares" and parse_vesting:
-            vests = Amount(op["vesting_shares"], steem_instance=self.steem)
+            vests = Amount(op["vesting_shares"], blockchain_instance=self.hive)
             # print(op)
             if op["delegator"] == self.account["name"]:
                 delegation = {"account": op["delegatee"], "amount": vests}
@@ -573,7 +539,7 @@ class ParseAccountHist(list):
                 return
 
         elif op["type"] == "transfer":
-            amount = Amount(op["amount"], steem_instance=self.steem)
+            _amount = Amount(op["amount"], blockchain_instance=self.hive)
             # print(op)
             if (
                 op["from"] == self.account["name"]
@@ -592,10 +558,8 @@ class ParseAccountHist(list):
             return
 
     def add_mngt_shares(self, last_op, mgnt_shares, op_count):
-        index = last_op["index"]
         timestamp = last_op["timestamp"]
         sponsee = {}
-        memo = ""
         latest_share = self.trxStorage.get_lastest_share_type("Mgmt")
         if latest_share is not None:
             start_index = latest_share["index"] + 1

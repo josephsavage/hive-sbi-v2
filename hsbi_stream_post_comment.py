@@ -17,7 +17,6 @@ from hivesbi.storage import (
     ConfigurationDB,
     KeysDB,
     MemberDB,
-    TrxDB,
 )
 from hivesbi.transfer_ops_storage import PostsTrx
 from hivesbi.utils import ensure_timezone_aware
@@ -39,7 +38,6 @@ def run():
     db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)
     # Create keyStorage
-    trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
     confStorage = ConfigurationDB(db2)
     blacklistStorage = BlacklistDB(db2)
@@ -47,7 +45,6 @@ def run():
     keyStorage = KeysDB(db2)
 
     accounts = accStorage.get()
-    other_accounts = accStorage.get_transfer()
 
     blacklist = blacklistStorage.get()
 
@@ -65,10 +62,6 @@ def run():
 
     conf_setup = confStorage.get()
 
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
-    share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
-    rshares_per_cycle = conf_setup["rshares_per_cycle"]
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_footer = conf_setup["comment_footer"]
@@ -87,30 +80,9 @@ def run():
 
     print("stream new posts")
 
-    if True:
-        max_batch_size = 50
-        threading = False
-        wss = False
-        https = True
-        normal = False
-        appbase = True
-    elif False:
-        max_batch_size = None
-        threading = True
-        wss = True
-        https = False
-        normal = True
-        appbase = True
-    else:
-        max_batch_size = None
-        threading = False
-        wss = True
-        https = True
-        normal = True
-        appbase = True
-
+    max_batch_size = 50
+    threading = False
     nodes = NodeList()
-    # nodes.update_nodes(weights={"block": 1})
     try:
         nodes.update_nodes()
     except Exception:
@@ -135,12 +107,9 @@ def run():
         nobroadcast=nobroadcast,
     )
 
-    b = Blockchain(mode="irreversible", steem_instance=hv)
+    b = Blockchain(mode="irreversible", blockchain_instance=hv)
     print("deleting old posts")
     # postTrx.delete_old_posts(1)
-    # print("reading all authorperm")
-    already_voted_posts = []
-    flagged_posts = []
     start_block = b.get_current_block_num() - int(28800)
     stop_block = b.get_current_block_num()
     last_block_print = start_block
@@ -164,7 +133,6 @@ def run():
     if stop_block > start_block + 6000:
         stop_block = start_block + 6000
     cnt = 0
-    updated_accounts = []
     posts_dict = {}
     changed_member_data = []
     for ops in b.stream(
@@ -175,10 +143,6 @@ def run():
         threading=threading,
         thread_num=8,
     ):
-        # print(ops)
-        timestamp = ops["timestamp"]
-        # timestamp = timestamp.replace(tzinfo=None)
-        # continue
         if ops["author"] not in member_accounts:
             continue
         if ops["block_num"] <= latest_update_block:
@@ -195,7 +159,7 @@ def run():
         while c is None and cnt < 5:
             cnt += 1
             try:
-                c = Comment(authorperm, steem_instance=hv)
+                c = Comment(authorperm, blockchain_instance=hv)
             except Exception:
                 c = None
                 continue
@@ -220,11 +184,6 @@ def run():
                 "!sbi status" in c.body.lower()
                 and abs((ops_time - created_time).total_seconds()) <= 30
             ):
-                rshares_denom = (
-                    member_data[ops["author"]]["rewarded_rshares"]
-                    + member_data[ops["author"]]["balance_rshares"]
-                )
-
                 reply_body = "Hi @%s!\n\n" % ops["author"]
                 reply_body += "* you have %d units and %d bonus units\n" % (
                     member_data[ops["author"]]["shares"],
@@ -232,40 +191,24 @@ def run():
                 )
                 reply_body += "* your rshares balance is %d or %.3f $\n" % (
                     member_data[ops["author"]]["balance_rshares"],
-                    hv.rshares_to_sbd(member_data[ops["author"]]["balance_rshares"]),
+                    hv.rshares_to_hbd(member_data[ops["author"]]["balance_rshares"]),
                 )
-                # if member_data[ops["author"]]["comment_upvote"] == 0:
                 rshares = (
                     member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
                 )
                 if rshares > minimum_vote_threshold:
                     reply_body += (
                         "* your next SBI upvote is predicted to be %.3f $\n"
-                        % (hv.rshares_to_sbd(rshares))
+                        % (hv.rshares_to_hbd(rshares))
                     )
                 else:
                     reply_body += (
                         "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n"
                         % (
-                            hv.rshares_to_sbd(rshares),
-                            hv.rshares_to_sbd(minimum_vote_threshold),
+                            hv.rshares_to_hbd(rshares),
+                            hv.rshares_to_hbd(minimum_vote_threshold),
                         )
                     )
-                # else:
-                #    rshares =  member_data[ops["author"]]["balance_rshares"] / comment_vote_divider
-                # reply_body += "* as you did not wrote a post within the last 7 days, your pending vote accumulates until you post."
-                #    if rshares > minimum_vote_threshold * 20:
-                #        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (hv.rshares_to_sbd(int(minimum_vote_threshold * 20)))
-                #    elif  rshares > minimum_vote_threshold * 2:
-                #        reply_body += "* your next SBI upvote is predicted to be %.3f $\n" % (hv.rshares_to_sbd(rshares))
-                #    else:
-                #        reply_body += "* you need to wait until your upvote value (current value: %.3f $) is above %.3f $\n" % (hv.rshares_to_sbd(rshares), hv.rshares_to_sbd(minimum_vote_threshold * 2))
-                # if rshares_denom > 0:
-                #    reply_body += "\n\nStructure of your total SBI vote value:\n"
-                #    reply_body += "* %.2f %% has come from your subscription level\n" % (member_data[ops["author"]]["subscribed_rshares"] / rshares_denom * 100)
-                #    reply_body += "* %.2f %% has come from your bonus units\n" % (member_data[ops["author"]]["delegation_rshares"] / rshares_denom * 100)
-                #    reply_body += "* %.2f %% has come from upvoting rewards\n" % (member_data[ops["author"]]["curation_rshares"] / rshares_denom * 100)
-                #    reply_body += "* %.2f %% has come from new account bonus or extra value from pre-automation rewards\n" % (member_data[ops["author"]]["other_rshares"] / rshares_denom * 100)
                 if len(comment_footer) > 0:
                     reply_body += "<br>\n"
                     reply_body += comment_footer
@@ -282,10 +225,6 @@ def run():
                     continue
 
         already_voted = False
-
-        # for v in c["active_votes"]:
-        #    if v["voter"] in accounts:
-        #        already_voted = True
 
         dt_created = c["created"]
         dt_created = dt_created.replace(tzinfo=None)
@@ -306,14 +245,6 @@ def run():
                 json_metadata = json.loads(json_metadata)
             except Exception:
                 json_metadata = {}
-        #        if "app" in json_metadata:
-        #            app = json_metadata["app"]
-        #            if isinstance(app, dict) and "name" in app:
-        #                app = app["name"]
-        #            if app is not None and isinstance(app, str) and app.find("/") > -1:
-        #                app = app.split("/")[0]
-        #            if app is not None and isinstance(app, str) and app.lower() in blacklist_apps:
-        #                skip = True
         for s in blacklist_body:
             if s in c.body.lower():
                 skip = True

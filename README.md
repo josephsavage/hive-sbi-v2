@@ -7,33 +7,33 @@ python scripts for automation of steembasicincome
 ### Installation of needed packages
 
 The following packages are needed, when running the scripts on Ubuntu:
-```
+
+```bash
 apt-get install libmariadbclient-dev
 ```
 
-```
+```bash
 pip3 install hive-nectar dataset  mysqlclient
 ```
 
 Compile and install steembi, the helper library for all steembasicincome scripts
 
-```
+```bash
 python setup.py install
 ```
 
 ### Prepare the database
 
-```
+```bash
 mysql -u username -p sbi < sql/sbi.sql
 mysql -u username -p sbi_steem_ops < sql/sbi_steem_ops.sql
 ```
-
 
 ### Creating a service script
 
 Main runner script can be automatically run through systemd:
 
-```
+```bash
 useradd -r -s /bin/false sbiuser
 chown -R sbiuser:sbiuser /etc/sbi
 
@@ -47,7 +47,8 @@ systemctl status sbirunner
 ```
 
 The blacklist script is run once a day:
-```
+
+```bash
 
 cp systemd/blacklist.service to /etc/systemd/system/
 cp systemd/blacklist.timer to /etc/systemd/system/
@@ -62,7 +63,7 @@ systemctl list-timers
 
 A file `config.json` needs to be created:
 
-```
+```json
 {
 
         "databaseConnector": "mysql://user:password@localhost/sbi_steem_ops",
@@ -71,12 +72,14 @@ A file `config.json` needs to be created:
         "mgnt_shares": {"josephsavage": 4, "holger80": 1}
 }
 ```
+
 For STEEM set hive_blockchain to false.
 
 ## Running steembasicincome
 
 The following scripts need to run:
-```
+
+```bash
 python3 sbi_upvote_post_comment.py
 python3 sbi_store_ops_db.py
 python3 sbi_transfer.py
@@ -85,5 +88,4 @@ python3 sbi_store_member_hist.py
 python3 sbi_update_post_count.py
 python3 sbi_stream_post_comment.py
 python3 sbi_check_delegation.py
-
-```# hive-sbi-v2
+```

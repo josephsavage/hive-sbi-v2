@@ -47,7 +47,6 @@ class Member(dict):
 
     def calc_share_age(self):
         total_share_days = 0
-        sum_days = 0
         if len(self.share_age_list) == 0:
             self["total_share_days"] = total_share_days
             self["avg_share_age"] = total_share_days
@@ -64,7 +63,6 @@ class Member(dict):
         if len(self.share_age_list) == 0:
             return
         total_share_days = 0
-        sum_days = 0
         index = 0
         for i in range(len(self.share_age_list)):
             if self.share_timestamp[i] <= ensure_timezone_aware(timestamp):
@@ -75,4 +73,3 @@ class Member(dict):
             self["avg_share_age"] = total_share_days / index
         else:
             self["avg_share_age"] = total_share_days
-

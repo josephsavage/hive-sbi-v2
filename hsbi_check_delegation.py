@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 
 import dataset
 from nectar import Hive
-from nectar.instance import set_shared_steem_instance
+from nectar.instance import set_shared_blockchain_instance
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
-from hivesbi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
+from hivesbi.storage import ConfigurationDB, TrxDB
 from hivesbi.transfer_ops_storage import TransferTrx
 from hivesbi.utils import ensure_timezone_aware
 
@@ -27,23 +27,17 @@ def run():
         # print(config_data)
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
-        mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
 
     db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)
     confStorage = ConfigurationDB(db2)
 
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
-    other_accounts = accountStorage.get_transfer()
-
     conf_setup = confStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     sp_share_ratio = conf_setup["sp_share_ratio"]
-    rshares_per_cycle = conf_setup["rshares_per_cycle"]
     last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
 
     print(
@@ -65,13 +59,10 @@ def run():
         except Exception:
             print("could not update nodes")
         hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
-        set_shared_steem_instance(hv)
+        set_shared_blockchain_instance(hv)
 
         transferStorage = TransferTrx(db)
         trxStorage = TrxDB(db2)
-        memberStorage = MemberDB(db2)
-
-        # Update current node list from @fullnodeupdate
 
         delegation = {}
         sum_sp = {}

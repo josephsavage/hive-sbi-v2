@@ -100,7 +100,7 @@ def get_account_trx_storage_data(account, start_index, hv):
     for op in account.history(
         start=start_index, use_block_num=False, only_ops=["transfer"]
     ):
-        amount = Amount(op["amount"], steem_instance=hv)
+        amount = Amount(op["amount"], blockchain_instance=hv)
         virtual_op = op["virtual_op"]
         trx_in_block = op["trx_in_block"]
         if virtual_op > 0:
@@ -172,7 +172,7 @@ def run():
 
         print("Fetch new account history ops.")
 
-        blockchain = Blockchain(steem_instance=hv)
+        _blockchain = Blockchain(blockchain_instance=hv)
 
         accountTrx = {}
         for account in accounts:
@@ -186,10 +186,10 @@ def run():
 
         for account_name in accounts:
             if account_name == "steembasicincome":
-                account = Account(account_name, steem_instance=hv)
+                account = Account(account_name, blockchain_instance=hv)
                 account_name = "sbi"
             else:
-                account = Account(account_name, steem_instance=hv)
+                account = Account(account_name, blockchain_instance=hv)
             start_block = accountTrx[account_name].get_latest_block()
             start_index = accountTrx[account_name].get_latest_index()
 
@@ -210,7 +210,7 @@ def run():
         trxStorage = TransferTrx(db)
 
         for account in other_accounts:
-            account = Account(account, steem_instance=hv)
+            account = Account(account, blockchain_instance=hv)
             start_index = trxStorage.get_latest_index(account["name"])
 
             data = get_account_trx_storage_data(account, start_index, hv)

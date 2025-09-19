@@ -47,7 +47,7 @@ def add_audit_log(
 def handle_point_transfer(
     op, member_data, memberStorage, hv, auditStorage, trxStorage, rshares_per_hbd
 ):
-    amount_obj = Amount(op["amount"], steem_instance=hv)
+    amount_obj = Amount(op["amount"], blockchain_instance=hv)
     amount = float(amount_obj)
     sender = op["from"]
     memo_raw = op.get("memo", "")
@@ -156,20 +156,6 @@ def handle_point_transfer(
             "status": "Valid",
             "share_type": "Transfer",
         }
-        # Nominee (positive shares)
-        # data_nominee = {
-        #    "index": nominee_index,
-        #    "source": "member_transfer_in",
-        #    "memo": f"Received from {sender}",
-        #    "account": nominee,
-        #    "sponsor": sender,
-        #    "sponsee": sponsee_json,
-        #    "shares": units,
-        #    "vests": 0.0,
-        #    "timestamp": timestamp_str,
-        #    "status": "Valid",
-        #    "share_type": "Transfer",
-        # }
         # Idempotency: avoid duplicate key errors on reruns
         try:
             existing = trxStorage.get(
@@ -233,7 +219,6 @@ def run():
         # print(config_data)
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
-        mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
 
     start_prep_time = time.time()
@@ -242,7 +227,6 @@ def run():
 
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
-    other_accounts = accountStorage.get_transfer()
 
     accountTrx = {}
     for account in accounts:
@@ -297,13 +281,11 @@ def run():
         except Exception:
             print("could not update nodes")
         hv = Hive(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
-        # set_shared_steem_instance(hv)
+        # set_shared_blockchain_instance(hv)
 
         # print("load member database")
         member_accounts = memberStorage.get_all_accounts()
         member_data = {}
-        n_records = 0
-        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
@@ -333,7 +315,7 @@ def run():
                 account_trx_name = account_name
             parse_vesting = account_name == "steembasicincome"
             accountTrx[account_trx_name].db = dataset.connect(databaseConnector)
-            account = Account(account_name, steem_instance=hv)
+            account = Account(account_name, blockchain_instance=hv)
             # print(account["name"])
             pah = ParseAccountHist(
                 account,
@@ -343,27 +325,21 @@ def run():
                 transactionOutStorage,
                 member_data,
                 memberStorage=memberStorage,
-                steem_instance=hv,
+                blockchain_instance=hv,
             )
 
             op_index = trxStorage.get_all_op_index(account["name"])
 
             if len(op_index) == 0:
                 start_index = 0
-                op_counter = 0
                 start_index_offset = 0
             else:
                 op = trxStorage.get(op_index[-1], account["name"])
                 start_index = op["index"] + 1
-                op_counter = op_index[-1] + 1
                 if account_name == "steembasicincome":
                     start_index_offset = 316
                 else:
                     start_index_offset = 0
-
-            # print("start_index %d" % start_index)
-            # ops = []
-            #
 
             ops = accountTrx[account_trx_name].get_all(
                 op_types=["transfer", "delegate_vesting_shares"]
@@ -385,7 +361,7 @@ def run():
                 json_op = json.loads(op["op_dict"])
                 json_op["index"] = op["op_acc_index"] + start_index_offset
                 if json_op["type"] == "transfer":
-                    amount = float(Amount(json_op["amount"], steem_instance=hv))
+                    amount = float(Amount(json_op["amount"], blockchain_instance=hv))
                     if account_name == "steembasicincome":
                         # Log micro transfers below the minimum threshold but don't process them as point transfers
                         if amount < 0.005:

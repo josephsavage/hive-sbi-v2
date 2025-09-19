@@ -4,80 +4,45 @@ from datetime import datetime, timedelta, timezone
 
 import dataset
 from nectar import Hive
+from nectar.account import Account
 from nectar.block import Block
 from nectar.blockchain import Blockchain
 from nectar.comment import Comment
 from nectar.nodelist import NodeList
-from nectar.utils import addTzInfo, formatTimeString
+from nectar.utils import addTzInfo, construct_authorperm, formatTimeString
+from nectar.vote import AccountVotes
 from nectar.wallet import Wallet
 from nectarbase.signedtransactions import Signed_Transaction
 from nectargraphenebase.base58 import Base58
 
 from hivesbi.member import Member
-from hivesbi.storage import ConfigurationDB, MemberDB, TrxDB
-from hivesbi.transfer_ops_storage import AccountTrx, MemberHistDB, TransferTrx
+from hivesbi.storage import ConfigurationDB, MemberDB
+from hivesbi.transfer_ops_storage import AccountTrx
 from hivesbi.utils import ensure_timezone_aware
 
-if __name__ == "__main__":
+
+def run():
     config_file = "config.json"
     if not os.path.isfile(config_file):
-        accounts = [
-            "steembasicincome",
-            "sbi2",
-            "sbi3",
-            "sbi4",
-            "sbi5",
-            "sbi6",
-            "sbi7",
-            "sbi8",
-            "sbi9",
-        ]
-        path = "E:\\sbi\\"
-        database = "sbi_ops.sqlite"
-        database_transfer = "sbi_transfer.sqlite"
-        databaseConnector = None
-        other_accounts = ["minnowbooster"]
-        mgnt_shares = {"josephsavage": 3, "earthnation-bot": 1, "holger80": 1}
+        raise Exception("config.json is missing!")
     else:
         with open(config_file) as json_data_file:
             config_data = json.load(json_data_file)
         # print(config_data)
         accounts = config_data["accounts"]
-        path = config_data["path"]
-        database = config_data["database"]
-        database_transfer = config_data["database_transfer"]
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
-        other_accounts = config_data["other_accounts"]
-        mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
 
     db2 = dataset.connect(databaseConnector2)
     db = dataset.connect(databaseConnector)
-    transferStorage = TransferTrx(db)
-    # Create keyStorage
-    trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
-    accountStorage = MemberHistDB(db)
     confStorage = ConfigurationDB(db2)
-
-    accountTrx = {}
-    for account in accounts:
-        accountTrx[account] = AccountTrx(db, account)
 
     conf_setup = confStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
-    share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
-    upvote_multiplier = conf_setup["upvote_multiplier"]
-    last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
-    last_paid_comment = conf_setup["last_paid_comment"]
-
-    minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
-    comment_vote_divider = conf_setup["comment_vote_divider"]
-    comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
 
     print(
         "last_cycle: %s - %.2f min"
@@ -92,7 +57,6 @@ if __name__ == "__main__":
         print("update member database")
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
-        data = trxStorage.get_all_data()
 
         # Update current node list from @fullnodeupdate
         nodes = NodeList()
@@ -100,41 +64,115 @@ if __name__ == "__main__":
         hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
         # hv = Hive()
         member_data = {}
-        n_records = 0
-        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
+        print("reset rshares")
         if True:
-            b = Blockchain(steem_instance=hv)
-            wallet = Wallet(steem_instance=hv)
+            for m in member_data:
+                total_share_days = member_data[m]["total_share_days"]
+                member_data[m]["first_cycle_at"] = ensure_timezone_aware(
+                    datetime(1970, 1, 1, 0, 0, 0)
+                )
+                member_data[m]["balance_rshares"] = (
+                    total_share_days * rshares_per_cycle * 10
+                )
+                member_data[m]["earned_rshares"] = (
+                    total_share_days * rshares_per_cycle * 10
+                )
+                member_data[m]["rewarded_rshares"] = 0
+                member_data[m]["subscribed_rshares"] = (
+                    total_share_days * rshares_per_cycle * 10
+                )
+                member_data[m]["delegation_rshares"] = 0
+                member_data[m]["curation_rshares"] = 0
 
             for acc_name in accounts:
+                _acc = Account(acc_name, blockchain_instance=hv)
+
+                a = AccountVotes(acc_name, blockchain_instance=hv)
                 print(acc_name)
+                for vote in a:
+                    author = vote["author"]
+                    if author in member_data:
+                        member_data[author]["rewarded_rshares"] += int(vote["rshares"])
+                        member_data[author]["balance_rshares"] -= int(vote["rshares"])
+
+        if True:
+            b = Blockchain(blockchain_instance=hv)
+            wallet = Wallet(blockchain_instance=hv)
+            accountTrx = {}
+            for acc_name in accounts:
+                print(acc_name)
+                db = dataset.connect(databaseConnector)
+                accountTrx[acc_name] = AccountTrx(db, acc_name)
+
                 comments_transfer = []
+                comments = []
                 ops = accountTrx[acc_name].get_all(op_types=["transfer"])
                 cnt = 0
                 for o in ops:
                     cnt += 1
-                    if cnt % 10 == 0:
+                    if cnt % 10000 == 0:
                         print("%d/%d" % (cnt, len(ops)))
                     op = json.loads(o["op_dict"])
                     if op["memo"] == "":
                         continue
                     try:
-                        c = Comment(op["memo"], steem_instance=hv)
+                        c = Comment(op["memo"], blockchain_instance=hv)
                     except Exception:
                         continue
                     if c["author"] not in accounts:
                         continue
-                    if c["authorperm"] not in comments_transfer:
-                        comments_transfer.append(c["authorperm"])
+                    authorperm = construct_authorperm(c["author"], c["permlink"])
+                    if authorperm not in comments_transfer:
+                        comments_transfer.append(authorperm)
                 print("%d comments with transfer found" % len(comments_transfer))
-                for authorperm in comments_transfer:
-                    c = Comment(authorperm, steem_instance=hv)
-                    print(c["authorperm"])
+                del ops
+
+                ops = accountTrx[acc_name].get_all(op_types=["comment"])
+                cnt = 0
+                for o in ops:
+                    cnt += 1
+                    if cnt % 10000 == 0:
+                        print("%d/%d" % (cnt, len(ops)))
+                    op = json.loads(o["op_dict"])
+                    c = Comment(op, blockchain_instance=hv)
+                    if c["author"] not in accounts:
+                        continue
+                    authorperm = construct_authorperm(c["author"], c["permlink"])
+                    if authorperm not in comments:
+                        comments.append(authorperm)
+                print("%d comments found" % len(comments))
+                del ops
+                cnt = 0
+                cnt2 = 0
+                for authorperm in comments:
+                    cnt += 1
+                    if cnt % 100 == 0:
+                        print("%d/%d" % (cnt, len(comments)))
+                    if authorperm in comments_transfer:
+                        print(
+                            "Will check vote signer %d/%d - %s"
+                            % (cnt2, len(comments_transfer), authorperm)
+                        )
+                        if cnt2 % 10 == 0 and cnt2 > 0:
+                            print("write member database")
+                            memberStorage.db = dataset.connect(databaseConnector2)
+                            member_data_list = []
+                            for m in member_data:
+                                member_data_list.append(member_data[m])
+                            memberStorage.add_batch(member_data_list)
+                            member_data_list = []
+                        cnt2 += 1
+                    try:
+                        c = Comment(authorperm, blockchain_instance=hv)
+                    except Exception:
+                        continue
+                    cnt3 = 0
                     for vote in c["active_votes"]:
-                        if vote["rshares"] == 0:
+                        cnt3 += 1
+                        if int(vote["rshares"]) == 0:
                             continue
                         if (
                             addTzInfo(datetime.now(timezone.utc))
@@ -143,8 +181,15 @@ if __name__ == "__main__":
                             continue
                         if vote["voter"] not in member_data:
                             continue
-                        if vote["rshares"] > 50000000:
+                        if (
+                            authorperm in comments_transfer
+                            and hv.rshares_to_hbd(int(vote["rshares"])) >= 0.05
+                        ):
                             try:
+                                if cnt3 % 10 == 0:
+                                    print(
+                                        "%d/%d votes" % (cnt3, len(c["active_votes"]))
+                                    )
                                 block_num = b.get_estimated_block_num(vote["time"])
                                 current_block_num = b.get_current_block_num()
                                 transaction = None
@@ -173,7 +218,7 @@ if __name__ == "__main__":
                                         continue
                                     block = Block(
                                         block_num + block_search_list[block_cnt],
-                                        steem_instance=hv,
+                                        blockchain_instance=hv,
                                     )
                                     for tt in block.transactions:
                                         for op in tt["operations"]:
@@ -217,6 +262,8 @@ if __name__ == "__main__":
                                             empty_public_keys.append(key)
                                         else:
                                             key_accounts.append(pubkey_account)
+                                if len(key_accounts) > 0:
+                                    vote_did_sign = True
 
                                 for a in key_accounts:
                                     if vote["voter"] == a:
@@ -234,36 +281,33 @@ if __name__ == "__main__":
                                     continue
                             except Exception:
                                 continue
-                        if vote_did_sign:
-                            continue
-                        if False:
-                            if c.is_main_post():
-                                if acc_name == "steembasicincome":
-                                    rshares = vote["rshares"] * upvote_multiplier
-                                    if rshares < rshares_per_cycle:
-                                        rshares = rshares_per_cycle
-                                else:
-                                    rshares = vote["rshares"] * upvote_multiplier
-                                member_data[vote["voter"]]["earned_rshares"] += rshares
-                                member_data[vote["voter"]]["curation_rshares"] += (
-                                    rshares
-                                )
-                                member_data[vote["voter"]]["balance_rshares"] += rshares
+                        upvote_multiplier = 1  # Was Unset 1 should be safe
+                        if c.is_main_post():
+                            if acc_name == "steembasicincome":
+                                rshares = int(vote["rshares"]) * upvote_multiplier
+                                if rshares < rshares_per_cycle:
+                                    rshares = rshares_per_cycle
                             else:
-                                rshares = vote["rshares"]
-                                if rshares < 50000000:
-                                    continue
-                                member_data[vote["voter"]]["earned_rshares"] += rshares
-                                member_data[vote["voter"]]["curation_rshares"] += (
-                                    rshares
-                                )
-                                member_data[vote["voter"]]["balance_rshares"] += rshares
+                                rshares = int(vote["rshares"]) * upvote_multiplier
+                            member_data[vote["voter"]]["earned_rshares"] += rshares
+                            member_data[vote["voter"]]["curation_rshares"] += rshares
+                            member_data[vote["voter"]]["balance_rshares"] += rshares
+                        else:
+                            rshares = int(vote["rshares"])
+                            if rshares < 50000000:
+                                continue
+                            member_data[vote["voter"]]["earned_rshares"] += rshares
+                            member_data[vote["voter"]]["curation_rshares"] += rshares
+                            member_data[vote["voter"]]["balance_rshares"] += rshares
 
-        if False:
-            print("write member database")
-            memberStorage.db = dataset.connect(databaseConnector2)
-            member_data_list = []
-            for m in member_data:
-                member_data_list.append(member_data[m])
-            memberStorage.add_batch(member_data_list)
-            member_data_list = []
+        print("write member database")
+        memberStorage.db = dataset.connect(databaseConnector2)
+        member_data_list = []
+        for m in member_data:
+            member_data_list.append(member_data[m])
+        memberStorage.add_batch(member_data_list)
+        member_data_list = []
+
+
+if __name__ == "__main__":
+    run()

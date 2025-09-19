@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from nectar import Steem
+from nectar.hive import Hive
 from nectar.utils import addTzInfo
 
 
@@ -24,16 +24,16 @@ def ensure_timezone_aware(dt):
 
 
 def estimate_rshares_for_hbd(
-    stm: Steem, target_hbd: float, author_share: bool = True
+    hv: Hive, target_hbd: float, author_share: bool = True
 ) -> int:
     """
     Estimate the rshares required to produce a target HBD payout.
     """
-    fund = stm.get_reward_funds()
+    fund = hv.get_reward_funds()
     reward_balance = float(fund["reward_balance"]["amount"])
     recent_claims = int(fund["recent_claims"])
 
-    feed = stm.get_feed_history()
+    feed = hv.get_feed_history()
     hive_to_hbd_price = float(feed["current_median_history"]["base"]["amount"]) / float(
         feed["current_median_history"]["quote"]["amount"]
     )
@@ -44,16 +44,16 @@ def estimate_rshares_for_hbd(
 
 
 def estimate_hbd_for_rshares(
-    stm: Steem, rshares: int, author_share: bool = True
+    hv: Hive, rshares: int, author_share: bool = True
 ) -> float:
     """
     Estimate the HBD payout value of a given rshares amount.
     """
-    fund = stm.get_reward_funds()
+    fund = hv.get_reward_funds()
     reward_balance = float(fund["reward_balance"]["amount"])
     recent_claims = int(fund["recent_claims"])
 
-    feed = stm.get_feed_history()
+    feed = hv.get_feed_history()
     hive_to_hbd_price = float(feed["current_median_history"]["base"]["amount"]) / float(
         feed["current_median_history"]["quote"]["amount"]
     )

@@ -11,7 +11,7 @@ from nectar.comment import Comment
 from nectar.nodelist import NodeList
 
 from hivesbi.member import Member
-from hivesbi.storage import AccountsDB, ConfigurationDB, KeysDB, MemberDB, TrxDB
+from hivesbi.storage import AccountsDB, ConfigurationDB, KeysDB, MemberDB
 from hivesbi.transfer_ops_storage import PostsTrx
 from hivesbi.utils import ensure_timezone_aware
 
@@ -32,7 +32,6 @@ def run():
     db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)
     # Create keyStorage
-    trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
     confStorage = ConfigurationDB(db2)
     accStorage = AccountsDB(db2)
@@ -42,10 +41,6 @@ def run():
 
     conf_setup = confStorage.get()
 
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
-    share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
-    rshares_per_cycle = conf_setup["rshares_per_cycle"]
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
@@ -66,30 +61,7 @@ def run():
     print("Upvote posts/comments")
     start_timestamp = ensure_timezone_aware(datetime(2018, 12, 14, 9, 18, 20))
 
-    if True:
-        max_batch_size = 50
-        threading = False
-        wss = False
-        https = True
-        normal = False
-        appbase = True
-    elif False:
-        max_batch_size = None
-        threading = True
-        wss = True
-        https = False
-        normal = True
-        appbase = True
-    else:
-        max_batch_size = None
-        threading = False
-        wss = True
-        https = True
-        normal = True
-        appbase = True
-
     nodes = NodeList()
-    # nodes.update_nodes(weights={"block": 1})
     try:
         nodes.update_nodes()
     except Exception:
@@ -115,17 +87,12 @@ def run():
 
     voter_accounts = {}
     for acc in accounts:
-        voter_accounts[acc] = Account(acc, steem_instance=hv)
+        voter_accounts[acc] = Account(acc, blockchain_instance=hv)
 
-    b = Blockchain(steem_instance=hv)
+    _blockchain = Blockchain(blockchain_instance=hv)
     # print("reading all authorperm")
-    already_voted_posts = []
-    flagged_posts = []
     rshares_sum = 0
-    start_reading = time.time()
     post_list = postTrx.get_unvoted_post()
-    # print("Reading posts from database took %.2f s" % (time.time() - start_prep_time))
-    # print("prep time took %.2f s" % (time.time() - start_prep_time))
     for authorperm in post_list:
         created = ensure_timezone_aware(post_list[authorperm]["created"])
         if (datetime.now(timezone.utc) - created).total_seconds() > 1 * 24 * 60 * 60:
@@ -145,7 +112,6 @@ def run():
             postTrx.update_comment_to_old(author, created, True)
 
         member = Member(memberStorage.get(author))
-        #        if member["comment_upvote"] == 0 and post_list[authorperm]["main_post"] == 0:
         if post_list[authorperm]["main_post"] == 0:
             continue
         if member["blacklisted"]:
@@ -171,14 +137,14 @@ def run():
         while c is None and cnt < 5:
             cnt += 1
             try:
-                c = Comment(authorperm, steem_instance=hv)
+                c = Comment(authorperm, blockchain_instance=hv)
             except Exception:
                 c = None
                 hv.rpc.next()
         if c is None:
             print("Error getting %s" % authorperm)
             continue
-        main_post = c.is_main_post()
+        _main_post = c.is_main_post()
         already_voted = False
         if c.time_elapsed() >= timedelta(hours=24):
             continue
@@ -220,7 +186,6 @@ def run():
 
         if post_list[authorperm]["main_post"] == 0:
             highest_pct = 0
-            highest_rshares = 0
             voter = None
             current_mana = {}
             if rshares > minimum_vote_threshold * 20:
