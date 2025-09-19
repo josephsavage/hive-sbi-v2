@@ -1,16 +1,31 @@
 # This Python file uses the following encoding: utf-8
 from datetime import datetime, timezone
-from steembi.utils import ensure_timezone_aware
+
+from hivesbi.utils import ensure_timezone_aware
+
 
 class Member(dict):
     def __init__(self, account, shares=0, timestamp=None):
         if isinstance(account, dict):
             member = account
         else:
-            member = {"account": account, "shares": shares, "bonus_shares": 0, "total_share_days": 0, "avg_share_age": float(0),
-                      "original_enrollment": timestamp, "latest_enrollment": timestamp, "earned_rshares": 0, "rewarded_rshares": 0,
-                      "subscribed_rshares": 0, "curation_rshares": 0, "delegation_rshares": 0, "other_rshares": 0,
-                      "balance_rshares": 0, "comment_upvote": False}
+            member = {
+                "account": account,
+                "shares": shares,
+                "bonus_shares": 0,
+                "total_share_days": 0,
+                "avg_share_age": float(0),
+                "original_enrollment": timestamp,
+                "latest_enrollment": timestamp,
+                "earned_rshares": 0,
+                "rewarded_rshares": 0,
+                "subscribed_rshares": 0,
+                "curation_rshares": 0,
+                "delegation_rshares": 0,
+                "other_rshares": 0,
+                "balance_rshares": 0,
+                "comment_upvote": False,
+            }
         self.share_age_list = []
         self.shares_list = []
         self.share_timestamp = []
@@ -25,14 +40,13 @@ class Member(dict):
         if shares == 0:
             return
         age = (datetime.now(timezone.utc)) - (ensure_timezone_aware(timestamp))
-        share_age = int(age.total_seconds() / 60 / 60 / 24)          
+        share_age = int(age.total_seconds() / 60 / 60 / 24)
         self.share_age_list.append(share_age)
         self.shares_list.append(shares)
         self.share_timestamp.append(timestamp)
 
     def calc_share_age(self):
         total_share_days = 0
-        sum_days = 0        
         if len(self.share_age_list) == 0:
             self["total_share_days"] = total_share_days
             self["avg_share_age"] = total_share_days
@@ -49,15 +63,13 @@ class Member(dict):
         if len(self.share_age_list) == 0:
             return
         total_share_days = 0
-        sum_days = 0
         index = 0
         for i in range(len(self.share_age_list)):
             if self.share_timestamp[i] <= ensure_timezone_aware(timestamp):
-                
                 total_share_days += self.share_age_list[i] * self.shares_list[i]
                 index += 1
         self["total_share_days"] = total_share_days
         if index > 0:
             self["avg_share_age"] = total_share_days / index
         else:
-            self["avg_share_age"] = total_share_days        
+            self["avg_share_age"] = total_share_days
