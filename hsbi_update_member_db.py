@@ -150,7 +150,7 @@ def run():
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
+    hp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
@@ -284,8 +284,8 @@ def run():
                         delegation[op["sponsor"]] = op["shares"]
                     elif op["vests"] > 0 and op["sponsor"] in member_data:
                         sp = hv.vests_to_hp(float(op["vests"]))
-                        delegation[op["sponsor"]] = int(sp / sp_share_ratio)
-                    # memo_sp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], sp_share_ratio)
+                        delegation[op["sponsor"]] = int(sp / hp_share_ratio)
+                    # memo_hp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], hp_share_ratio)
                     delegation_timestamp[op["sponsor"]] = timestamp
                 elif share_type.lower() in ["removeddelegation"]:
                     delegation[op["sponsor"]] = 0
