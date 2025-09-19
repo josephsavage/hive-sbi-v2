@@ -1,10 +1,10 @@
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import dataset
-from nectar import Steem
+from nectar import Hive
 from nectar.account import Account
 from nectar.comment import Comment
 from nectar.nodelist import NodeList
@@ -14,18 +14,14 @@ from nectar.utils import (
 )
 from nectar.vote import ActiveVotes
 
-from steembi.member import Member
-from steembi.storage import (
+from hivesbi.member import Member
+from hivesbi.storage import (
     AccountsDB,
     ConfigurationDB,
-    KeysDB,
     MemberDB,
-    TransactionMemoDB,
-    TransferMemoDB,
-    TrxDB
 )
-from steembi.transfer_ops_storage import AccountTrx, TransferTrx
-from steembi.utils import ensure_timezone_aware
+from hivesbi.transfer_ops_storage import AccountTrx
+from hivesbi.utils import ensure_timezone_aware
 
 
 def increment_rshares(member_data, vote, rshares):
@@ -34,35 +30,52 @@ def increment_rshares(member_data, vote, rshares):
     member_data[vote["voter"]]["balance_rshares"] += rshares
 
 
-def update_account(account, new_paid_post, new_paid_comment):
+def update_account(
+    account,
+    new_paid_post,
+    new_paid_comment,
+    conf_setup,
+    accounts_data,
+    hv,
+    accountTrx,
+    member_data,
+    rshares_per_cycle,
+    upvote_multiplier,
+    upvote_multiplier_adjusted,
+    hv2,
+):
     last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
-    last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_post"])
+    last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
 
     if accounts_data[account]["last_paid_comment"] is not None:
         last_paid_comment = accounts_data[account]["last_paid_comment"]
     if accounts_data[account]["last_paid_post"] is not None:
         last_paid_post = accounts_data[account]["last_paid_post"]
 
-    account = Account(account, steem_instance=stm)
+    account = Account(account, blockchain_instance=hv)
     if last_paid_post < last_paid_comment:
         oldest_timestamp = last_paid_post
     else:
         oldest_timestamp = last_paid_comment
     if account["name"] == "steembasicincome":
-        ops = accountTrx["sbi"].get_newest(oldest_timestamp, op_types=["comment"], limit=500)
+        ops = accountTrx["sbi"].get_newest(
+            oldest_timestamp, op_types=["comment"], limit=500
+        )
     else:
-        ops = accountTrx[account["name"]].get_newest(oldest_timestamp, op_types=["comment"], limit=50)
+        ops = accountTrx[account["name"]].get_newest(
+            oldest_timestamp, op_types=["comment"], limit=50
+        )
     blog = []
     posts = []
     for op in ops[::-1]:
         try:
-            comment = (json.loads(op["op_dict"]))
+            comment = json.loads(op["op_dict"])
             created = formatTimeString(comment["timestamp"])
         except Exception:
             op_dict = op["op_dict"]
-            comment = json.loads(op_dict[:op_dict.find("body") - 3] + '}')
+            comment = json.loads(op_dict[: op_dict.find("body") - 3] + "}")
         try:
-            comment = Comment(comment, steem_instance=stm)
+            comment = Comment(comment, blockchain_instance=hv)
             comment.refresh()
             created = comment["created"]
         except Exception:
@@ -81,12 +94,12 @@ def update_account(account, new_paid_post, new_paid_comment):
 
     post_rshares = 0
     for authorperm in blog:
-        post = Comment(authorperm, steem_instance=stm)
+        post = Comment(authorperm, blockchain_instance=hv)
         print("Checking post %s" % post["authorperm"])
         if post["created"] > addTzInfo(new_paid_post):
             new_paid_post = post["created"].replace(tzinfo=None)
         last_paid_post = post["created"].replace(tzinfo=None)
-        all_votes = ActiveVotes(post["authorperm"], steem_instance=stm2)
+        all_votes = ActiveVotes(post["authorperm"], blockchain_instance=hv2)
         for vote in all_votes:
             if vote["voter"] in member_data:
                 if member_data[vote["voter"]]["shares"] <= 0:
@@ -96,18 +109,20 @@ def update_account(account, new_paid_post, new_paid_comment):
                     if rshares < rshares_per_cycle:
                         rshares = rshares_per_cycle
                 else:
-                    rshares = vote["rshares"] * upvote_multiplier * upvote_multiplier_adjusted
+                    rshares = (
+                        vote["rshares"] * upvote_multiplier * upvote_multiplier_adjusted
+                    )
 
                 increment_rshares(member_data, vote, rshares)
                 post_rshares += rshares
 
     comment_rshares = 0
     for authorperm in posts:
-        post = Comment(authorperm, steem_instance=stm)
+        post = Comment(authorperm, blockchain_instance=hv)
         if post["created"] > addTzInfo(new_paid_comment):
             new_paid_comment = post["created"].replace(tzinfo=None)
         last_paid_comment = post["created"].replace(tzinfo=None)
-        all_votes = ActiveVotes(post["authorperm"], steem_instance=stm2)
+        all_votes = ActiveVotes(post["authorperm"], blockchain_instance=hv2)
         for vote in all_votes:
             if vote["voter"] in member_data:
                 if member_data[vote["voter"]]["shares"] <= 0:
@@ -126,8 +141,9 @@ def update_account(account, new_paid_post, new_paid_comment):
 
     return accounts_data
 
+
 def run():
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -137,40 +153,25 @@ def run():
         accounts = config_data["accounts"]
         databaseConnector = config_data["databaseConnector"]
         databaseConnector2 = config_data["databaseConnector2"]
-        mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
 
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)
     db = dataset.connect(databaseConnector)
-    transferStorage = TransferTrx(db)
-    # Create keyStorage
-    trxStorage = TrxDB(db2)
-    keyStorage = KeysDB(db2)
     memberStorage = MemberDB(db2)
-    # accountStorage = MemberHistDB(db)
     confStorage = ConfigurationDB(db2)
-    transactionStorage = TransactionMemoDB(db2)
-
-    transferMemosStorage = TransferMemoDB(db2)
-
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
     accounts_data = accountStorage.get_data()
-    other_accounts = accountStorage.get_transfer()
 
     conf_setup = confStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
-    sp_share_ratio = conf_setup["sp_share_ratio"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
-    del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
     last_paid_post = ensure_timezone_aware(conf_setup["last_paid_post"])
     last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
-    last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
-    minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     upvote_multiplier_adjusted = conf_setup["upvote_multiplier_adjusted"]
 
     accountTrx = {}
@@ -180,15 +181,22 @@ def run():
         else:
             accountTrx[account] = AccountTrx(db, account)
 
-    print("sbi_update_curation_rshares: last_cycle: %s - %.2f min" % (
-        formatTimeString(last_cycle), (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60))
-    print("last_paid_post: %s - last_paid_comment: %s" % (
-        formatTimeString(last_paid_post), formatTimeString(last_paid_comment)))
+    print(
+        "sbi_update_curation_rshares: last_cycle: %s - %.2f min"
+        % (
+            formatTimeString(last_cycle),
+            (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60,
+        )
+    )
+    print(
+        "last_paid_post: %s - last_paid_comment: %s"
+        % (formatTimeString(last_paid_post), formatTimeString(last_paid_comment))
+    )
 
     if (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
-
-        new_cycle = (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
-        current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
+        new_cycle = (
+            datetime.now(timezone.utc) - last_cycle
+        ).total_seconds() > 60 * share_cycle_min
 
         print("Update member database, new cycle: %s" % str(new_cycle))
         # memberStorage.wipe(True)
@@ -197,30 +205,39 @@ def run():
         # print(key_list)
         nodes = NodeList()
         nodes.update_nodes()
-        stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
-        stm2 = Steem(node=nodes.get_nodes(hive=hive_blockchain), use_condenser=True)
+        hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
+        hv2 = Hive(node=nodes.get_nodes(hive=hive_blockchain), use_condenser=True)
 
         member_data = {}
-        n_records = 0
-        share_age_member = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
         if True:
             print("reward voted steembasicincome post and comments")
-            # account = Account("steembasicincome", steem_instance=stm)
+            # account = Account("steembasicincome", blockchain_instance=hv)
 
             if last_paid_post is None:
                 last_paid_post = datetime(2018, 8, 9, 3, 36, 48)
             new_paid_post = last_paid_post
             if last_paid_comment is None:
                 last_paid_comment = datetime(2018, 8, 9, 3, 36, 48)
-            # elif (datetime.now(timezone.utc) - last_paid_comment).total_seconds() / 60 / 60 / 24 < 6.5:
-            #    last_paid_comment = datetime.now(timezone.utc) - timedelta(days=7)
             new_paid_comment = last_paid_comment
 
             for account in accounts:
-                accounts_data = update_account(account, new_paid_post, new_paid_comment)
+                accounts_data = update_account(
+                    account,
+                    new_paid_post,
+                    new_paid_comment,
+                    conf_setup,
+                    accounts_data,
+                    hv,
+                    accountTrx,
+                    member_data,
+                    rshares_per_cycle,
+                    upvote_multiplier,
+                    upvote_multiplier_adjusted,
+                    hv2,
+                )
 
         print("write member database")
         memberStorage.db = dataset.connect(databaseConnector2)

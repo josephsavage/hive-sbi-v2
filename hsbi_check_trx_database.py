@@ -2,13 +2,12 @@ import json
 import os
 
 import dataset
-from nectar import Steem
-from nectar.nodelist import NodeList
 
-from steembi.storage import MemberDB, TrxDB
+from hivesbi.storage import MemberDB, TrxDB
+from hivesbi.transfer_ops_storage import AccountTrx
 
 if __name__ == "__main__":
-    config_file = 'config.json'
+    config_file = "config.json"
     if not os.path.isfile(config_file):
         raise Exception("config.json is missing!")
     else:
@@ -21,20 +20,16 @@ if __name__ == "__main__":
         other_accounts = config_data["other_accounts"]
         mgnt_shares = config_data["mgnt_shares"]
         hive_blockchain = config_data["hive_blockchain"]
-        
-
+    db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)
     # Create keyStorage
     trxStorage = TrxDB(db2)
     memberStorage = MemberDB(db2)
 
     # Update current node list from @fullnodeupdate
-    nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        print("could not update nodes")       
-    stm = Steem(node=nodes.get_nodes(hive=hive_blockchain))
+    # nodes = NodeList()
+    # nodes.update_nodes()
+    # hv = Hive(node=nodes.get_nodes())
     data = trxStorage.get_all_data()
     status = {}
     share_type = {}
@@ -60,3 +55,14 @@ if __name__ == "__main__":
     print("share_types:")
     for s in share_type:
         print("%d share_type entries with %s" % (share_type[s], s))
+
+    accountTrx = {}
+    for account in accounts:
+        accountTrx[account] = AccountTrx(db, account)
+    sbi_ops = accountTrx["steembasicincome"].get_all()
+    last_index = -1
+    for op in trxStorage.get_all_data_sorted():
+        if op["source"] != "steembasicincome":
+            continue
+        if op["index"] - last_index:
+            start_index = last_index
