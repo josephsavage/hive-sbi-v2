@@ -545,6 +545,7 @@ def run():
         if new_cycle:
             last_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
         print(f"hsbi_update_member_db: update last_cycle to {str(last_cycle)}")
+        confStorage.update({"last_cycle": last_cycle})
 
         # Statistics
         shares = 0
