@@ -14,6 +14,7 @@ from nectar.utils import (
 )
 
 from hivesbi.memo_parser import MemoParser
+from hivesbi.settings import get_runtime
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ class ParseAccountHist(list):
         self.memo_parser = MemoParser(blockchain_instance=self.hive)
         self.auditStorage = auditStorage
         self.rshares_per_hbd = rshares_per_hbd
-        self.excluded_accounts = [
+        # Default ignored accounts (used as fallback if not provided via config)
+        default_excluded = [
             "minnowbooster",
             "smartsteem",
             "randowhale",
@@ -67,6 +69,23 @@ class ParseAccountHist(list):
             "sbi8",
             "sbi9",
         ]
+        # Load from settings if available (key: trx_ignore_accounts)
+        try:
+            cfg = get_runtime()["cfg"]
+            ignore_val = cfg.get("trx_ignore_accounts") if hasattr(cfg, "get") else None
+            if ignore_val is None and "trx_ignore_accounts" in cfg:
+                ignore_val = cfg["trx_ignore_accounts"]
+            if isinstance(ignore_val, str):
+                # Support comma/space separated strings
+                parsed = [x.strip() for x in ignore_val.replace("\n", ",").split(",") if x.strip()]
+                self.excluded_accounts = parsed or default_excluded
+            elif isinstance(ignore_val, (list, tuple, set)):
+                self.excluded_accounts = list(ignore_val) or default_excluded
+            else:
+                self.excluded_accounts = default_excluded
+        except Exception:
+            # On any issue, use the defaults to remain robust
+            self.excluded_accounts = default_excluded
 
         self.trxStorage = trxStorage
         self.transactionStorage = transactionStorage
@@ -485,7 +504,9 @@ class ParseAccountHist(list):
             share_type=share_type,
         )
 
-    def _add_audit_log(self, account, value_type, old_value, new_value, reason, related_trx_id=None):
+    def _add_audit_log(
+        self, account, value_type, old_value, new_value, reason, related_trx_id=None
+    ):
         if self.auditStorage is None:
             return
         if old_value == new_value:
@@ -518,7 +539,9 @@ class ParseAccountHist(list):
         if (
             len(processed_memo) > 2
             and (
-                processed_memo[0] == "#" or processed_memo[1] == "#" or processed_memo[2] == "#"
+                processed_memo[0] == "#"
+                or processed_memo[1] == "#"
+                or processed_memo[2] == "#"
             )
             and sender == "steembasicincome"
         ):

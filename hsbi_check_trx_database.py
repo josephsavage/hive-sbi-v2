@@ -1,40 +1,20 @@
-import json
-import os
-
-import dataset
-
-from hivesbi.storage import MemberDB, TrxDB
+from hivesbi.settings import get_runtime
+from hivesbi.storage import TrxDB
 from hivesbi.transfer_ops_storage import AccountTrx
 
-if __name__ == "__main__":
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        print(f"hsbi_check_trx_database: {config_data}")
-        accounts = config_data["accounts"]
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        other_accounts = config_data["other_accounts"]
-        mgnt_shares = config_data["mgnt_shares"]
-        hive_blockchain = config_data["hive_blockchain"]
-    db = dataset.connect(databaseConnector)
-    db2 = dataset.connect(databaseConnector2)
-    # Create keyStorage
-    trxStorage = TrxDB(db2)
-    memberStorage = MemberDB(db2)
 
-    # Update current node list from @fullnodeupdate
-    # nodes = NodeList()
-    # nodes.update_nodes()
-    # hv = Hive(node=nodes.get_nodes())
+def run():
+    rt = get_runtime()
+    db = rt["db"]
+    accounts = rt["accounts"]
+    stor = rt["storages"]
+    trxStorage: TrxDB = stor["trx"]
     data = trxStorage.get_all_data()
     status = {}
     share_type = {}
     n_records = 0
     shares = 0
+
     for op in data:
         if op["status"] in status:
             status[op["status"]] += 1
@@ -59,10 +39,10 @@ if __name__ == "__main__":
     accountTrx = {}
     for account in accounts:
         accountTrx[account] = AccountTrx(db, account)
-    sbi_ops = accountTrx["steembasicincome"].get_all()
-    last_index = -1
     for op in trxStorage.get_all_data_sorted():
         if op["source"] != "steembasicincome":
             continue
-        if op["index"] - last_index:
-            start_index = last_index
+
+
+if __name__ == "__main__":
+    run()

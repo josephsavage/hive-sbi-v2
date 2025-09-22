@@ -1,14 +1,9 @@
-#!/usr/bin/env python
-import json
-import os
 import sys
 from datetime import datetime, timezone
 
-import dataset
-from nectar import Hive
 from nectar.account import Account
-from nectar.nodelist import NodeList
 
+from hivesbi.settings import get_runtime, make_hive
 from hivesbi.storage import AccountsDB, ConfigurationDB
 from hivesbi.utils import (
     ensure_timezone_aware,
@@ -16,25 +11,18 @@ from hivesbi.utils import (
     estimate_rshares_for_hbd,
 )
 
-if __name__ == "__main__":
-    # Load configuration from config.json (same as other SBI scripts)
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        print("hsbi_manage_accrual: config.json is missing!")
-        sys.exit(1)
-    with open(config_file) as f:
-        config_data = json.load(f)
 
-    databaseConnector2 = config_data["databaseConnector2"]
-    hive_blockchain = config_data["hive_blockchain"]
+def run():
+    rt = get_runtime()
+    cfg = rt["cfg"]
 
-    # Open configuration database
-    db2 = dataset.connect(databaseConnector2)
-    confStorage = ConfigurationDB(db2)
+    # Open configuration database via storages
+    stor = rt["storages"]
+    confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
 
-    # Fetch account list from the accounts table instead of config.json
-    accountStorage = AccountsDB(db2)
+    # Fetch account list from the accounts table
+    accountStorage: AccountsDB = stor["accounts"]
     account_names = accountStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
@@ -52,35 +40,30 @@ if __name__ == "__main__":
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
-
-#        try:
-#            # Get dbconnector3 from config.json
-#            databaseConnector3 = config_data["databaseConnector3"]
-#
-#            # Connect to dbconnector3
-#            db3 = dataset.connect(databaseConnector3)
-#
-#            # Get the raw SQLAlchemy connection so we can call the stored procedure
-#            with db3.engine.begin() as conn:
-#                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-#                result = conn.exec_driver_sql(
-#                    "CALL sbi_reporting.python_call_usp_list()"
-#                )
-#
-#                # Iterate over any returned rows and print them
-#                for row in result:
-#                    # row can be a tuple or Row object depending on driver
-#                    print("LOG:", *row)
-#
-#        except Exception as e:
-#            print(f"Error calling stored procedure: {e}")
-
+        #        try:
+        #            # Get dbconnector3 from config.json
+        #            databaseConnector3 = config_data["databaseConnector3"]
+        #
+        #            # Connect to dbconnector3
+        #            db3 = dataset.connect(databaseConnector3)
+        #
+        #            # Get the raw SQLAlchemy connection so we can call the stored procedure
+        #            with db3.engine.begin() as conn:
+        #                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
+        #                result = conn.exec_driver_sql(
+        #                    "CALL sbi_reporting.python_call_usp_list()"
+        #                )
+        #
+        #                # Iterate over any returned rows and print them
+        #                for row in result:
+        #                    # row can be a tuple or Row object depending on driver
+        #                    print("LOG:", *row)
+        #
+        #        except Exception as e:
+        #            print(f"Error calling stored procedure: {e}")
 
         # Build Hive instance and collect mana for each account
-        nodes = NodeList()
-        nodes.update_nodes()
-        node_list = nodes.get_nodes(hive=hive_blockchain)
-        hv = Hive(node=node_list, num_retries=5, call_num_retries=3, timeout=15)
+        hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
 
         rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
         print(
@@ -133,3 +116,7 @@ if __name__ == "__main__":
         )
     else:
         print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
+
+
+if __name__ == "__main__":
+    run()

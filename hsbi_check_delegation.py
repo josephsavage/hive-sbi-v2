@@ -1,5 +1,3 @@
-import json
-import os
 from datetime import datetime, timezone
 
 import dataset
@@ -8,6 +6,7 @@ from nectar.instance import set_shared_blockchain_instance
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
+from hivesbi.settings import Config
 from hivesbi.storage import ConfigurationDB, TrxDB
 from hivesbi.transfer_ops_storage import TransferTrx
 from hivesbi.utils import ensure_timezone_aware
@@ -18,16 +17,10 @@ def calculate_shares(delegation_shares, hp_share_ratio):
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        hive_blockchain = config_data["hive_blockchain"]
+    cfg = Config.load()
+    databaseConnector = cfg["databaseConnector"]
+    databaseConnector2 = cfg["databaseConnector2"]
+    hive_blockchain = cfg["hive_blockchain"]
 
     db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)

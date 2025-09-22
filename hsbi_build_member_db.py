@@ -1,42 +1,24 @@
 import json
-import os
 
-import dataset
-from nectar import Hive
-from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
 from hivesbi.member import Member
-from hivesbi.storage import MemberDB, TrxDB
+from hivesbi.settings import get_runtime
 
-if __name__ == "__main__":
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        print(f"hsbi_build_member_db: {config_data}")
-        accounts = config_data["accounts"]
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        other_accounts = config_data["other_accounts"]
-        mgnt_shares = config_data["mgnt_shares"]
-        hive_blockchain = config_data["hive_blockchain"]
 
-    db2 = dataset.connect(databaseConnector2)
-    # Create keyStorage
-    trxStorage = TrxDB(db2)
-    memberStorage = MemberDB(db2)
+def run():
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    print(f"hsbi_build_member_db: {dict(cfg.items())}")
+    stor = rt["storages"]
+    # Create storages
+    trxStorage = stor["trx"]
+    memberStorage = stor["member"]
 
-    newTrxStorage = False
     if not trxStorage.exists_table():
-        newTrxStorage = True
         trxStorage.create_table()
 
-    newMemberStorage = False
     if not memberStorage.exists_table():
-        newMemberStorage = True
         memberStorage.create_table()
 
     # Update current node list from @fullnodeupdate
@@ -45,16 +27,8 @@ if __name__ == "__main__":
     accs = memberStorage.get_all_accounts()
     for a in accs:
         memberStorage.delete(a)
-    nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        print("hsbi_build_member_db: could not update nodes")
-    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     data = trxStorage.get_all_data()
-    status = {}
     share_type = {}
-    n_records = 0
     member_data = {}
     for op in data:
         if op["status"] == "Valid":
@@ -70,7 +44,6 @@ if __name__ == "__main__":
             sponsor = op["sponsor"]
             sponsee = json.loads(op["sponsee"])
             shares = op["shares"]
-            share_age = 0
             if isinstance(op["timestamp"], str):
                 timestamp = formatTimeString(op["timestamp"])
             else:
@@ -120,3 +93,7 @@ if __name__ == "__main__":
     for m in member_data:
         member_list.append(member_data[m])
     memberStorage.add_batch(member_list)
+
+
+if __name__ == "__main__":
+    run()

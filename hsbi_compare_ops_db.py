@@ -1,48 +1,15 @@
 import json
-import os
-import time
 
-import dataset
-from nectar import Hive
-from nectar.blockchain import Blockchain
-from nectar.nodelist import NodeList
-
-from hivesbi.storage import (
-    AccountsDB,
-)
+from hivesbi.settings import get_runtime
 from hivesbi.transfer_ops_storage import AccountTrx
 
-if __name__ == "__main__":
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        other_accounts = config_data["other_accounts"]
-        hive_blockchain = config_data["hive_blockchain"]
-    start_prep_time = time.time()
-    # sqlDataBaseFile = os.path.join(path, database)
-    # databaseConnector = "sqlite:///" + sqlDataBaseFile
-    db = dataset.connect(databaseConnector)
-    db2 = dataset.connect(databaseConnector2)
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
 
-    # Update current node list from @fullnodeupdate
-    nodes = NodeList()
-    nodes.update_nodes()
-    # nodes.update_nodes(weights={"hist": 1})
-    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
-    # print(str(hv))
+def run():
+    rt = get_runtime()
+    db = rt["db"]
+    accounts = rt["accounts"]
 
     print("hsbi_compare_ops_db: Check account history ops.")
-
-    blockchain = Blockchain(blockchain_instance=hv)
-
     accountTrx = {}
     for account in accounts:
         accountTrx[account] = AccountTrx(db, account)
@@ -66,15 +33,6 @@ if __name__ == "__main__":
         op1 = ops1[index]
         op2 = ops2[index]
 
-        start_block = op1["block"]
-        virtual_op = op1["virtual_op"]
-        trx_in_block = op1["trx_in_block"]
-        op_in_trx = op1["op_in_trx"]
-
-        start_block = op2["block"]
-        virtual_op = op2["virtual_op"]
-        trx_in_block = op2["trx_in_block"]
-        op_in_trx = op2["op_in_trx"]
         dict1 = json.loads(op1["op_dict"])
         dict2 = json.loads(op2["op_dict"])
         if dict1["timestamp"] != dict2["timestamp"]:
@@ -84,3 +42,7 @@ if __name__ == "__main__":
                 f"hsbi_compare_ops_db: index: {op1['op_acc_index']} - {op2['op_acc_index']}"
             )
         index += 1
+
+
+if __name__ == "__main__":
+    run()

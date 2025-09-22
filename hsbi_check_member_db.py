@@ -1,52 +1,22 @@
-import json
-import os
+from hivesbi.settings import get_runtime, make_hive
 
-import dataset
-from nectar import Hive
-from nectar.nodelist import NodeList
 
-from hivesbi.storage import AccountsDB, ConfigurationDB, MemberDB, TrxDB
+def run():
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    # Create storages
+    stor = rt["storages"]
+    memberStorage = stor["member"]
 
-if __name__ == "__main__":
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        mgnt_shares = config_data["mgnt_shares"]
-        hive_blockchain = config_data["hive_blockchain"]
-
-    db2 = dataset.connect(databaseConnector2)
-    # Create keyStorage
-    trxStorage = TrxDB(db2)
-    memberStorage = MemberDB(db2)
-    confStorage = ConfigurationDB(db2)
-
-    accStorage = AccountsDB(db2)
-    accounts = accStorage.get()
-    other_accounts = accStorage.get_transfer()
-
-    hp_share_ratio = confStorage.get()["sp_share_ratio"]
-
-    nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        print("hsbi_check_member_db: could not update nodes")
-    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
+    hv = make_hive(cfg)
 
     # Update current node list from @fullnodeupdate
     print("hsbi_check_member_db: check member database")
     # memberStorage.wipe(True)
     member_accounts = memberStorage.get_all_accounts()
-    data = trxStorage.get_all_data()
 
     missing_accounts = []
     member_data = {}
-    aborted = False
     for m in member_accounts:
         member_data[m] = memberStorage.get(m)
 
@@ -69,3 +39,7 @@ if __name__ == "__main__":
     if len(missing_accounts) > 0:
         print(f"hsbi_check_member_db: {len(missing_accounts)} not existing accounts: ")
         print(missing_accounts)
+
+
+if __name__ == "__main__":
+    run()

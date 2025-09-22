@@ -1,18 +1,14 @@
 import json
-import os
 import random
 import time
 
-import dataset
-from nectar import Hive
 from nectar.blockchain import Blockchain
 from nectar.comment import Comment
-from nectar.nodelist import NodeList
 from nectar.utils import construct_authorperm
 
 from hivesbi.member import Member
+from hivesbi.settings import get_runtime, make_hive
 from hivesbi.storage import (
-    AccountsDB,
     BlacklistDB,
     ConfigurationDB,
     KeysDB,
@@ -23,28 +19,19 @@ from hivesbi.utils import ensure_timezone_aware
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        hive_blockchain = config_data["hive_blockchain"]
-
     start_prep_time = time.time()
-    db = dataset.connect(databaseConnector)
-    db2 = dataset.connect(databaseConnector2)
-    # Create keyStorage
-    memberStorage = MemberDB(db2)
-    confStorage = ConfigurationDB(db2)
-    blacklistStorage = BlacklistDB(db2)
-    accStorage = AccountsDB(db2)
-    keyStorage = KeysDB(db2)
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    db = rt["db"]
+    db2 = rt["db2"]
+    stor = rt["storages"]
+    # Create keyStorage and others
+    memberStorage: MemberDB = stor["member"]
+    confStorage: ConfigurationDB = stor["conf"]
+    blacklistStorage: BlacklistDB = stor["blacklist"]
+    keyStorage: KeysDB = stor["keys"]
 
-    accounts = accStorage.get()
+    accounts = rt["accounts"]
 
     blacklist = blacklistStorage.get()
 
@@ -82,24 +69,19 @@ def run():
 
     max_batch_size = 50
     threading = False
-    nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        print("hsbi_stream_post_comment: could not update nodes")
-
     keys = []
     account_list = []
     for acc in accounts:
         account_list.append(acc)
-        keys.append(keyStorage.get(acc, "posting"))
+        val = keyStorage.get(acc, "posting")
+        if val is not None:
+            keys.append(val)
     keys_list = []
     for k in keys:
         if k["key_type"] == "posting":
             keys_list.append(k["wif"].replace("\n", "").replace("\r", ""))
-    node_list = nodes.get_nodes(hive=hive_blockchain)
-    hv = Hive(
-        node=node_list,
+    hv = make_hive(
+        cfg,
         keys=keys_list,
         num_retries=5,
         call_num_retries=3,
@@ -278,7 +260,6 @@ def run():
     for m in changed_member_data:
         member_data_list.append(member_data[m])
 
-    db2 = dataset.connect(databaseConnector2)
     memberStorage = MemberDB(db2)
     memberStorage.add_batch(member_data_list)
     member_data_list = []
