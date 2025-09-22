@@ -42,24 +42,24 @@ def run():
     ):
 
     
-        #        try:
-        #            # Example: use third DB connector directly from the runtime
-        #            # Note: rt is provided by get_runtime() above
-        #            db3 = rt.get("db3")
-        #            if db3 is not None:
-        #                # Call stored procedure using the raw SQLAlchemy connection
-        #                with db3.engine.begin() as conn:
-        #                    print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-        #                    result = conn.exec_driver_sql(
-        #                        "CALL sbi_reporting.python_call_usp_list()"
+                try:
+                    # Example: use third DB connector directly from the runtime
+                    # Note: rt is provided by get_runtime() above
+                    db3 = rt.get("db3")
+                    if db3 is not None:
+                        # Call stored procedure using the raw SQLAlchemy connection
+                        with db3.engine.begin() as conn:
+                            print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
+                            result = conn.exec_driver_sql(
+                                "CALL sbi_reporting.python_call_usp_list()"
         #                    )
-        #                    # Iterate over any returned rows and print them
-        #                    for row in result:
-        #                        # row can be a tuple or Row object depending on driver
-        #                        print("LOG:", *row)
-        #
-        #        except Exception as e:
-        #            print(f"Error calling stored procedure: {e}")
+                            # Iterate over any returned rows and print them
+                            for row in result:
+                                # row can be a tuple or Row object depending on driver
+                                print("LOG:", *row)
+        
+                except Exception as e:
+                    print(f"Error calling stored procedure: {e}")
 
 
         # Build Hive instance and collect mana for each account
