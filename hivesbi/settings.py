@@ -145,7 +145,12 @@ def connect_dbs(cfg: Config):
         if "databaseConnector2" in cfg
         else None
     )
-    return db, db2
+    db3 = (
+        dataset.connect(cfg["databaseConnector3"])
+        if "databaseConnector3" in cfg
+        else None
+    )
+    return db, db2, db3
 
 
 def make_nodes() -> NodeList:

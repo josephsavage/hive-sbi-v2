@@ -40,14 +40,13 @@ def run():
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
+
+    
         #        try:
-        #            # Example: use centralized config to access an optional third connector
-        #            # Note: cfg is provided by get_runtime() above
-        #            databaseConnector3 = cfg.get("databaseConnector3")
-        #            if databaseConnector3:
-        #                import dataset  # local import to avoid hard dependency
-        #                # Connect to dbconnector3
-        #                db3 = dataset.connect(databaseConnector3)
+        #            # Example: use third DB connector directly from the runtime
+        #            # Note: rt is provided by get_runtime() above
+        #            db3 = rt.get("db3")
+        #            if db3 is not None:
         #                # Call stored procedure using the raw SQLAlchemy connection
         #                with db3.engine.begin() as conn:
         #                    print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
