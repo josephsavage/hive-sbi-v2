@@ -40,36 +40,33 @@ def run():
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
+        try:
+            # Example: use third DB connector directly from the runtime
+            # Note: rt is provided by get_runtime() above
+            db3 = rt.get("db3")
+            if db3 is not None:
+                # Call stored procedure using the raw SQLAlchemy connection
+                with db3.engine.begin() as conn:
+                    print(
+                        "Calling stored procedure: sbi_reporting.python_call_usp_list()"
+                    )
+                    result = conn.exec_driver_sql(
+                        "CALL sbi_reporting.python_call_usp_list()"
+                    )
+                    # Iterate over any returned rows and print them
+                    for row in result:
+                        # row can be a tuple or Row object depending on driver
+                        print("LOG:", *row)
 
-    
-                try:
-                    # Example: use third DB connector directly from the runtime
-                    # Note: rt is provided by get_runtime() above
-                    db3 = rt.get("db3")
-                    if db3 is not None:
-                        # Call stored procedure using the raw SQLAlchemy connection
-                        with db3.engine.begin() as conn:
-                            print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-                            result = conn.exec_driver_sql(
-                                "CALL sbi_reporting.python_call_usp_list()"
-        #                    )
-                            # Iterate over any returned rows and print them
-                            for row in result:
-                                # row can be a tuple or Row object depending on driver
-                                print("LOG:", *row)
-        
-                except Exception as e:
-                    print(f"Error calling stored procedure: {e}")
-
+        except Exception as e:
+            print(f"Error calling stored procedure: {e}")
 
         # Build Hive instance and collect mana for each account
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
-
         rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
         print(
             f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
         )
-
         total_current_mana = 0
         total_max_mana = 0
         accounts_processed = 0

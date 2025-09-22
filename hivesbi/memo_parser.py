@@ -87,7 +87,7 @@ class MemoParser(object):
                         account_name = account_name.strip()
                         _acc = Account(account_name, blockchain_instance=self.hive)
                         account_found = True
-                    except Exception as e:
+                    except Exception:
                         # print(f"DEBUG: Exception in steemit URL parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
@@ -115,7 +115,7 @@ class MemoParser(object):
                             sponsor = account_name1
                         else:
                             account_error = True
-                    except Exception as e:
+                    except Exception:
                         # print(f"DEBUG: Exception in colon parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
@@ -135,7 +135,7 @@ class MemoParser(object):
                         _acc = Account(account_name, blockchain_instance=self.hive)
                         account_found = True
 
-                    except Exception as e:
+                    except Exception:
                         # print(f"DEBUG: Exception in @ parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
@@ -158,7 +158,7 @@ class MemoParser(object):
                         _acc = Account(account_name, blockchain_instance=self.hive)
                         account_found = True
 
-                    except Exception as e:
+                    except Exception:
                         # print(f"DEBUG: Exception in @split parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
@@ -178,7 +178,7 @@ class MemoParser(object):
                         account_name = account_name.strip()
                         _acc = Account(account_name, blockchain_instance=self.hive)
                         account_found = True
-                    except Exception as e:
+                    except Exception:
                         # print(f"DEBUG: Exception in fallback parsing: {e}")
                         print(account_name + " is not an account")
                         not_parsed_words.append(w)
@@ -221,7 +221,7 @@ class MemoParser(object):
                 else:
                     # Empty account_name, skip
                     pass
-            except Exception as e:
+            except Exception:
                 account_error = True
                 # print(f"DEBUG: Exception in single word parsing: {e}")
                 print(account_name + " is not an account")
