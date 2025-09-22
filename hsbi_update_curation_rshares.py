@@ -1,13 +1,9 @@
 import json
-import os
 import time
 from datetime import datetime, timezone
 
-import dataset
-from nectar import Hive
 from nectar.account import Account
 from nectar.comment import Comment
-from nectar.nodelist import NodeList
 from nectar.utils import (
     addTzInfo,
     formatTimeString,
@@ -15,11 +11,7 @@ from nectar.utils import (
 from nectar.vote import ActiveVotes
 
 from hivesbi.member import Member
-from hivesbi.storage import (
-    AccountsDB,
-    ConfigurationDB,
-    MemberDB,
-)
+from hivesbi.settings import get_runtime, make_hive
 from hivesbi.transfer_ops_storage import AccountTrx
 from hivesbi.utils import ensure_timezone_aware
 
@@ -147,28 +139,17 @@ def update_account(
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        accounts = config_data["accounts"]
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        hive_blockchain = config_data["hive_blockchain"]
-
     start_prep_time = time.time()
-    db2 = dataset.connect(databaseConnector2)
-    db = dataset.connect(databaseConnector)
-    memberStorage = MemberDB(db2)
-    confStorage = ConfigurationDB(db2)
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
-    accounts_data = accountStorage.get_data()
-
-    conf_setup = confStorage.get()
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    db = rt["db"]
+    db2 = rt["db2"]
+    stor = rt["storages"]
+    memberStorage = stor["member"]
+    accountStorage = stor["accounts"]
+    accounts = rt["accounts"]
+    accounts_data = rt["accounts_data"]
+    conf_setup = rt["conf_setup"]
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
@@ -203,11 +184,8 @@ def run():
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
 
-        # print(key_list)
-        nodes = NodeList()
-        nodes.update_nodes()
-        hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
-        hv2 = Hive(node=nodes.get_nodes(hive=hive_blockchain), use_condenser=True)
+        hv = make_hive(cfg)
+        hv2 = make_hive(cfg, condenser=True)
 
         member_data = {}
         for m in member_accounts:
@@ -243,7 +221,7 @@ def run():
                 )
 
         print("hsbi_update_curation_rshares: write member database")
-        memberStorage.db = dataset.connect(databaseConnector2)
+        memberStorage.db = db2
         member_data_list = []
         for m in member_data:
             member_data_list.append(member_data[m])

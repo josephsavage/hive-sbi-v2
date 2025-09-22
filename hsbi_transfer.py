@@ -1,18 +1,14 @@
 import json
-import os
 import time
 from datetime import datetime, timezone
 
-import dataset
-from nectar import Hive
 from nectar.account import Account
-from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
 from hivesbi.member import Member
 from hivesbi.parse_hist_op import ParseAccountHist
+from hivesbi.settings import get_runtime, make_hive
 from hivesbi.storage import (
-    AccountsDB,
     AuditDB,
     ConfigurationDB,
     KeysDB,
@@ -26,23 +22,13 @@ from hivesbi.utils import ensure_timezone_aware
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        hive_blockchain = config_data["hive_blockchain"]
-
     start_prep_time = time.time()
-    db = dataset.connect(databaseConnector)
-    db2 = dataset.connect(databaseConnector2)
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    db = rt["db"]
+    db2 = rt["db2"]
 
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
+    accounts = rt["accounts"]
 
     accountTrx = {}
     for account in accounts:
@@ -86,13 +72,7 @@ def run():
         key = keyStorage.get("steembasicincome", "memo")
         if key is not None:
             key_list.append(key["wif"])
-        # print(key_list)
-        nodes = NodeList()
-        try:
-            nodes.update_nodes()
-        except Exception:
-            print("hsbi_transfer: could not update nodes")
-        hv = Hive(keys=key_list, node=nodes.get_nodes(hive=hive_blockchain))
+        hv = make_hive(cfg, keys=key_list)
         # set_shared_blockchain_instance(hv)
 
         # print("load member database")
@@ -100,21 +80,6 @@ def run():
         member_data = {}
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
-
-        #if True:
-            #print("hsbi_transfer: delete from transaction_memo... ")
-            #transactionStorage.delete_sender("dtube.rewards")
-            #transactionStorage.delete_sender("reward.app")
-            #transactionStorage.delete_to("sbi2")
-            #transactionStorage.delete_to("sbi3")
-            #transactionStorage.delete_to("sbi4")
-            #transactionStorage.delete_to("sbi5")
-            #transactionStorage.delete_to("sbi6")
-            #transactionStorage.delete_to("sbi7")
-            #transactionStorage.delete_to("sbi8")
-            #transactionStorage.delete_to("sbi9")
-            #transactionStorage.delete_to("sbi10")
-            #print("hsbi_transfer: done.")
 
         stop_index = None
         # stop_index = addTzInfo(datetime(2018, 7, 21, 23, 46, 00))
@@ -126,7 +91,7 @@ def run():
             else:
                 account_trx_name = account_name
             parse_vesting = account_name == "steembasicincome"
-            accountTrx[account_trx_name].db = dataset.connect(databaseConnector)
+            accountTrx[account_trx_name].db = db
             account = Account(account_name, blockchain_instance=hv)
             # print(account["name"])
             pah = ParseAccountHist(

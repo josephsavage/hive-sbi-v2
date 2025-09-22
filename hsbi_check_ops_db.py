@@ -1,50 +1,24 @@
 import json
-import os
 import time
 
-import dataset
-from nectar import Hive
 from nectar.account import Account
-from nectar.amount import Amount
-from nectar.blockchain import Blockchain
-from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
-from hivesbi.storage import (
-    AccountsDB,
-)
+from hivesbi.settings import get_runtime, make_hive
 from hivesbi.transfer_ops_storage import AccountTrx, TransferTrx
 
-if __name__ == "__main__":
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        other_accounts = config_data["other_accounts"]
-        hive_blockchain = config_data["hive_blockchain"]
-    start_prep_time = time.time()
-    # sqlDataBaseFile = os.path.join(path, database)
-    # databaseConnector = "sqlite:///" + sqlDataBaseFile
-    db = dataset.connect(databaseConnector)
-    db2 = dataset.connect(databaseConnector2)
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
 
-    # Update current node list from @fullnodeupdate
-    nodes = NodeList()
-    nodes.update_nodes()
-    # nodes.update_nodes(weights={"hist": 1})
-    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
+def run():
+    start_prep_time = time.time()
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    db = rt["db"]
+    accounts = rt["accounts"]
+
+    hv = make_hive(cfg)
     # print(str(hv))
 
     print("hsbi_check_ops_db: Fetch new account history ops.")
-
-    blockchain = Blockchain(blockchain_instance=hv)
 
     accountTrx = {}
     for account in accounts:
@@ -146,49 +120,10 @@ if __name__ == "__main__":
 
     if not trxStorage.exists_table():
         trxStorage.create_table()
-    for account in other_accounts:
-        account = Account(account, blockchain_instance=hv)
-        cnt = 0
-
-        start_index = trxStorage.get_latest_index(account["name"])
-        if start_index is not None:
-            start_index = start_index["op_acc_index"] + 1
-            print("account %s - %d" % (account["name"], start_index))
-        data = []
-        for op in account.history(
-            start=start_index, use_block_num=False, only_ops=["transfer"]
-        ):
-            amount = Amount(op["amount"])
-            virtual_op = op["virtual_op"]
-            trx_in_block = op["trx_in_block"]
-            if virtual_op > 0:
-                trx_in_block = -1
-            memo = ascii(op["memo"])
-            d = {
-                "block": op["block"],
-                "op_acc_index": op["index"],
-                "op_acc_name": account["name"],
-                "trx_in_block": trx_in_block,
-                "op_in_trx": op["op_in_trx"],
-                "virtual_op": virtual_op,
-                "timestamp": formatTimeString(op["timestamp"]),
-                "from": op["from"],
-                "to": op["to"],
-                "amount": amount.amount,
-                "amount_symbol": amount.symbol,
-                "memo": memo,
-                "op_type": op["type"],
-            }
-            data.append(d)
-            if cnt % 1000 == 0:
-                print(f"hsbi_check_ops_db: {op['timestamp']}")
-                trxStorage.add_batch(data)
-                data = []
-            cnt += 1
-        if len(data) > 0:
-            print(f"hsbi_check_ops_db: {op['timestamp']}")
-            trxStorage.add_batch(data)
-            data = []
     print(
         f"hsbi_check_ops_db: store ops script run {time.time() - start_prep_time:.2f} s"
     )
+
+
+if __name__ == "__main__":
+    run()

@@ -1,39 +1,13 @@
-import json
-import os
+from hivesbi.settings import get_runtime
+from hivesbi.storage import TrxDB
 
-import dataset
-from nectar import Hive
-from nectar.nodelist import NodeList
 
-from hivesbi.storage import MemberDB, TrxDB
+def run():
+    rt = get_runtime()
+    # Create storages
+    stor = rt["storages"]
+    trxStorage: TrxDB = stor["trx"]
 
-if __name__ == "__main__":
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        print(f"hsbi_update_trx_database: {config_data}")
-        accounts = config_data["accounts"]
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        other_accounts = config_data["other_accounts"]
-        mgnt_shares = config_data["mgnt_shares"]
-        hive_blockchain = config_data["hive_blockchain"]
-
-    db2 = dataset.connect(databaseConnector2)
-    # Create keyStorage
-    trxStorage = TrxDB(db2)
-    memberStorage = MemberDB(db2)
-
-    # Update current node list from @fullnodeupdate
-    nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        print("hsbi_update_trx_database: could not update nodes")
-    hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
     data = trxStorage.get_all_data()
     status = {}
     share_type = {}
@@ -59,3 +33,7 @@ if __name__ == "__main__":
     print("hsbi_update_trx_database: share_types:")
     for s in share_type:
         print(f"hsbi_update_trx_database: {share_type[s]} share_type entries with {s}")
+
+
+if __name__ == "__main__":
+    run()

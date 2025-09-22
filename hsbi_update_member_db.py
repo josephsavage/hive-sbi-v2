@@ -1,5 +1,4 @@
 import json
-import os
 import time
 from datetime import datetime, timedelta, timezone
 from time import sleep
@@ -13,6 +12,7 @@ from nectar.utils import (
 )
 
 from hivesbi.member import Member
+from hivesbi.settings import Config
 from hivesbi.storage import (
     AccountsDB,
     ConfigurationDB,
@@ -38,9 +38,7 @@ def memo_welcome(transferMemos, memo_transfer_acc, sponsor, HIVE_symbol="HIVE"):
         memo_transfer_acc.transfer(sponsor, 0.001, HIVE_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print(
-            f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {sponsor}"
-        )
+        print(f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {sponsor}")
 
 
 def memo_sponsoring(transferMemos, memo_transfer_acc, s, sponsor, HIVE_symbol="HIVE"):
@@ -78,9 +76,7 @@ def memo_update_shares(
         memo_transfer_acc.transfer(sponsor, 0.001, HIVE_symbol, memo=memo_text)
         sleep(4)
     except Exception:
-        print(
-            f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {sponsor}"
-        )
+        print(f"hsbi_update_member_db: Could not send 0.001 {HIVE_symbol} to {sponsor}")
 
 
 def memo_sponsoring_update_shares(
@@ -120,18 +116,11 @@ def memo_sponsoring_update_shares(
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        accounts = config_data["accounts"]
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        mgnt_shares = config_data["mgnt_shares"]
-        hive_blockchain = config_data["hive_blockchain"]
+    cfg = Config.load()
+    databaseConnector = cfg["databaseConnector"]
+    databaseConnector2 = cfg["databaseConnector2"]
+    mgnt_shares = cfg["mgnt_shares"]
+    hive_blockchain = cfg["hive_blockchain"]
 
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)

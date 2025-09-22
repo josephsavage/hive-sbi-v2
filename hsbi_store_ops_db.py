@@ -1,21 +1,14 @@
 import json
-import os
 import time
 from datetime import datetime, timezone
 
-import dataset
-from nectar import Hive
 from nectar.account import Account
 from nectar.amount import Amount
 from nectar.blockchain import Blockchain
-from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
-from hivesbi.storage import (
-    AccountsDB,
-    ConfigurationDB,
-)
-from hivesbi.transfer_ops_storage import AccountTrx, TransferTrx
+from hivesbi.settings import get_runtime, make_hive
+from hivesbi.transfer_ops_storage import AccountTrx
 from hivesbi.utils import ensure_timezone_aware
 
 
@@ -126,27 +119,12 @@ def get_account_trx_storage_data(account, start_index, hv):
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        hive_blockchain = config_data["hive_blockchain"]
     start_prep_time = time.time()
-    # sqlDataBaseFile = os.path.join(path, database)
-    # databaseConnector = "sqlite:///" + sqlDataBaseFile
-    db = dataset.connect(databaseConnector)
-    db2 = dataset.connect(databaseConnector2)
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
-    other_accounts = accountStorage.get_transfer()
-
-    confStorage = ConfigurationDB(db2)
-    conf_setup = confStorage.get()
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    db = rt["db"]
+    accounts = rt["accounts"]
+    conf_setup = rt["conf_setup"]
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
 
@@ -159,11 +137,7 @@ def run():
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
-        # Update current node list from @fullnodeupdate
-        nodes = NodeList()
-        nodes.update_nodes()
-        # nodes.update_nodes(weights={"hist": 1})
-        hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
+        hv = make_hive(cfg)
         print(f"hsbi_store_ops_db: {hv}")
 
         print("hsbi_store_ops_db: Fetch new account history ops.")
@@ -201,25 +175,6 @@ def run():
                 accountTrx[account_name].add_batch(data_batch)
                 data_batch = []
 
-        # Create keyStorage
-        db = dataset.connect(databaseConnector)
-        trxStorage = TransferTrx(db)
-
-        for account in other_accounts:
-            account = Account(account, blockchain_instance=hv)
-            start_index = trxStorage.get_latest_index(account["name"])
-
-            data = get_account_trx_storage_data(account, start_index, hv)
-
-            data_batch = []
-            for cnt in range(0, len(data)):
-                data_batch.append(data[cnt])
-                if cnt % 1000 == 0:
-                    trxStorage.add_batch(data_batch)
-                    data_batch = []
-            if len(data_batch) > 0:
-                trxStorage.add_batch(data_batch)
-                data_batch = []
         print(
             f"hsbi_store_ops_db: store ops script run {time.time() - start_prep_time:.2f} s"
         )

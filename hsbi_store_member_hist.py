@@ -1,45 +1,30 @@
-import json
-import os
 import time
 from datetime import datetime, timedelta, timezone
 
-import dataset
 from nectar import Hive
 from nectar.blockchain import Blockchain
 from nectar.comment import Comment
-from nectar.instance import set_shared_blockchain_instance
-from nectar.nodelist import NodeList
 from nectar.utils import addTzInfo, construct_authorperm, formatTimeString
 from nectar.vote import Vote
 
 from hivesbi.member import Member
-from hivesbi.storage import AccountsDB, MemberDB
+from hivesbi.settings import get_runtime, make_hive, make_nodes
+from hivesbi.storage import MemberDB
 from hivesbi.transfer_ops_storage import CurationOptimizationTrx, MemberHistDB
 from hivesbi.utils import ensure_timezone_aware
 
 
 def run():
-    config_file = "config.json"
-    if not os.path.isfile(config_file):
-        raise Exception("config.json is missing!")
-    else:
-        with open(config_file) as json_data_file:
-            config_data = json.load(json_data_file)
-        # print(config_data)
-        databaseConnector = config_data["databaseConnector"]
-        databaseConnector2 = config_data["databaseConnector2"]
-        hive_blockchain = config_data["hive_blockchain"]
-
-    # sqlDataBaseFile = os.path.join(path, database)
-    # databaseConnector = "sqlite:///" + sqlDataBaseFile
     start_prep_time = time.time()
-    db2 = dataset.connect(databaseConnector2)
-
-    accountStorage = AccountsDB(db2)
-    accounts = accountStorage.get()
+    rt = get_runtime()
+    cfg = rt["cfg"]
+    db = rt["db"]
+    db2 = rt["db2"]
+    stor = rt["storages"]
+    accounts = rt["accounts"]
 
     # Create keyStorage
-    memberStorage = MemberDB(db2)
+    memberStorage = stor["member"] if "member" in stor else MemberDB(db2)
 
     # print("Count rshares of upvoted members.")
     member_accounts = memberStorage.get_all_accounts()
@@ -64,20 +49,16 @@ def run():
 
     updated_member_data = []
 
-    db = dataset.connect(databaseConnector)
     curationOptimTrx = CurationOptimizationTrx(db)
     #    curationOptimTrx.delete_old_posts(days=7)
     # Update current node list from @fullnodeupdate
-    nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        print("hsbi_store_member_hist: could not update nodes")
-
-    node_list = nodes.get_nodes(hive=hive_blockchain)
-    hv = Hive(node=node_list, num_retries=3, timeout=10)
-    # print(str(hv))
-    set_shared_blockchain_instance(hv)
+    nodes = make_nodes()
+    node_list = (
+        nodes.get_nodes(hive=cfg["hive_blockchain"])
+        if "hive_blockchain" in cfg
+        else None
+    )
+    hv = make_hive(cfg)
 
     accountTrx = {}
     accountTrx = MemberHistDB(db)
@@ -327,8 +308,6 @@ def run():
             vote_cnt = 0
             last_block_num = block_num
 
-            db = dataset.connect(databaseConnector)
-            db2 = dataset.connect(databaseConnector2)
             accountTrx.db = db
             curationOptimTrx.db = db
             memberStorage.db = db2
@@ -345,12 +324,10 @@ def run():
         cnt += 1
     if len(db_data) > 0:
         print(f"hsbi_store_member_hist: {op['timestamp']}")
-        db = dataset.connect(databaseConnector)
         accountTrx.db = db
         accountTrx.add_batch(db_data)
         db_data = []
     if len(updated_member_data) > 0:
-        db2 = dataset.connect(databaseConnector2)
         memberStorage.db = db2
         memberStorage.add_batch(updated_member_data)
         updated_member_data = []
@@ -362,7 +339,6 @@ def run():
         )
 
     if len(curation_vote_list) > 0:
-        db = dataset.connect(databaseConnector)
         curationOptimTrx.db = db
         curationOptimTrx.add_batch(curation_vote_list)
         curation_vote_list = []
