@@ -81,20 +81,6 @@ def run():
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
-        # print("hsbi_transfer: delete from transaction_memo... ")
-        # transactionStorage.delete_sender("dtube.rewards")
-        # transactionStorage.delete_sender("reward.app")
-        # transactionStorage.delete_to("sbi2")
-        # transactionStorage.delete_to("sbi3")
-        # transactionStorage.delete_to("sbi4")
-        # transactionStorage.delete_to("sbi5")
-        # transactionStorage.delete_to("sbi6")
-        # transactionStorage.delete_to("sbi7")
-        # transactionStorage.delete_to("sbi8")
-        # transactionStorage.delete_to("sbi9")
-        # transactionStorage.delete_to("sbi10")
-        # print("hsbi_transfer: done.")
-
         stop_index = None
         # stop_index = addTzInfo(datetime(2018, 7, 21, 23, 46, 00))
         # stop_index = formatTimeString("2018-07-21T23:46:09")
