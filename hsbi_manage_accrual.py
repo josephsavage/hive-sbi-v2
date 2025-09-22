@@ -62,6 +62,7 @@ def run():
         #        except Exception as e:
         #            print(f"Error calling stored procedure: {e}")
 
+
         # Build Hive instance and collect mana for each account
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
 
