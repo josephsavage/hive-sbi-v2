@@ -29,6 +29,8 @@ class ParseAccountHist(list):
         member_data,
         memberStorage=None,
         blockchain_instance=None,
+        auditStorage=None,
+        rshares_per_hbd=1,
     ):
         self.hive = blockchain_instance or shared_blockchain_instance()
         self.account = Account(account, blockchain_instance=self.hive)
@@ -39,6 +41,8 @@ class ParseAccountHist(list):
         self.member_data = member_data
         self.memberStorage = memberStorage
         self.memo_parser = MemoParser(blockchain_instance=self.hive)
+        self.auditStorage = auditStorage
+        self.rshares_per_hbd = rshares_per_hbd
         self.excluded_accounts = [
             "minnowbooster",
             "smartsteem",
@@ -481,6 +485,165 @@ class ParseAccountHist(list):
             share_type=share_type,
         )
 
+    def _add_audit_log(self, account, value_type, old_value, new_value, reason, related_trx_id=None):
+        if self.auditStorage is None:
+            return
+        if old_value == new_value:
+            return
+        audit_log = {
+            "account": account,
+            "value_type": value_type,
+            "old_value": old_value,
+            "new_value": new_value,
+            "change_amount": new_value - old_value,
+            "timestamp": datetime.now(),
+            "reason": reason,
+            "related_trx_id": related_trx_id,
+        }
+        self.auditStorage.add(audit_log)
+
+    def _handle_point_transfer(self, op):
+        # Must be an incoming transfer to steembasicincome of amount between 0.005 and 1
+        amount_obj = Amount(op["amount"], blockchain_instance=self.hive)
+        amount = float(amount_obj)
+        if not (amount >= 0.005 and amount < 1):
+            return False
+
+        sender = op["from"]
+
+        # Decrypt/normalize memo similar to parse_transfer_in_op
+        processed_memo = (
+            ascii(op["memo"]).replace("\n", "").replace("\\n", "").replace("\\", "")
+        )
+        if (
+            len(processed_memo) > 2
+            and (
+                processed_memo[0] == "#" or processed_memo[1] == "#" or processed_memo[2] == "#"
+            )
+            and sender == "steembasicincome"
+        ):
+            # Unlikely for incoming, but keep parity with parse_transfer_in_op
+            if processed_memo[1] == "#":
+                processed_memo = processed_memo[1:-1]
+            elif processed_memo[2] == "#":
+                processed_memo = processed_memo[2:-2]
+            memo = Memo(sender, op["to"], blockchain_instance=self.hive)
+            processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
+
+        # Normalize and extract nominee (first token, lowercase, strip @)
+        memo_norm = " ".join(str(processed_memo).split()).strip().lower()
+        nominee = memo_norm.split()[0] if memo_norm else ""
+        if nominee.startswith("@"):  # strip leading @
+            nominee = nominee[1:]
+
+        if sender not in self.member_data:
+            return False
+        if nominee not in self.member_data:
+            return False
+        if sender == nominee:
+            return False
+
+        sender_member = self.member_data[sender]
+        nominee_member = self.member_data[nominee]
+
+        if amount_obj.symbol == "HBD":
+            old_sender_shares = sender_member.get("shares", 0)
+            old_nominee_shares = nominee_member.get("shares", 0)
+            units = int(amount * 1000)
+
+            if old_sender_shares < units:
+                units = old_sender_shares
+
+            if units <= 0:
+                return False
+
+            if "shares" not in sender_member:
+                sender_member["shares"] = 0
+            if "shares" not in nominee_member:
+                nominee_member["shares"] = 0
+
+            sender_member["shares"] -= units
+            nominee_member["shares"] += units
+
+            self.memberStorage.update(sender_member)
+            self.memberStorage.update(nominee_member)
+
+            self._add_audit_log(
+                sender,
+                "shares",
+                old_sender_shares,
+                sender_member["shares"],
+                f"Transferred {units} HSBI units to {nominee}",
+                op.get("trx_id"),
+            )
+            self._add_audit_log(
+                nominee,
+                "shares",
+                old_nominee_shares,
+                nominee_member["shares"],
+                f"Received {units} HSBI units from {sender}",
+                op.get("trx_id"),
+            )
+
+            # Log sender (negative shares) in trx for reports
+            base_index = op.get("index", 0) or op.get("op_acc_index", 0) or 0
+            sponsee_json = json.dumps({nominee: units})
+            timestamp = op.get("timestamp")
+            self.trxStorage.add(
+                {
+                    "index": base_index,
+                    "source": self.account["name"],
+                    "memo": f"Transfer to {nominee}",
+                    "account": sender,
+                    "sponsor": sender,
+                    "sponsee": sponsee_json,
+                    "shares": -units,
+                    "vests": 0.0,
+                    "timestamp": formatTimeString(timestamp),
+                    "status": "Valid",
+                    "share_type": "Transfer",
+                }
+            )
+            return True
+        else:
+            # Convert micro-amount equivalent to rshares
+            old_sender_rshares = sender_member["balance_rshares"]
+            old_nominee_rshares = nominee_member["balance_rshares"]
+
+            hbd_equiv = amount * 1000
+            points = int(hbd_equiv * float(self.rshares_per_hbd or 1))
+
+            if old_sender_rshares < points:
+                points = old_sender_rshares
+
+            if points <= 0:
+                return False
+
+            sender_member["balance_rshares"] -= points
+            nominee_member["balance_rshares"] += points
+
+            self.memberStorage.update(sender_member)
+            self.memberStorage.update(nominee_member)
+
+            self._add_audit_log(
+                sender,
+                "balance_rshares",
+                old_sender_rshares,
+                sender_member["balance_rshares"],
+                f"Transferred {points} rshares to {nominee}",
+                op.get("trx_id"),
+            )
+            self._add_audit_log(
+                nominee,
+                "balance_rshares",
+                old_nominee_rshares,
+                nominee_member["balance_rshares"],
+                f"Received {points} rshares from {sender}",
+                op.get("trx_id"),
+            )
+
+            return True
+
     def new_transfer_record(
         self,
         index,
@@ -541,21 +704,54 @@ class ParseAccountHist(list):
 
         elif op["type"] == "transfer":
             _amount = Amount(op["amount"], blockchain_instance=self.hive)
-            # print(op)
+            # Outgoing transfers from this account (except excluded)
             if (
                 op["from"] == self.account["name"]
                 and op["to"] not in self.excluded_accounts
             ):
                 self.parse_transfer_out_op(op)
 
+            # Incoming transfers to this account (except excluded)
             if (
                 op["to"] == self.account["name"]
                 and op["from"] not in self.excluded_accounts
             ):
-                self.parse_transfer_in_op(op)
+                # If this account is one of the SBI accounts, enforce URL-promotion skip first
+                sbi_accounts = {
+                    "steembasicincome",
+                    "sbi2",
+                    "sbi3",
+                    "sbi4",
+                    "sbi5",
+                    "sbi6",
+                    "sbi7",
+                    "sbi8",
+                    "sbi9",
+                    "sbi10",
+                }
+                if self.account["name"] in sbi_accounts:
+                    memo_str = str(op.get("memo", ""))
+                    if memo_str[:8] == "https://":
+                        return
+                    # Point transfer window: <1 and >= 0.005
+                    amt_float = float(_amount)
+                    if amt_float < 1:
+                        # Try to handle as point transfer; if not eligible, log as <1 transfer like before
+                        if amt_float >= 0.005 and self.memberStorage is not None:
+                            processed = self._handle_point_transfer(op)
+                            if processed:
+                                return
+                        # Not processed as point transfer; fall back to logging the <1 transfer
+                        self.parse_transfer_in_op(op)
+                        return
+                    # For >= 1, normal parse
+                    self.parse_transfer_in_op(op)
+                    return
+                else:
+                    # Non-SBI accounts: normal behavior
+                    self.parse_transfer_in_op(op)
+                    return
 
-            # print(op, vests)
-            # self.update(ts, vests, 0, 0)
             return
 
     def add_mngt_shares(self, last_op, mgnt_shares, op_count):

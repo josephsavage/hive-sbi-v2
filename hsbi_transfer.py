@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import dataset
 from nectar import Hive
 from nectar.account import Account
-from nectar.amount import Amount
 from nectar.nodelist import NodeList
 from nectar.utils import formatTimeString
 
@@ -24,189 +23,6 @@ from hivesbi.storage import (
 )
 from hivesbi.transfer_ops_storage import AccountTrx
 from hivesbi.utils import ensure_timezone_aware
-
-
-def add_audit_log(
-    auditStorage, account, value_type, old_value, new_value, reason, related_trx_id=None
-):
-    if old_value == new_value:
-        return
-    audit_log = {
-        "account": account,
-        "value_type": value_type,
-        "old_value": old_value,
-        "new_value": new_value,
-        "change_amount": new_value - old_value,
-        "timestamp": datetime.now(timezone.utc),
-        "reason": reason,
-        "related_trx_id": related_trx_id,
-    }
-    auditStorage.add(audit_log)
-
-
-def handle_point_transfer(
-    op, member_data, memberStorage, hv, auditStorage, trxStorage, rshares_per_hbd
-):
-    amount_obj = Amount(op["amount"], blockchain_instance=hv)
-    amount = float(amount_obj)
-    sender = op["from"]
-    memo_raw = op.get("memo", "")
-    # Normalize memo before parsing for username:
-    # - collapse multiple whitespaces
-    # - trim
-    # - lowercase
-    # - take first token only
-    # - strip leading '@'
-    memo_norm = " ".join(memo_raw.split()).strip().lower()
-    nominee = memo_norm.split()[0] if memo_norm else ""
-    if nominee.startswith("@"):
-        nominee = nominee[1:]
-
-    if sender not in member_data:
-        return
-    if nominee not in member_data:
-        return
-    if sender == nominee:
-        return
-
-    sender_member = member_data[sender]
-    nominee_member = member_data[nominee]
-
-    if amount_obj.symbol == "HBD":
-        old_sender_shares = sender_member.get("shares", 0)
-        old_nominee_shares = nominee_member.get("shares", 0)
-        units = int(amount * 1000)
-
-        if old_sender_shares < units:
-            units = old_sender_shares
-
-        if units <= 0:
-            return
-
-        if "shares" not in sender_member:
-            sender_member["shares"] = 0
-        if "shares" not in nominee_member:
-            nominee_member["shares"] = 0
-
-        sender_member["shares"] -= units
-        nominee_member["shares"] += units
-
-        memberStorage.update(sender_member)
-        memberStorage.update(nominee_member)
-
-        add_audit_log(
-            auditStorage,
-            sender,
-            "shares",
-            old_sender_shares,
-            sender_member["shares"],
-            f"Transferred {units} HSBI units to {nominee}",
-            op["trx_id"],
-        )
-        add_audit_log(
-            auditStorage,
-            nominee,
-            "shares",
-            old_nominee_shares,
-            nominee_member["shares"],
-            f"Received {units} HSBI units from {sender}",
-            op["trx_id"],
-        )
-
-        print(f"Transferred {units} units from {sender} to {nominee}")
-
-        # ------------------------------------------------------------
-        # Log the transfer in the trx table so that it shows up in
-        # standard share-transfer reports, similar to how transfers
-        # are logged in ParseAccountHist.
-        # ------------------------------------------------------------
-        # Use the actual operation index for the transaction
-        try:
-            # First try to get the index directly from the operation
-            base_index = op.get("index", 0)
-            if base_index == 0:
-                # If not available, try op_acc_index which is used in some contexts
-                base_index = op.get("op_acc_index", 0)
-        except AttributeError:
-            base_index = 0
-
-        # Build a common sponsee json string as used elsewhere in the
-        # code-base ( {account: shares} )
-        sponsee_json = json.dumps({nominee: units})
-        # Fallback to current UTC timestamp if the op does not provide
-        # one (should normally be available)
-        timestamp = op.get("timestamp")
-        if timestamp is None:
-            timestamp = datetime.now(timezone.utc)
-        # Ensure timestamp string format matches other entries
-        timestamp_str = (
-            formatTimeString(timestamp) if not isinstance(timestamp, str) else timestamp
-        )
-        # Sender (negative shares)
-        data_sender = {
-            "index": base_index,
-            "source": "steembasicincome",
-            "memo": f"Transfer to {nominee}",
-            "account": sender,
-            "sponsor": sender,
-            "sponsee": sponsee_json,
-            "shares": -units,
-            "vests": 0.0,
-            "timestamp": timestamp_str,
-            "status": "Valid",
-            "share_type": "Transfer",
-        }
-        # Idempotency: avoid duplicate key errors on reruns
-        try:
-            existing = trxStorage.get(
-                data_sender["index"], data_sender["source"]
-            )  # (index, source)
-        except Exception:
-            existing = None
-        if existing is None:
-            trxStorage.add(data_sender)
-        # trxStorage.add(data_nominee)
-    else:
-        # Convert the micro amount to an HBD-equivalent value and then to rshares.
-        # 1 HBD worth of rshares = rshares_per_hbd (minimum_vote_threshold / 0.021)
-        old_sender_rshares = sender_member["balance_rshares"]
-        old_nominee_rshares = nominee_member["balance_rshares"]
-
-        hbd_equiv = amount * 1000  # micro-amount to HBD equivalent (e.g. 0.005 -> 5)
-        points = int(hbd_equiv * rshares_per_hbd)
-
-        if old_sender_rshares < points:
-            points = old_sender_rshares
-
-        if points <= 0:
-            return
-
-        sender_member["balance_rshares"] -= points
-        nominee_member["balance_rshares"] += points
-
-        memberStorage.update(sender_member)
-        memberStorage.update(nominee_member)
-
-        add_audit_log(
-            auditStorage,
-            sender,
-            "balance_rshares",
-            old_sender_rshares,
-            sender_member["balance_rshares"],
-            f"Transferred {points} rshares to {nominee}",
-            op["trx_id"],
-        )
-        add_audit_log(
-            auditStorage,
-            nominee,
-            "balance_rshares",
-            old_nominee_rshares,
-            nominee_member["balance_rshares"],
-            f"Received {points} rshares from {sender}",
-            op["trx_id"],
-        )
-
-        print(f"Transferred {points} rshares from {sender} to {nominee}")
 
 
 def run():
@@ -285,20 +101,20 @@ def run():
         for m in member_accounts:
             member_data[m] = Member(memberStorage.get(m))
 
-        if True:
-            print("hsbi_transfer: delete from transaction_memo... ")
-            #            transactionStorage.delete_sender("dtube.rewards")
-            #            transactionStorage.delete_sender("reward.app")
-            #            transactionStorage.delete_to("sbi2")
-            #            transactionStorage.delete_to("sbi3")
-            #            transactionStorage.delete_to("sbi4")
-            #            transactionStorage.delete_to("sbi5")
-            #            transactionStorage.delete_to("sbi6")
-            #            transactionStorage.delete_to("sbi7")
-            #            transactionStorage.delete_to("sbi8")
-            #            transactionStorage.delete_to("sbi9")
-            #            transactionStorage.delete_to("sbi10")
-            print("hsbi_transfer: done.")
+        #if True:
+            #print("hsbi_transfer: delete from transaction_memo... ")
+            #transactionStorage.delete_sender("dtube.rewards")
+            #transactionStorage.delete_sender("reward.app")
+            #transactionStorage.delete_to("sbi2")
+            #transactionStorage.delete_to("sbi3")
+            #transactionStorage.delete_to("sbi4")
+            #transactionStorage.delete_to("sbi5")
+            #transactionStorage.delete_to("sbi6")
+            #transactionStorage.delete_to("sbi7")
+            #transactionStorage.delete_to("sbi8")
+            #transactionStorage.delete_to("sbi9")
+            #transactionStorage.delete_to("sbi10")
+            #print("hsbi_transfer: done.")
 
         stop_index = None
         # stop_index = addTzInfo(datetime(2018, 7, 21, 23, 46, 00))
@@ -322,6 +138,8 @@ def run():
                 member_data,
                 memberStorage=memberStorage,
                 blockchain_instance=hv,
+                auditStorage=auditStorage,
+                rshares_per_hbd=rshares_per_hbd,
             )
 
             op_index = trxStorage.get_all_op_index(account["name"])
@@ -356,35 +174,8 @@ def run():
                     continue
                 json_op = json.loads(op["op_dict"])
                 json_op["index"] = op["op_acc_index"] + start_index_offset
-                if json_op["type"] == "transfer":
-                    amount = float(Amount(json_op["amount"], blockchain_instance=hv))
-                    if account_name == "steembasicincome":
-                        # Log micro transfers below the minimum threshold but don't process them as point transfers
-                        if amount < 0.005:
-                            pass  # Let them fall through to parse_op for logging
-                        # Handle point transfers between 0.005 and 1 HIVE/HBD
-                        elif amount < 1:
-                            handle_point_transfer(
-                                json_op,
-                                member_data,
-                                memberStorage,
-                                hv,
-                                auditStorage,
-                                trxStorage,
-                                rshares_per_hbd,
-                            )
-                            continue
-                        # Skip large transfers that are purely URL promotions
-                        if json_op["memo"][:8] == "https://":
-                            continue
-                    else:
-                        # Skip transfers below 1 HIVE/HBD
-                        if amount < 1:
-                            continue
-                        # Skip URL promotions
-                        if json_op["memo"][:8] == "https://":
-                            continue
-
+                # Let ParseAccountHist.parse_op handle all transfer logic, including
+                # URL promotion skips, point transfers, and small-transfer logging.
                 pah.parse_op(json_op, parse_vesting=parse_vesting)
 
         print(
