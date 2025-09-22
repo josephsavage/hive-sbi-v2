@@ -210,7 +210,7 @@ def make_storages(db, db2) -> Dict[str, Any]:
 def get_runtime(path: Optional[os.PathLike[str] | str] = None) -> Dict[str, Any]:
     """Assemble a common runtime package: cfg, dbs, storages, conf, accounts, and a Hive instance."""
     cfg = get_config(path)
-    db, db2 = connect_dbs(cfg)
+    db, db2, db3 = connect_dbs(cfg)
     stor = make_storages(db, db2)
     conf_setup = stor["conf"].get() if "conf" in stor else None
     accounts = stor["accounts"].get() if "accounts" in stor else []
@@ -220,6 +220,7 @@ def get_runtime(path: Optional[os.PathLike[str] | str] = None) -> Dict[str, Any]
         "cfg": cfg,
         "db": db,
         "db2": db2,
+        "db3": db3,
         "storages": stor,
         "conf_setup": conf_setup,
         "accounts": accounts,
