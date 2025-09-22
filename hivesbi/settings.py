@@ -175,9 +175,13 @@ def make_hive(
         if "hive_blockchain" in cfg
         else None
     )
+    # Build argument map and only include keys if provided and non-empty
+    hive_args = dict(node=node_list, **kwargs)
+    if keys:
+        hive_args["keys"] = keys
     if condenser:
-        return Hive(keys=keys, node=node_list, use_condenser=True, **kwargs)
-    return Hive(keys=keys, node=node_list, **kwargs)
+        hive_args["use_condenser"] = True
+    return Hive(**hive_args)
 
 
 def make_storages(db, db2) -> Dict[str, Any]:
