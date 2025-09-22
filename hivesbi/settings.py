@@ -12,9 +12,6 @@ Guarantees:
   2) Current working directory: ./config.json
   3) Project root directory (repo root): <project_root>/config.json
 - Provides dict-like access and attribute-style access to config keys.
-
-Note: We use `settings.py` (not config.py) to avoid the repository .gitignore rule
-that ignores *config.py files.
 """
 
 import json
