@@ -61,58 +61,56 @@ def run():
         except Exception as e:
             print(f"Error calling stored procedure: {e}")
 
-            # Build Hive instance and collect mana for each account
-            hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
+        # Build Hive instance and collect mana for each account
+        hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
+        rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
+        print(
+            f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
+        )
+        total_current_mana = 0
+        total_max_mana = 0
+        accounts_processed = 0
+        for acc in account_names:
+            try:
+                mana = Account(acc, blockchain_instance=hv).get_manabar()
+                total_current_mana += mana.get("current_mana", 0)
+                total_max_mana += mana.get("max_mana", 0)
+                accounts_processed += 1
+            except Exception as e:
+                print(f"hsbi_manage_accrual: Could not fetch mana for {acc}: {e}")
 
-            rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
+        if total_max_mana == 0:
             print(
-                f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
+                "hsbi_manage_accrual: Unable to retrieve mana information for any account. Exiting."
             )
+            sys.exit(1)
 
-            total_current_mana = 0
-            total_max_mana = 0
-            accounts_processed = 0
-            for acc in account_names:
-                try:
-                    mana = Account(acc, blockchain_instance=hv).get_manabar()
-                    total_current_mana += mana.get("current_mana", 0)
-                    total_max_mana += mana.get("max_mana", 0)
-                    accounts_processed += 1
-                except Exception as e:
-                    print(f"hsbi_manage_accrual: Could not fetch mana for {acc}: {e}")
+        overall_mana_pct = (total_current_mana / total_max_mana) * 100
+        print(
+            f"hsbi_manage_accrual: Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
+        )
 
-            if total_max_mana == 0:
-                print(
-                    "hsbi_manage_accrual: Unable to retrieve mana information for any account. Exiting."
-                )
-                sys.exit(1)
+        # Adjust accrual rates based on 50% threshold
+        factor = 1.025 if overall_mana_pct > 50 else 0.99
+        rshares_per_cycle *= factor
+        del_rshares_per_cycle *= factor
+        calc_min_threshold = rshares_needed
 
-            overall_mana_pct = (total_current_mana / total_max_mana) * 100
-            print(
-                f"hsbi_manage_accrual: Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
-            )
-
-            # Adjust accrual rates based on 50% threshold
-            factor = 1.025 if overall_mana_pct > 50 else 0.99
-            rshares_per_cycle *= factor
-            del_rshares_per_cycle *= factor
-            calc_min_threshold = rshares_needed
-
-            # Persist updated values and reset last_cycle
-            confStorage.update(
-                {
-                    "rshares_per_cycle": rshares_per_cycle,
-                    "del_rshares_per_cycle": del_rshares_per_cycle,
-                    "calc_min_threshold": calc_min_threshold,
-                    # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
-                }
-            )
-            print(
-                f"hsbi_manage_accrual: Updated rshares_per_cycle to {rshares_per_cycle:.6f}"
-            )
-            print(
-                f"hsbi_manage_accrual: Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}"
-            )
+        # Persist updated values and reset last_cycle
+        confStorage.update(
+            {
+                "rshares_per_cycle": rshares_per_cycle,
+                "del_rshares_per_cycle": del_rshares_per_cycle,
+                "calc_min_threshold": calc_min_threshold,
+                # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
+            }
+        )
+        print(
+            f"hsbi_manage_accrual: Updated rshares_per_cycle to {rshares_per_cycle:.6f}"
+        )
+        print(
+            f"hsbi_manage_accrual: Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}"
+        )
     else:
         print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
 
