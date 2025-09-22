@@ -41,23 +41,23 @@ def run():
         > 60 * share_cycle_min
     ):
         #        try:
-        #            # Get dbconnector3 from config.json
-        #            databaseConnector3 = config_data["databaseConnector3"]
-        #
-        #            # Connect to dbconnector3
-        #            db3 = dataset.connect(databaseConnector3)
-        #
-        #            # Get the raw SQLAlchemy connection so we can call the stored procedure
-        #            with db3.engine.begin() as conn:
-        #                print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
-        #                result = conn.exec_driver_sql(
-        #                    "CALL sbi_reporting.python_call_usp_list()"
-        #                )
-        #
-        #                # Iterate over any returned rows and print them
-        #                for row in result:
-        #                    # row can be a tuple or Row object depending on driver
-        #                    print("LOG:", *row)
+        #            # Example: use centralized config to access an optional third connector
+        #            # Note: cfg is provided by get_runtime() above
+        #            databaseConnector3 = cfg.get("databaseConnector3")
+        #            if databaseConnector3:
+        #                import dataset  # local import to avoid hard dependency
+        #                # Connect to dbconnector3
+        #                db3 = dataset.connect(databaseConnector3)
+        #                # Call stored procedure using the raw SQLAlchemy connection
+        #                with db3.engine.begin() as conn:
+        #                    print("Calling stored procedure: sbi_reporting.python_call_usp_list()")
+        #                    result = conn.exec_driver_sql(
+        #                        "CALL sbi_reporting.python_call_usp_list()"
+        #                    )
+        #                    # Iterate over any returned rows and print them
+        #                    for row in result:
+        #                        # row can be a tuple or Row object depending on driver
+        #                        print("LOG:", *row)
         #
         #        except Exception as e:
         #            print(f"Error calling stored procedure: {e}")
