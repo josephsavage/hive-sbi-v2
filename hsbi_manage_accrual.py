@@ -72,6 +72,7 @@ def run():
             total_current_mana = 0
             total_max_mana = 0
             accounts_processed = 0
+            
             for acc in account_names:
                 try:
                     mana = Account(acc, blockchain_instance=hv).get_manabar()

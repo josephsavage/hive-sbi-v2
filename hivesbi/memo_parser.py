@@ -39,13 +39,13 @@ class MemoParser(object):
         ]
 
     def parse_memo(self, memo, shares, account):
-        print(f"DEBUG: parse_memo called with memo='{memo}', shares={shares}, account='{account}'")
+        # print(f"DEBUG: parse_memo called with memo='{memo}', shares={shares}, account='{account}'")
         if memo[0] == "'":
             memo = memo[1:]
         if memo[-1] == "'":
             memo = memo[:-1]
         words_memo = memo.strip().lower().replace(",", "  ").replace('"', "").split(" ")
-        print(f"DEBUG: Processed memo words: {words_memo}")
+        # print(f"DEBUG: Processed memo words: {words_memo}")
 
         sponsors = {}
         no_numbers = True
@@ -88,7 +88,7 @@ class MemoParser(object):
                         _acc = Account(account_name, blockchain_instance=self.hive)
                         account_found = True
                     except Exception as e:
-                        print(f"DEBUG: Exception in steemit URL parsing: {e}")
+                        # print(f"DEBUG: Exception in steemit URL parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
                     try:
@@ -116,7 +116,7 @@ class MemoParser(object):
                         else:
                             account_error = True
                     except Exception as e:
-                        print(f"DEBUG: Exception in colon parsing: {e}")
+                        # print(f"DEBUG: Exception in colon parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
                     try:
@@ -136,7 +136,7 @@ class MemoParser(object):
                         account_found = True
 
                     except Exception as e:
-                        print(f"DEBUG: Exception in @ parsing: {e}")
+                        # print(f"DEBUG: Exception in @ parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
                     try:
@@ -159,7 +159,7 @@ class MemoParser(object):
                         account_found = True
 
                     except Exception as e:
-                        print(f"DEBUG: Exception in @split parsing: {e}")
+                        # print(f"DEBUG: Exception in @split parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
                     continue
@@ -179,7 +179,7 @@ class MemoParser(object):
                         _acc = Account(account_name, blockchain_instance=self.hive)
                         account_found = True
                     except Exception as e:
-                        print(f"DEBUG: Exception in fallback parsing: {e}")
+                        # print(f"DEBUG: Exception in fallback parsing: {e}")
                         print(account_name + " is not an account")
                         not_parsed_words.append(w)
                         word_count += 1
@@ -204,22 +204,26 @@ class MemoParser(object):
                     .replace('"', "")
                     .replace("/", " ")
                 )
-                if account_name[0] == "'":
-                    account_name = account_name[1:]
-                if account_name[-1] == "'":
-                    account_name = account_name[:-1]
-                if account_name[-1] == ".":
-                    account_name = account_name[:-1]
-                if account_name[0] == "@":
-                    account_name = account_name[1:]
-                account_name = account_name.strip()
-                Account(account_name, blockchain_instance=self.hive)
-                if account_name != account:
-                    sponsors[account_name] = 1
-                    amount_left -= 1
+                if account_name:
+                    if account_name[0] == "'":
+                        account_name = account_name[1:]
+                    if account_name and account_name[-1] == "'":
+                        account_name = account_name[:-1]
+                    if account_name and account_name[-1] == ".":
+                        account_name = account_name[:-1]
+                    if account_name and account_name[0] == "@":
+                        account_name = account_name[1:]
+                    account_name = account_name.strip()
+                    Account(account_name, blockchain_instance=self.hive)
+                    if account_name != account:
+                        sponsors[account_name] = 1
+                        amount_left -= 1
+                else:
+                    # Empty account_name, skip
+                    pass
             except Exception as e:
                 account_error = True
-                print(f"DEBUG: Exception in single word parsing: {e}")
+                # print(f"DEBUG: Exception in single word parsing: {e}")
                 print(account_name + " is not an account")
         if len(sponsors) == 1 and shares > 1 and no_numbers:
             for a in sponsors:
@@ -239,5 +243,5 @@ class MemoParser(object):
             sponsor = account
         if account_error and len(sponsors) == shares:
             account_error = False
-        print(f"DEBUG: parse_memo returning sponsor='{sponsor}', sponsors={sponsors}, not_parsed_words={not_parsed_words}, account_error={account_error}")
+        # print(f"DEBUG: parse_memo returning sponsor='{sponsor}', sponsors={sponsors}, not_parsed_words={not_parsed_words}, account_error={account_error}")
         return sponsor, sponsors, not_parsed_words, account_error
