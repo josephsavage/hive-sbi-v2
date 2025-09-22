@@ -91,6 +91,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in steemit URL parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif len(w.split(":")) == 2 and "/" not in w:
                     try:
                         account_name1 = w.split(":")[0]
                         account_name = w.split(":")[1]
@@ -119,6 +120,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in colon parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif w[0] == "@":
                     try:
                         account_name = (
                             w[1:].replace("!", "").replace('"', "").replace(";", "")
@@ -139,6 +141,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in @ parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif len(w.split("@")) > 1:
                     try:
                         account_name = (
                             w.replace("!", "")
