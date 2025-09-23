@@ -165,6 +165,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in @split parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif len(w) > 16:
                     continue
 
                 else:
