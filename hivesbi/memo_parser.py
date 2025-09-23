@@ -3,6 +3,7 @@ import logging
 
 from nectar.account import Account
 from nectar.instance import shared_blockchain_instance
+from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class MemoParser(object):
             "enroll:",
             "sponsor:",
         ]
+        self.allowed_hosts = {"steemit.com", "hive.blog", "peakd.com", "ecency.com"}
 
     def parse_memo(self, memo, shares, account):
         # print(f"DEBUG: parse_memo called with memo='{memo}', shares={shares}, account='{account}'")
@@ -71,26 +73,57 @@ class MemoParser(object):
                     digit_found = int(w_digit)
                 elif len(w) < 3:
                     continue
-                elif w[:21] == "https://steemit.com/@" and "/" not in w[21:]:
+                elif w.startswith("http://") or w.startswith("https://"):
                     try:
-                        account_name = (
-                            w[21:].replace("!", "").replace('"', "").replace(";", "")
-                        )
-                        if account_name[0] == "'":
-                            account_name = account_name[1:]
-                        if account_name[-1] == "'":
-                            account_name = account_name[:-1]
-                        if account_name[-1] == ".":
-                            account_name = account_name[:-1]
-                        if account_name[0] == "@":
-                            account_name = account_name[1:]
-                        account_name = account_name.strip()
-                        _acc = Account(account_name, blockchain_instance=self.hive)
-                        account_found = True
+                        parsed = urlparse(w)
+                        host = parsed.netloc.lower()
+                        if host.startswith("www."):
+                            host = host[4:]
+                        allowed_hosts = self.allowed_hosts
+                        if host in allowed_hosts:
+                            path = parsed.path or ""
+                            if path.startswith("/@"):
+                                account_name = path[2:]
+                                # Allow optional trailing slash but no extra path segments
+                                if "/" in account_name:
+                                    if (
+                                        account_name.endswith("/")
+                                        and account_name.count("/") == 1
+                                    ):
+                                        account_name = account_name[:-1]
+                                    else:
+                                        raise ValueError(
+                                            "URL path contains extra segments"
+                                        )
+                                account_name = (
+                                    account_name.replace("!", "")
+                                    .replace('"', "")
+                                    .replace(";", "")
+                                )
+                                if account_name and account_name[0] == "'":
+                                    account_name = account_name[1:]
+                                if account_name and account_name[-1] == "'":
+                                    account_name = account_name[:-1]
+                                if account_name and account_name[-1] == ".":
+                                    account_name = account_name[:-1]
+                                if account_name and account_name[0] == "@":
+                                    account_name = account_name[1:]
+                                account_name = account_name.strip()
+                                _acc = Account(
+                                    account_name, blockchain_instance=self.hive
+                                )
+                                account_found = True
+                            else:
+                                # Not a profile URL with /@username
+                                pass
+                        else:
+                            # Not a recognized frontend host
+                            pass
                     except Exception:
-                        # print(f"DEBUG: Exception in steemit URL parsing: {e}")
+                        # print(f"DEBUG: Exception in frontend URL parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif len(w.split(":")) == 2 and "/" not in w:
                     try:
                         account_name1 = w.split(":")[0]
                         account_name = w.split(":")[1]
@@ -119,6 +152,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in colon parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif w[0] == "@":
                     try:
                         account_name = (
                             w[1:].replace("!", "").replace('"', "").replace(";", "")
@@ -139,6 +173,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in @ parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif len(w.split("@")) > 1:
                     try:
                         account_name = (
                             w.replace("!", "")
@@ -162,6 +197,7 @@ class MemoParser(object):
                         # print(f"DEBUG: Exception in @split parsing: {e}")
                         print(account_name + " is not an account")
                         account_error = True
+                elif len(w) > 16:
                     continue
 
                 else:
