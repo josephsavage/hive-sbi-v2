@@ -40,7 +40,7 @@ def run():
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
-        if cfg.get("skip_build_reporting", False):
+        if cfg.get("build_reporting", False):
             try:
                 # Example: use third DB connector directly from the runtime
                 # Note: rt is provided by get_runtime() above
@@ -63,7 +63,7 @@ def run():
                 print(f"Error calling stored procedure: {e}")
         else:
             print(
-                "hsbi_manage_accrual: skip_build_reporting is false; skipping reporting procedure call"
+                "hsbi_manage_accrual:_build_reporting is false; skipping reporting procedure call"
             )
 
         # Build Hive instance and collect mana for each account
