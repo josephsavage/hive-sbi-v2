@@ -1,6 +1,6 @@
 # Hive Stake Based Income
 
-python scripts for automation of Hive Stake Based Income
+python scripts for automation of Hive Stake Based Income. For full context on functionality, please review our documentation at https://docs.hivesbi.com/
 
 ## How to start
 
@@ -89,3 +89,5 @@ python3 hsbi_upvote_post_comment.py
 python3 hsbi_stream_post_comment.py
 # python3 hsbi_reset_rshares.py  # currently disabled in runner
 ```
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/josephsavage/hive-sbi-v2)
