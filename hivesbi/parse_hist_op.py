@@ -15,6 +15,7 @@ from nectar.utils import (
 
 from hivesbi.memo_parser import MemoParser
 from hivesbi.settings import get_runtime
+from hivesbi.issue import issue_default_tokens
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,11 @@ class ParseAccountHist(list):
                 ignore_val = cfg["trx_ignore_accounts"]
             if isinstance(ignore_val, str):
                 # Support comma/space separated strings
-                parsed = [x.strip() for x in ignore_val.replace("\n", ",").split(",") if x.strip()]
+                parsed = [
+                    x.strip()
+                    for x in ignore_val.replace("\n", ",").split(",")
+                    if x.strip()
+                ]
                 self.excluded_accounts = parsed or default_excluded
             elif isinstance(ignore_val, (list, tuple, set)):
                 self.excluded_accounts = list(ignore_val) or default_excluded
@@ -524,10 +529,10 @@ class ParseAccountHist(list):
         self.auditStorage.add(audit_log)
 
     def _handle_point_transfer(self, op):
-        # Must be an incoming transfer to steembasicincome of amount between 0.005 and 1
+        # Must be an incoming transfer to steembasicincome of amount >= 0.005
         amount_obj = Amount(op["amount"], blockchain_instance=self.hive)
         amount = float(amount_obj)
-        if not (amount >= 0.005 and amount < 1):
+        if not (amount >= 0.005):
             return False
 
         sender = op["from"]
@@ -627,6 +632,14 @@ class ParseAccountHist(list):
                     "share_type": "Transfer",
                 }
             )
+            if nominee == "sbi-tokens":
+                token_recipient = sender
+                try:
+                    issue_default_tokens(token_recipient, units)
+                except Exception as exc:
+                    print(
+                        f"hsbi_transfer: Failed to issue HSBI tokens for {token_recipient}: {exc}"
+                    )
             return True
         else:
             # Convert micro-amount equivalent to rshares
@@ -756,18 +769,26 @@ class ParseAccountHist(list):
                     memo_str = str(op.get("memo", ""))
                     if memo_str[:8] == "https://":
                         return
-                    # Point transfer window: <1 and >= 0.005
                     amt_float = float(_amount)
-                    if amt_float < 1:
-                        # Try to handle as point transfer; if not eligible, log as <1 transfer like before
+
+                    if _amount.symbol == "HBD":
                         if amt_float >= 0.005 and self.memberStorage is not None:
                             processed = self._handle_point_transfer(op)
                             if processed:
                                 return
-                        # Not processed as point transfer; fall back to logging the <1 transfer
+                        # Not processed as units transfer; fall back to normal logging
                         self.parse_transfer_in_op(op)
                         return
-                    # For >= 1, normal parse
+
+                    # Legacy point-transfer flow for HIVE (and other assets)
+                    if amt_float < 1:
+                        if amt_float >= 0.005 and self.memberStorage is not None:
+                            processed = self._handle_point_transfer(op)
+                            if processed:
+                                return
+                        self.parse_transfer_in_op(op)
+                        return
+
                     self.parse_transfer_in_op(op)
                     return
                 else:
