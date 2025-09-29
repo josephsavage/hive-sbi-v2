@@ -82,4 +82,3 @@ def connect_dbs_cached(cfg: Config):
     _config_cache = cfg
     _db_cache = connect_dbs(cfg)
     return _db_cache
-
