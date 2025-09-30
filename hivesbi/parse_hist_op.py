@@ -15,7 +15,7 @@ from nectar.utils import (
 
 from hivesbi.memo_parser import MemoParser
 from hivesbi.settings import get_runtime
-from hivesbi.issue import issue_default_tokens
+from hivesbi.issue import TokenIssuer, issue_default_tokens
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ class ParseAccountHist(list):
         self.memo_parser = MemoParser(blockchain_instance=self.hive)
         self.auditStorage = auditStorage
         self.rshares_per_hbd = rshares_per_hbd
+        self._token_issuers: dict[str, TokenIssuer | None] = {}
         # Default ignored accounts (used as fallback if not provided via config)
         default_excluded = [
             "minnowbooster",
@@ -529,15 +530,15 @@ class ParseAccountHist(list):
         self.auditStorage.add(audit_log)
 
     def _handle_point_transfer(self, op):
-        # Must be an incoming transfer to steembasicincome of amount >= 0.005
+        """Process a point transfer and return True if custom handling occurred."""
+
         amount_obj = Amount(op["amount"], blockchain_instance=self.hive)
         amount = float(amount_obj)
-        if not (amount >= 0.005):
+        if amount < 0.005:
             return False
 
         sender = op["from"]
 
-        # Decrypt/normalize memo similar to parse_transfer_in_op
         processed_memo = (
             ascii(op["memo"]).replace("\n", "").replace("\\n", "").replace("\\", "")
         )
@@ -550,7 +551,6 @@ class ParseAccountHist(list):
             )
             and sender == "steembasicincome"
         ):
-            # Unlikely for incoming, but keep parity with parse_transfer_in_op
             if processed_memo[1] == "#":
                 processed_memo = processed_memo[1:-1]
             elif processed_memo[2] == "#":
@@ -558,7 +558,6 @@ class ParseAccountHist(list):
             memo = Memo(sender, op["to"], blockchain_instance=self.hive)
             processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
 
-        # Normalize and extract nominee (first token, lowercase, strip @)
         memo_norm = " ".join(str(processed_memo).split()).strip().lower()
         nominee = memo_norm.split()[0] if memo_norm else ""
         if nominee.startswith("@"):  # strip leading @
@@ -577,21 +576,28 @@ class ParseAccountHist(list):
         if amount_obj.symbol == "HBD":
             old_sender_shares = sender_member.get("shares", 0)
             old_nominee_shares = nominee_member.get("shares", 0)
-            units = int(amount * 1000)
-
-            if old_sender_shares < units:
-                units = old_sender_shares
-
-            if units <= 0:
+            total_units = int(round(amount * 1000))
+            if total_units <= 0:
                 return False
 
-            if "shares" not in sender_member:
-                sender_member["shares"] = 0
-            if "shares" not in nominee_member:
-                nominee_member["shares"] = 0
+            transferable_units = min(total_units, max(old_sender_shares, 0))
+            refunded_units = total_units - transferable_units
 
-            sender_member["shares"] -= units
-            nominee_member["shares"] += units
+            if transferable_units <= 0:
+                self._refund_excess_transfer(
+                    recipient=sender,
+                    refund_units=total_units,
+                    symbol=amount_obj.symbol,
+                    nominee=nominee,
+                    op=op,
+                )
+                return False
+
+            sender_member.setdefault("shares", 0)
+            nominee_member.setdefault("shares", 0)
+
+            sender_member["shares"] -= transferable_units
+            nominee_member["shares"] += transferable_units
 
             self.memberStorage.update(sender_member)
             self.memberStorage.update(nominee_member)
@@ -601,7 +607,7 @@ class ParseAccountHist(list):
                 "shares",
                 old_sender_shares,
                 sender_member["shares"],
-                f"Transferred {units} HSBI units to {nominee}",
+                f"Transferred {transferable_units} HSBI units to {nominee}",
                 op.get("trx_id"),
             )
             self._add_audit_log(
@@ -609,13 +615,12 @@ class ParseAccountHist(list):
                 "shares",
                 old_nominee_shares,
                 nominee_member["shares"],
-                f"Received {units} HSBI units from {sender}",
+                f"Received {transferable_units} HSBI units from {sender}",
                 op.get("trx_id"),
             )
 
-            # Log sender (negative shares) in trx for reports
             base_index = op.get("index", 0) or op.get("op_acc_index", 0) or 0
-            sponsee_json = json.dumps({nominee: units})
+            sponsee_json = json.dumps({nominee: transferable_units})
             timestamp = op.get("timestamp")
             self.trxStorage.add(
                 {
@@ -625,60 +630,132 @@ class ParseAccountHist(list):
                     "account": sender,
                     "sponsor": sender,
                     "sponsee": sponsee_json,
-                    "shares": -units,
+                    "shares": -transferable_units,
                     "vests": 0.0,
                     "timestamp": formatTimeString(timestamp),
                     "status": "Valid",
                     "share_type": "Transfer",
                 }
             )
+
             if nominee == "sbi-tokens":
                 token_recipient = sender
                 try:
-                    issue_default_tokens(token_recipient, units)
-                except Exception as exc:
-                    print(
-                        f"hsbi_transfer: Failed to issue HSBI tokens for {token_recipient}: {exc}"
+                    issue_default_tokens(token_recipient, transferable_units)
+                except Exception:
+                    log.exception(
+                        "Failed to issue default tokens for %s (%s units)",
+                        token_recipient,
+                        transferable_units,
                     )
-            return True
-        else:
-            # Convert micro-amount equivalent to rshares
-            old_sender_rshares = sender_member["balance_rshares"]
-            old_nominee_rshares = nominee_member["balance_rshares"]
+                else:
+                    log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
 
-            hbd_equiv = amount * 1000
-            points = int(hbd_equiv * float(self.rshares_per_hbd or 1))
-
-            if old_sender_rshares < points:
-                points = old_sender_rshares
-
-            if points <= 0:
-                return False
-
-            sender_member["balance_rshares"] -= points
-            nominee_member["balance_rshares"] += points
-
-            self.memberStorage.update(sender_member)
-            self.memberStorage.update(nominee_member)
-
-            self._add_audit_log(
-                sender,
-                "balance_rshares",
-                old_sender_rshares,
-                sender_member["balance_rshares"],
-                f"Transferred {points} rshares to {nominee}",
-                op.get("trx_id"),
-            )
-            self._add_audit_log(
-                nominee,
-                "balance_rshares",
-                old_nominee_rshares,
-                nominee_member["balance_rshares"],
-                f"Received {points} rshares from {sender}",
-                op.get("trx_id"),
-            )
+            if refunded_units > 0:
+                self._refund_excess_transfer(
+                    recipient=sender,
+                    refund_units=refunded_units,
+                    symbol=amount_obj.symbol,
+                    nominee=nominee,
+                    op=op,
+                )
 
             return True
+
+        old_sender_rshares = sender_member["balance_rshares"]
+        old_nominee_rshares = nominee_member["balance_rshares"]
+        hbd_equiv = amount * 1000
+        points = int(hbd_equiv * float(self.rshares_per_hbd or 1))
+
+        if old_sender_rshares < points:
+            points = old_sender_rshares
+
+        if points <= 0:
+            return False
+
+        sender_member["balance_rshares"] -= points
+        nominee_member["balance_rshares"] += points
+
+        self.memberStorage.update(sender_member)
+        self.memberStorage.update(nominee_member)
+
+        self._add_audit_log(
+            sender,
+            "balance_rshares",
+            old_sender_rshares,
+            sender_member["balance_rshares"],
+            f"Transferred {points} rshares to {nominee}",
+            op.get("trx_id"),
+        )
+        self._add_audit_log(
+            nominee,
+            "balance_rshares",
+            old_nominee_rshares,
+            nominee_member["balance_rshares"],
+            f"Received {points} rshares from {sender}",
+            op.get("trx_id"),
+        )
+
+        return True
+
+    def _get_token_issuer(self, account_name: str) -> TokenIssuer | None:
+        issuer = self._token_issuers.get(account_name)
+        if issuer is not None or account_name in self._token_issuers:
+            return issuer
+        try:
+            issuer = TokenIssuer(account_name=account_name)
+        except Exception as exc:
+            log.warning(
+                "Unable to initialize TokenIssuer for %s: %s",
+                account_name,
+                exc,
+            )
+            issuer = None
+        self._token_issuers[account_name] = issuer
+        return issuer
+
+    def _refund_excess_transfer(
+        self,
+        recipient: str,
+        refund_units: int,
+        symbol: str,
+        nominee: str,
+        op: dict,
+    ) -> None:
+        if refund_units <= 0:
+            return
+
+        amount_value = round(refund_units / 1000, 3)
+        if amount_value <= 0:
+            return
+
+        issuer = self._get_token_issuer(self.account["name"])
+        if issuer is None:
+            log.warning(
+                "Skipping refund of %.3f %s to %s; no issuer for %s",
+                amount_value,
+                symbol,
+                recipient,
+                self.account["name"],
+            )
+            return
+
+        memo = (
+            f"Refund: excess {symbol} for share transfer to {nominee}"
+            if nominee
+            else "Refund: excess transfer"
+        )
+        try:
+            issuer.transfer(recipient, amount_value, asset_symbol=symbol, memo=memo)
+        except Exception as exc:
+            log.warning(
+                "Failed to refund %.3f %s to %s for trx %s: %s",
+                amount_value,
+                symbol,
+                recipient,
+                op.get("trx_id"),
+                exc,
+            )
 
     def new_transfer_record(
         self,

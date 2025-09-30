@@ -1,9 +1,9 @@
 """Hive Engine token issuance helpers for HSBI."""
 
-from functools import lru_cache
 from typing import Optional
 
-from nectarengine.wallet import Wallet
+from nectar.account import Account
+from nectarengine.wallet import Wallet as EngineWallet
 
 from hivesbi.settings import Config, get_config, make_hive
 from hivesbi.storage import KeysDB
@@ -44,16 +44,57 @@ class TokenIssuer:
         self.active_key = key_row["wif"].strip()
 
         self.hive = make_hive(self.cfg, keys=[self.active_key])
-        self.wallet = Wallet(self.account_name, blockchain_instance=self.hive)
+        self.engine_wallet = EngineWallet(
+            self.account_name, blockchain_instance=self.hive
+        )
+        self.hive_account = Account(self.account_name, blockchain_instance=self.hive)
 
     def issue(self, recipient: str, amount: float, memo: str | None = None) -> dict:
         """Issue tokens to the recipient, returning the transaction dict."""
         if amount <= 0:
             raise ValueError("Amount must be positive")
-        return self.wallet.issue(recipient, amount, self.token_symbol, memo=memo)
+        return self.engine_wallet.issue(recipient, amount, self.token_symbol, memo=memo)
+
+    def transfer(
+        self,
+        recipient: str,
+        amount: float,
+        asset_symbol: str | None = None,
+        memo: str | None = None,
+        force_engine: bool | None = None,
+    ) -> dict:
+        """Transfer tokens via Hive Engine or base Hive depending on the symbol.
+
+        If `asset_symbol` (defaulting to the issuer's token symbol) is `"HIVE"` or
+        `"HBD"`, the transfer is executed on the base chain using the Nectar account
+        API. All other symbols are treated as Hive Engine assets and routed through
+        the Hive Engine wallet. Set `force_engine` to override the automatic routing
+        decision when needed.
+        """
+
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+        if not recipient:
+            raise ValueError("Recipient account name is required")
+
+        symbol = asset_symbol or self.token_symbol
+        if not symbol:
+            raise ValueError("Token symbol must be provided for transfers")
+
+        symbol_upper = symbol.upper()
+        use_engine = (
+            force_engine
+            if force_engine is not None
+            else symbol_upper not in {"HIVE", "HBD"}
+        )
+
+        if use_engine:
+            return self.engine_wallet.transfer(recipient, amount, symbol, memo=memo)
+
+        memo_text = memo or ""
+        return self.hive_account.transfer(recipient, amount, symbol_upper, memo=memo_text)
 
 
-@lru_cache(maxsize=1)
 def get_default_token_issuer() -> "TokenIssuer":
     """Return a cached `TokenIssuer` configured for default HSBI issuance."""
 
