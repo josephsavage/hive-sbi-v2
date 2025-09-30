@@ -573,6 +573,7 @@ class ParseAccountHist(list):
         sender_member = self.member_data[sender]
         nominee_member = self.member_data[nominee]
 
+        # Uncapped HBD unit transfer
         if amount_obj.symbol == "HBD":
             old_sender_shares = sender_member.get("shares", 0)
             old_nominee_shares = nominee_member.get("shares", 0)
@@ -583,6 +584,7 @@ class ParseAccountHist(list):
             transferable_units = min(total_units, max(old_sender_shares, 0))
             refunded_units = total_units - transferable_units
 
+            # Refund any excess units if transferable units are zero
             if transferable_units <= 0:
                 self._refund_excess_transfer(
                     recipient=sender,
@@ -638,6 +640,7 @@ class ParseAccountHist(list):
                 }
             )
 
+            # Issue default tokens to the sender if nominee is sbi-tokens
             if nominee == "sbi-tokens":
                 token_recipient = sender
                 try:
@@ -651,6 +654,7 @@ class ParseAccountHist(list):
                 else:
                     log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
 
+            # Refund any excess units if any
             if refunded_units > 0:
                 self._refund_excess_transfer(
                     recipient=sender,
@@ -662,6 +666,7 @@ class ParseAccountHist(list):
 
             return True
 
+        # HIVE rshares transfer a.k.a Lovegun point transfer
         old_sender_rshares = sender_member["balance_rshares"]
         old_nominee_rshares = nominee_member["balance_rshares"]
         hbd_equiv = amount * 1000
@@ -848,6 +853,7 @@ class ParseAccountHist(list):
                         return
                     amt_float = float(_amount)
 
+                    # HBD unit transfer
                     if _amount.symbol == "HBD":
                         if amt_float >= 0.005 and self.memberStorage is not None:
                             processed = self._handle_point_transfer(op)
@@ -857,7 +863,7 @@ class ParseAccountHist(list):
                         self.parse_transfer_in_op(op)
                         return
 
-                    # Legacy point-transfer flow for HIVE (and other assets)
+                    # Lovegun point-transfer flow for HIVE
                     if amt_float < 1:
                         if amt_float >= 0.005 and self.memberStorage is not None:
                             processed = self._handle_point_transfer(op)
@@ -866,6 +872,7 @@ class ParseAccountHist(list):
                         self.parse_transfer_in_op(op)
                         return
 
+                    # Normal transfer
                     self.parse_transfer_in_op(op)
                     return
                 else:
