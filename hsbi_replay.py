@@ -133,11 +133,11 @@ def main():
 
     rt = get_runtime()
     cfg = rt["cfg"]
-    db = rt["db"]
+    _db = rt["db"]
     db2 = rt["db2"]
 
     # Storages
-    trx_db = TrxDB(db)
+    trx_db = TrxDB(db2)
     tx_memo_db = TransactionMemoDB(db2)
     tx_out_db = TransactionOutDB(db2)
     member_db = MemberDB(db2)
