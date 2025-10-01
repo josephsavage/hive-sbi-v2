@@ -534,10 +534,18 @@ class ParseAccountHist(list):
 
         amount_obj = Amount(op["amount"], blockchain_instance=self.hive)
         amount = float(amount_obj)
-        if amount < 0.005:
-            return False
-
         sender = op["from"]
+        trx_id = op.get("trx_id")
+        print(
+            "[PointTransfer] Start: trx_id=%s from=%s to=%s amount=%s"
+            % (trx_id, sender, op.get("to"), amount_obj)
+        )
+        if amount < 0.005:
+            print(
+                "[PointTransfer] Skip small amount (<0.005): trx_id=%s amount=%s"
+                % (trx_id, amount)
+            )
+            return False
 
         processed_memo = (
             ascii(op["memo"]).replace("\n", "").replace("\\n", "").replace("\\", "")
@@ -551,23 +559,47 @@ class ParseAccountHist(list):
             )
             and sender == "steembasicincome"
         ):
+            print(
+                "[PointTransfer] Detected encrypted memo prefix: trx_id=%s memo=%s"
+                % (trx_id, processed_memo)
+            )
             if processed_memo[1] == "#":
                 processed_memo = processed_memo[1:-1]
             elif processed_memo[2] == "#":
                 processed_memo = processed_memo[2:-2]
             memo = Memo(sender, op["to"], blockchain_instance=self.hive)
             processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
+            print(
+                "[PointTransfer] Decrypted memo: trx_id=%s memo=%s"
+                % (trx_id, processed_memo)
+            )
 
         memo_norm = " ".join(str(processed_memo).split()).strip().lower()
         nominee = memo_norm.split()[0] if memo_norm else ""
         if nominee.startswith("@"):  # strip leading @
             nominee = nominee[1:]
+        print(
+            "[PointTransfer] Memo parsed: trx_id=%s nominee=%s memo_norm=%s"
+            % (trx_id, nominee, memo_norm)
+        )
 
         if sender not in self.member_data:
+            print(
+                "[PointTransfer] Sender not in member_data: trx_id=%s sender=%s"
+                % (trx_id, sender)
+            )
             return False
         if nominee not in self.member_data:
+            print(
+                "[PointTransfer] Nominee not in member_data: trx_id=%s nominee=%s"
+                % (trx_id, nominee)
+            )
             return False
         if sender == nominee:
+            print(
+                "[PointTransfer] Sender and nominee identical: trx_id=%s account=%s"
+                % (trx_id, sender)
+            )
             return False
 
         sender_member = self.member_data[sender]
@@ -579,13 +611,32 @@ class ParseAccountHist(list):
             old_nominee_shares = nominee_member.get("shares", 0)
             total_units = int(round(amount * 1000))
             if total_units <= 0:
+                print(
+                    "[PointTransfer] Non-positive total_units: trx_id=%s total_units=%s"
+                    % (trx_id, total_units)
+                )
                 return False
 
             transferable_units = min(total_units, max(old_sender_shares, 0))
             refunded_units = total_units - transferable_units
+            print(
+                "[PointTransfer] HBD transfer calc: trx_id=%s total_units=%s transferable=%s refunded=%s sender_shares=%s nominee_shares=%s"
+                % (
+                    trx_id,
+                    total_units,
+                    transferable_units,
+                    refunded_units,
+                    old_sender_shares,
+                    old_nominee_shares,
+                )
+            )
 
             # Refund any excess units if transferable units are zero
             if transferable_units <= 0:
+                print(
+                    "[PointTransfer] Refund all units (no transferable): trx_id=%s refund_units=%s"
+                    % (trx_id, total_units)
+                )
                 self._refund_excess_transfer(
                     recipient=sender,
                     refund_units=total_units,
@@ -600,6 +651,14 @@ class ParseAccountHist(list):
 
             sender_member["shares"] -= transferable_units
             nominee_member["shares"] += transferable_units
+            print(
+                "[PointTransfer] Updated shares: trx_id=%s sender_shares=%s nominee_shares=%s"
+                % (
+                    trx_id,
+                    sender_member["shares"],
+                    nominee_member["shares"],
+                )
+            )
 
             self.memberStorage.update(sender_member)
             self.memberStorage.update(nominee_member)
@@ -643,6 +702,10 @@ class ParseAccountHist(list):
             # Issue default tokens to the sender if nominee is sbi-tokens
             if nominee == "sbi-tokens":
                 token_recipient = sender
+                print(
+                    "[PointTransfer] Issuing default tokens: trx_id=%s recipient=%s units=%s"
+                    % (trx_id, token_recipient, transferable_units)
+                )
                 try:
                     issue_default_tokens(token_recipient, transferable_units)
                 except Exception:
@@ -656,6 +719,10 @@ class ParseAccountHist(list):
 
             # Refund any excess units if any
             if refunded_units > 0:
+                print(
+                    "[PointTransfer] Refunding excess units: trx_id=%s refund_units=%s"
+                    % (trx_id, refunded_units)
+                )
                 self._refund_excess_transfer(
                     recipient=sender,
                     refund_units=refunded_units,
@@ -664,6 +731,10 @@ class ParseAccountHist(list):
                     op=op,
                 )
 
+            print(
+                "[PointTransfer] Completed HBD transfer: trx_id=%s nominee=%s units=%s"
+                % (trx_id, nominee, transferable_units)
+            )
             return True
 
         # HIVE rshares transfer a.k.a Lovegun point transfer
@@ -676,10 +747,23 @@ class ParseAccountHist(list):
             points = old_sender_rshares
 
         if points <= 0:
+            print(
+                "[PointTransfer] Non-positive rshare points: trx_id=%s points=%s sender_rshares=%s"
+                % (trx_id, points, old_sender_rshares)
+            )
             return False
 
         sender_member["balance_rshares"] -= points
         nominee_member["balance_rshares"] += points
+        print(
+            "[PointTransfer] Rshares updated: trx_id=%s sender_rshares=%s nominee_rshares=%s points=%s"
+            % (
+                trx_id,
+                sender_member["balance_rshares"],
+                nominee_member["balance_rshares"],
+                points,
+            )
+        )
 
         self.memberStorage.update(sender_member)
         self.memberStorage.update(nominee_member)
@@ -701,6 +785,10 @@ class ParseAccountHist(list):
             op.get("trx_id"),
         )
 
+        print(
+            "[PointTransfer] Completed rshares transfer: trx_id=%s nominee=%s points=%s"
+            % (trx_id, nominee, points)
+        )
         return True
 
     def _get_token_issuer(self, account_name: str) -> TokenIssuer | None:
