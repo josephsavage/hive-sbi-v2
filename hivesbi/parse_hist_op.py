@@ -1,6 +1,7 @@
 # This Python file uses the following encoding: utf-8
 
 import json
+import re
 import logging
 from datetime import datetime
 
@@ -194,7 +195,7 @@ class ParseAccountHist(list):
         timestamp = op["timestamp"]
         encrypted = False
         processed_memo = (
-            ascii(op["memo"]).replace("\n", "").replace("\\n", "").replace("\\", "")
+            str(op["memo"]).replace("\n", "").replace("\\n", "").replace("\\", "")
         )
         if (
             len(processed_memo) > 2
@@ -349,8 +350,8 @@ class ParseAccountHist(list):
             self.transactionStorage.add(data)
             return
         if amount.symbol == self.hive.hbd_symbol:
-            share_type = self.hive.hbd_symbol
-
+            return
+            
         # Check if any sponsee is the same as the sponsor and remove them
         filtered_sponsee = {}
         for a in sponsee:
@@ -566,7 +567,7 @@ class ParseAccountHist(list):
                 processed_memo = processed_memo[2:-2]
             memo = Memo(sender, op["to"], blockchain_instance=self.hive)
             processed_memo = (
-                ascii(memo.decrypt(processed_memo))
+                str(memo.decrypt(processed_memo))
                 .replace("\n", "")
                 .replace("\\n", "")
                 .replace("\\", "")
@@ -575,11 +576,28 @@ class ParseAccountHist(list):
                 f"[PointTransfer] Decrypted memo: trx_id={trx_id} memo={processed_memo}"
             )
         memo_norm = " ".join(str(processed_memo).split()).strip().lower()
-        nominee = memo_norm.split()[0] if memo_norm else ""
-        # Strip leading @ and any trailing punctuation commonly found in memos, then lowercase
-        if nominee.startswith("@"):
-            nominee = nominee[1:]
-        nominee = nominee.strip(" ,.;:!?'\"()[]{}").lower()
+        # Extract first valid hive account-like token from memo using regex
+        # Hive account: lowercase letters, digits, hyphen, optional dots for sub-accounts, 3-16 per segment
+        # We also allow an optional leading '@' and surrounding quotes/punctuation
+        nominee = ""
+        if memo_norm:
+            # Remove leading @ and outer quotes/backticks/unicode quotes repeatedly
+            token = memo_norm.split()[0]
+            token = token.lstrip("@")
+            token = token.strip(" \t\r\n\f\v'\"`‘’“”<>()[]{}.,;:!?")
+            # Rule approximation:
+            # - cannot start with a number: first char [a-z]
+            # - dot/hyphen only allowed after the 3rd character
+            # - total length 3–16
+            account_pat = r"[a-z][a-z0-9]{2}[a-z0-9\-\.]{0,13}"
+            m = re.search(account_pat, token)
+            if m:
+                nominee = m.group(0)
+            else:
+                # Fallback: scan entire memo for an account-like string
+                m2 = re.search(account_pat, memo_norm)
+                if m2:
+                    nominee = m2.group(0)
         print(
             f"[PointTransfer] Memo parsed: trx_id={trx_id} nominee={nominee} memo_norm={memo_norm}"
         )
