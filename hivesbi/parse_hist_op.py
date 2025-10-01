@@ -919,7 +919,7 @@ class ParseAccountHist(list):
                     amt_float = float(_amount)
 
                     # HBD unit transfer
-                    if _amount.symbol == "HBD":
+                    if _amount.symbol == "HBD" and self.account["name"] == "steembasicincome":
                         if amt_float >= 0.005 and self.memberStorage is not None:
                             processed = self._handle_point_transfer(op)
                             if processed:
@@ -929,7 +929,7 @@ class ParseAccountHist(list):
                         return
 
                     # Lovegun point-transfer flow for HIVE
-                    if amt_float < 1:
+                    if amt_float < 1 and self.account["name"] == "steembasicincome":
                         if amt_float >= 0.005 and self.memberStorage is not None:
                             processed = self._handle_point_transfer(op)
                             if processed:
