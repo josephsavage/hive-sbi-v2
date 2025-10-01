@@ -207,12 +207,9 @@ def main():
             processed += 1
         else:
             try:
-                # Directly call the specialized point-transfer handler
-                ok = pah._handle_point_transfer(op)
-                if ok:
-                    processed += 1
-                else:
-                    skipped += 1
+                # Use the normal parse path so transfer records and fallbacks are handled identically
+                pah.parse_op(op, parse_vesting=False)
+                processed += 1
             except Exception as exc:
                 failed += 1
                 print(
