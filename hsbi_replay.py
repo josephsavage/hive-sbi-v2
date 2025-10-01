@@ -187,7 +187,7 @@ def main():
         amt = float(row.get("amount", 0.0))
         sym = row.get("amount_symbol", "")
         if sym == "HBD":
-            if amt <= 0.005:
+            if amt < 0.005:
                 skipped += 1
                 continue
         elif sym == "HIVE":
