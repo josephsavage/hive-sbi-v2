@@ -49,11 +49,14 @@ class TokenIssuer:
         )
         self.hive_account = Account(self.account_name, blockchain_instance=self.hive)
 
-    def issue(self, recipient: str, amount: float, memo: str | None = None) -> dict:
-        """Issue tokens to the recipient, returning the transaction dict."""
+    def issue(self, recipient: str, amount: float) -> dict:
+        """Issue tokens to the recipient, returning the transaction dict.
+
+        Note: nectarengine Wallet.issue(recipient, amount, symbol) does not support a memo.
+        """
         if amount <= 0:
             raise ValueError("Amount must be positive")
-        return self.engine_wallet.issue(recipient, amount, self.token_symbol, memo=memo)
+        return self.engine_wallet.issue(recipient, amount, self.token_symbol)
 
     def transfer(
         self,
@@ -92,7 +95,9 @@ class TokenIssuer:
             return self.engine_wallet.transfer(recipient, amount, symbol, memo=memo)
 
         memo_text = memo or ""
-        return self.hive_account.transfer(recipient, amount, symbol_upper, memo=memo_text)
+        return self.hive_account.transfer(
+            recipient, amount, symbol_upper, memo=memo_text
+        )
 
 
 def get_default_token_issuer() -> "TokenIssuer":
@@ -101,13 +106,11 @@ def get_default_token_issuer() -> "TokenIssuer":
     return TokenIssuer()
 
 
-def issue_default_tokens(
-    recipient: str, amount: float, memo: str | None = None
-) -> dict:
+def issue_default_tokens(recipient: str, amount: float) -> dict:
     """Issue default HSBI tokens using the cached issuer."""
 
     issuer = get_default_token_issuer()
-    return issuer.issue(recipient, amount, memo=memo)
+    return issuer.issue(recipient, amount)
 
 
 _config_cache: Optional[Config] = None
