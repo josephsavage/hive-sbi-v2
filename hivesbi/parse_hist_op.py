@@ -40,7 +40,13 @@ class ParseAccountHist(list):
         self.delegated_vests_out = {}
         self.timestamp = addTzInfo(datetime(1970, 1, 1, 0, 0, 0, 0))
         self.path = path
-        self.member_data = member_data
+        # Normalize member_data keys to lowercase for consistent lookups
+        try:
+            self.member_data = {
+                str(k).lower(): v for k, v in (member_data or {}).items()
+            }
+        except Exception:
+            self.member_data = member_data
         self.memberStorage = memberStorage
         self.memo_parser = MemoParser(blockchain_instance=self.hive)
         self.auditStorage = auditStorage
@@ -565,15 +571,21 @@ class ParseAccountHist(list):
             elif processed_memo[2] == "#":
                 processed_memo = processed_memo[2:-2]
             memo = Memo(sender, op["to"], blockchain_instance=self.hive)
-            processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
+            processed_memo = (
+                ascii(memo.decrypt(processed_memo))
+                .replace("\n", "")
+                .replace("\\n", "")
+                .replace("\\", "")
+            )
             print(
                 f"[PointTransfer] Decrypted memo: trx_id={trx_id} memo={processed_memo}"
             )
-
         memo_norm = " ".join(str(processed_memo).split()).strip().lower()
         nominee = memo_norm.split()[0] if memo_norm else ""
-        if nominee.startswith("@"):  # strip leading @
+        # Strip leading @ and any trailing punctuation commonly found in memos, then lowercase
+        if nominee.startswith("@"):
             nominee = nominee[1:]
+        nominee = nominee.strip(" ,.;:!?'\"()[]{}").lower()
         print(
             f"[PointTransfer] Memo parsed: trx_id={trx_id} nominee={nominee} memo_norm={memo_norm}"
         )
