@@ -33,7 +33,7 @@ class ParseAccountHist(list):
         memberStorage=None,
         blockchain_instance=None,
         auditStorage=None,
-        rshares_per_hbd=1,
+        rshares_per_hbd=None,
     ):
         self.hive = blockchain_instance or shared_blockchain_instance()
         self.account = Account(account, blockchain_instance=self.hive)
@@ -743,7 +743,7 @@ class ParseAccountHist(list):
         old_sender_rshares = sender_member["balance_rshares"]
         old_nominee_rshares = nominee_member["balance_rshares"]
         hbd_equiv = amount * 1000
-        points = int(hbd_equiv * float(self.rshares_per_hbd or 1))
+        points = int(hbd_equiv * float(self.rshares_per_hbd))
 
         if old_sender_rshares < points:
             points = old_sender_rshares
