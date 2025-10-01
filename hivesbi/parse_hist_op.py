@@ -40,13 +40,7 @@ class ParseAccountHist(list):
         self.delegated_vests_out = {}
         self.timestamp = addTzInfo(datetime(1970, 1, 1, 0, 0, 0, 0))
         self.path = path
-        # Normalize member_data keys to lowercase for consistent lookups
-        try:
-            self.member_data = {
-                str(k).lower(): v for k, v in (member_data or {}).items()
-            }
-        except Exception:
-            self.member_data = member_data
+        self.member_data = member_data
         self.memberStorage = memberStorage
         self.memo_parser = MemoParser(blockchain_instance=self.hive)
         self.auditStorage = auditStorage
