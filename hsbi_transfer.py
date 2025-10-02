@@ -69,7 +69,7 @@ def run():
             key_list.append(key["wif"])
         hv = make_hive(cfg, keys=key_list)
         # set_shared_blockchain_instance(hv)
-        
+
         # Calculate how many rshares correspond to 1 HBD using Nectar:
         rshares_per_hbd = hv.hbd_to_rshares(1.0)
 

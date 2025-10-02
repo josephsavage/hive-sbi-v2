@@ -947,7 +947,9 @@ class ParseAccountHist(list):
                     normalized_recipient = str(self.account["name"]).strip().lower()
                     if normalized_recipient == "steembasicincome":
                         if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
-                            _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
+                            _amount.symbol != "HBD"
+                            and amt_float < 1
+                            and amt_float >= 0.005
                         ):
                             handled_point = self._handle_point_transfer(op)
                             if handled_point:
