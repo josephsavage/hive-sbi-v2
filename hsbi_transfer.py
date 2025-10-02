@@ -51,12 +51,7 @@ def run():
     share_cycle_min = conf_setup["share_cycle_min"]
     # Calculate how many rshares correspond to 1 HBD using the rule:
     #   rshares_per_hbd = minimum_vote_threshold / 0.021
-    minimum_vote_threshold = conf_setup.get("minimum_vote_threshold", 0)
-    if minimum_vote_threshold == 0:
-        # Fallback: default factor of 1 to avoid ZeroDivision / missing config
-        rshares_per_hbd = 1
-    else:
-        rshares_per_hbd = minimum_vote_threshold / 0.021
+    # minimum_vote_threshold = conf_setup.get("minimum_vote_threshold", 0)
 
     print(
         f"hsbi_transfer: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
@@ -74,6 +69,9 @@ def run():
             key_list.append(key["wif"])
         hv = make_hive(cfg, keys=key_list)
         # set_shared_blockchain_instance(hv)
+        
+        # Calculate how many rshares correspond to 1 HBD using Nectar:
+        rshares_per_hbd = hv.hbd_to_rshares(1.0)
 
         # print("load member database")
         member_accounts = memberStorage.get_all_accounts()
