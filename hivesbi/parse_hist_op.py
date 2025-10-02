@@ -318,7 +318,14 @@ class ParseAccountHist(list):
             elif processed_memo[2] == "#":
                 processed_memo = processed_memo[2:-2]
             memo = Memo(account, op["to"], blockchain_instance=self.hive)
-            processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
+            processed_memo = (
+                str(memo.decrypt(processed_memo))
+                .replace("\n", "")
+                .replace("\\n", "")
+                .replace("\\", "")
+            )
+
+        processed_memo = " ".join(str(processed_memo).split()).strip()
 
         shares = int(amount.amount)
         if processed_memo.lower().replace(",", "  ").replace('"', "") == "":
@@ -350,7 +357,7 @@ class ParseAccountHist(list):
             self.transactionStorage.add(data)
             return
         if amount.symbol == self.hive.hbd_symbol:
-            return
+            share_type = self.hive.hbd_symbol
             
         # Check if any sponsee is the same as the sponsor and remove them
         filtered_sponsee = {}
@@ -942,8 +949,10 @@ class ParseAccountHist(list):
                             processed = self._handle_point_transfer(op)
                             if processed:
                                 return
-                        # Not processed as units transfer; fall back to normal logging
-                        self.parse_transfer_in_op(op)
+                        # Not processed as units transfer; skip enrollment
+                        print(
+                            f"[ParseOp] HBD point transfer not processed; skipping enrollment: trx_id={op.get('trx_id')}"
+                        )
                         return
 
                     # Lovegun point-transfer flow for HIVE
@@ -952,10 +961,13 @@ class ParseAccountHist(list):
                             processed = self._handle_point_transfer(op)
                             if processed:
                                 return
-                        self.parse_transfer_in_op(op)
+                        # Not processed as rshares transfer; skip enrollment
+                        print(
+                            f"[ParseOp] HIVE point transfer not processed; skipping enrollment: trx_id={op.get('trx_id')}"
+                        )
                         return
 
-                    # Normal transfer
+                    # Normal Enrollment
                     self.parse_transfer_in_op(op)
                     return
                 else:
