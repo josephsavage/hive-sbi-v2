@@ -72,8 +72,10 @@ class ParseAccountHist(list):
             "sbi9",
         ]
         # Load from settings if available (key: trx_ignore_accounts)
+        self.cfg = None
         try:
             cfg = get_runtime()["cfg"]
+            self.cfg = cfg
             ignore_val = cfg.get("trx_ignore_accounts") if hasattr(cfg, "get") else None
             if ignore_val is None and "trx_ignore_accounts" in cfg:
                 ignore_val = cfg["trx_ignore_accounts"]
@@ -824,14 +826,29 @@ class ParseAccountHist(list):
         if amount_value <= 0:
             return
 
-        issuer = self._get_token_issuer(self.account["name"])
+        issuer_account = self.account["name"]
+        if self.cfg is not None:
+            try:
+                cfg_override = (
+                    self.cfg.get("refund_issuance")
+                    if hasattr(self.cfg, "get")
+                    else self.cfg.get("refund_issuance")  # type: ignore[union-attr]
+                )
+            except AttributeError:
+                cfg_override = None
+            except Exception:
+                cfg_override = None
+            if cfg_override:
+                issuer_account = cfg_override
+
+        issuer = self._get_token_issuer(issuer_account)
         if issuer is None:
             log.warning(
                 "Skipping refund of %.3f %s to %s; no issuer for %s",
                 amount_value,
                 symbol,
                 recipient,
-                self.account["name"],
+                issuer_account,
             )
             return
 
@@ -942,7 +959,7 @@ class ParseAccountHist(list):
                     if memo_str[:8] == "https://":
                         return
                     amt_float = float(_amount)
-                    print(f"{self.account['name']}: {op['from']} {op['to']} {op['memo']} {op['amount']} {op['timestamp']}")
+                    #print(f"{self.account['name']}: {op['from']} {op['to']} {op['memo']} {op['amount']} {op['timestamp']}")
                     handled_point = False
                     normalized_recipient = str(self.account["name"]).strip().lower()
                     if normalized_recipient == "steembasicincome":
