@@ -68,7 +68,7 @@ def run():
 
         # Build Hive instance and collect mana for each account
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
-        rshares_needed = estimate_rshares_for_hbd(hv, 0.021)
+        rshares_needed = hv.hbd_to_rshares(0.021)
         print(
             f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
         )
