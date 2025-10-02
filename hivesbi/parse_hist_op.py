@@ -691,7 +691,7 @@ class ParseAccountHist(list):
                 op.get("trx_id"),
             )
 
-            base_index = op.get("index", 0) or op.get("op_acc_index", 0) or 0
+            base_index = op.get("index", 0)
             sponsee_json = json.dumps({nominee: transferable_units})
             timestamp = op.get("timestamp")
             self.trxStorage.add(
