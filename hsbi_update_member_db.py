@@ -456,31 +456,37 @@ def run():
         )
 
         if new_cycle:
-            for m in member_data:
-                if member_data[m]["shares"] <= 0:
-                    continue
-                if "first_cycle_at" not in member_data[m]:
-                    member_data[m]["first_cycle_at"] = ensure_timezone_aware(
-                        current_cycle
+            if cfg.get("build_reporting", False):
+            try:
+                for m in member_data:
+                    if member_data[m]["shares"] <= 0:
+                        continue
+                    if "first_cycle_at" not in member_data[m]:
+                        member_data[m]["first_cycle_at"] = ensure_timezone_aware(
+                            current_cycle
+                        )
+                    elif ensure_timezone_aware(
+                        member_data[m]["first_cycle_at"]
+                    ) < ensure_timezone_aware(datetime(2000, 1, 1, 0, 0, 0)):
+                        member_data[m]["first_cycle_at"] = ensure_timezone_aware(
+                            current_cycle
+                        )
+                    member_data[m]["balance_rshares"] += (
+                        member_data[m]["shares"] * rshares_per_cycle
+                    ) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
+                    member_data[m]["earned_rshares"] += (
+                        member_data[m]["shares"] * rshares_per_cycle
+                    ) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
+                    member_data[m]["subscribed_rshares"] += (
+                        member_data[m]["shares"] * rshares_per_cycle
                     )
-                elif ensure_timezone_aware(
-                    member_data[m]["first_cycle_at"]
-                ) < ensure_timezone_aware(datetime(2000, 1, 1, 0, 0, 0)):
-                    member_data[m]["first_cycle_at"] = ensure_timezone_aware(
-                        current_cycle
+                    member_data[m]["delegation_rshares"] += (
+                        member_data[m]["bonus_shares"] * del_rshares_per_cycle
                     )
-                member_data[m]["balance_rshares"] += (
-                    member_data[m]["shares"] * rshares_per_cycle
-                ) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
-                member_data[m]["earned_rshares"] += (
-                    member_data[m]["shares"] * rshares_per_cycle
-                ) + (member_data[m]["bonus_shares"] * del_rshares_per_cycle)
-                member_data[m]["subscribed_rshares"] += (
-                    member_data[m]["shares"] * rshares_per_cycle
-                )
-                member_data[m]["delegation_rshares"] += (
-                    member_data[m]["bonus_shares"] * del_rshares_per_cycle
-                )
+        else:
+            print(
+                "hsbi_manage_accrual: build_reporting is false; skipping reporting procedure call"
+            )
 
         # print("%d new curation rshares for posts" % post_rshares)
         # print("%d new curation rshares for comments" % comment_rshares)
