@@ -942,8 +942,10 @@ class ParseAccountHist(list):
                             processed = self._handle_point_transfer(op)
                             if processed:
                                 return
-                        # Not processed as units transfer; fall back to normal logging
-                        self.parse_transfer_in_op(op)
+                        # Not processed as units transfer; skip enrollment
+                        print(
+                            f"[ParseOp] HBD point transfer not processed; skipping enrollment: trx_id={op.get('trx_id')}"
+                        )
                         return
 
                     # Lovegun point-transfer flow for HIVE
@@ -952,13 +954,15 @@ class ParseAccountHist(list):
                             processed = self._handle_point_transfer(op)
                             if processed:
                                 return
-                        self.parse_transfer_in_op(op)
+                        # Not processed as rshares transfer; skip enrollment
+                        print(
+                            f"[ParseOp] HIVE point transfer not processed; skipping enrollment: trx_id={op.get('trx_id')}"
+                        )
                         return
 
                     # Normal Enrollment
-                    if amt_float >= 1 and _amount.symbol == "HIVE":
-                        self.parse_transfer_in_op(op)
-                        return
+                    self.parse_transfer_in_op(op)
+                    return
                 else:
                     # Non-SBI accounts: normal behavior
                     self.parse_transfer_in_op(op)
