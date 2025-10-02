@@ -1,9 +1,9 @@
 # This Python file uses the following encoding: utf-8
 import logging
+from urllib.parse import urlparse
 
 from nectar.account import Account
 from nectar.instance import shared_blockchain_instance
-from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 

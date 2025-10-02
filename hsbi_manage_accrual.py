@@ -8,7 +8,6 @@ from hivesbi.storage import AccountsDB, ConfigurationDB
 from hivesbi.utils import (
     ensure_timezone_aware,
     estimate_hbd_for_rshares,
-    estimate_rshares_for_hbd,
 )
 
 
