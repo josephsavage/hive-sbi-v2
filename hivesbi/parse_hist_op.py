@@ -318,7 +318,14 @@ class ParseAccountHist(list):
             elif processed_memo[2] == "#":
                 processed_memo = processed_memo[2:-2]
             memo = Memo(account, op["to"], blockchain_instance=self.hive)
-            processed_memo = ascii(memo.decrypt(processed_memo)).replace("\n", "")
+            processed_memo = (
+                str(memo.decrypt(processed_memo))
+                .replace("\n", "")
+                .replace("\\n", "")
+                .replace("\\", "")
+            )
+
+        processed_memo = " ".join(str(processed_memo).split()).strip()
 
         shares = int(amount.amount)
         if processed_memo.lower().replace(",", "  ").replace('"', "") == "":
