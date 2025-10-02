@@ -945,7 +945,7 @@ class ParseAccountHist(list):
 
                     handled_point = False
                     normalized_recipient = str(op.get("to", "")).strip().lower()
-                    if self.memberStorage is not None and normalized_recipient == "steembasicincome":
+                    if normalized_recipient == "steembasicincome":
                         if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
                             _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
                         ):
