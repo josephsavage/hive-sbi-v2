@@ -99,14 +99,14 @@ def run():
         factor = 1.025 if overall_mana_pct > 50 else 0.99
         rshares_per_cycle *= factor
         del_rshares_per_cycle *= factor
-        calc_min_threshold = rshares_needed
+        minimum_vote_threshold = rshares_needed
 
         # Persist updated values and reset last_cycle
         confStorage.update(
             {
                 "rshares_per_cycle": rshares_per_cycle,
                 "del_rshares_per_cycle": del_rshares_per_cycle,
-                "calc_min_threshold": calc_min_threshold,
+                "minimum_vote_threshold": minimum_vote_threshold,
                 # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
             }
         )
