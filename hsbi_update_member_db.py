@@ -485,6 +485,7 @@ def run():
                         )
                 except Exception as e:
                     print(f"Error calling stored procedure: {e}")
+
         else:
             print(
                 "hsbi_manage_accrual: build_reporting is false; skipping reporting procedure call"
