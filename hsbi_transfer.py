@@ -117,10 +117,7 @@ def run():
             else:
                 op = trxStorage.get(op_index[-1], account["name"])
                 start_index = op["index"] + 1
-                if account_name == "steembasicincome":
-                    start_index_offset = 316
-                else:
-                    start_index_offset = 0
+                start_index_offset = 0
 
             ops = account_trx.get_all(op_types=["transfer", "delegate_vesting_shares"])
             print(
