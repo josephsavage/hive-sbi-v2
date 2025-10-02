@@ -88,7 +88,7 @@ def run():
             account_trx = accountTrx[account_trx_key]
             parse_vesting = account_name == "steembasicincome"
             account = Account(account_name, blockchain_instance=hv)
-            # print(account["name"])
+            print(account["name"])
             pah = ParseAccountHist(
                 account,
                 "",
@@ -103,6 +103,7 @@ def run():
             )
 
             op_index = trxStorage.get_all_op_index(account["name"])
+            print("op_index", len(op_index), "for account", account_name, account["name"])
 
             if len(op_index) == 0:
                 start_index = 0
@@ -116,6 +117,7 @@ def run():
                     start_index_offset = 0
 
             ops = account_trx.get_all(op_types=["transfer", "delegate_vesting_shares"])
+            print("ops", len(ops), "for account", account_name, account["name"])
             if len(ops) == 0:
                 continue
 
