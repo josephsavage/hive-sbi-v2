@@ -943,13 +943,14 @@ class ParseAccountHist(list):
                         return
                     amt_float = float(_amount)
 
-                    handled_point = False
-                    if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
-                        _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
-                    ):
-                        handled_point = self._handle_point_transfer(op)
-                        if handled_point:
-                            return
+                    normalized_recipient = str(op.get("to", "")).strip().lower()
+                    if self.memberStorage is not None and normalized_recipient == "steembasicincome":
+                        if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
+                            _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
+                        ):
+                            handled_point = self._handle_point_transfer(op)
+                            if handled_point:
+                                return
 
                     # Fall back to normal enrollment processing when point handling does not apply
                     self.parse_transfer_in_op(op)
