@@ -103,7 +103,13 @@ def run():
             )
 
             op_index = trxStorage.get_all_op_index(account["name"])
-            print("op_index", len(op_index), "for account", account_name, account["name"])
+            print(
+                "op_index",
+                len(op_index),
+                "for account",
+                account_name,
+                account["name"],
+            )
 
             if len(op_index) == 0:
                 start_index = 0
@@ -117,7 +123,19 @@ def run():
                     start_index_offset = 0
 
             ops = account_trx.get_all(op_types=["transfer", "delegate_vesting_shares"])
-            print("ops", len(ops), "for account", account_name, account["name"])
+            print(
+                "ops",
+                len(ops),
+                "for account",
+                account_name,
+                account["name"],
+                "start_index",
+                start_index,
+                "offset",
+                start_index_offset,
+                "latest",
+                ops[-1]["op_acc_index"] if ops else None,
+            )
             if len(ops) == 0:
                 continue
 
@@ -125,6 +143,13 @@ def run():
                 continue
             # Process operations in natural chronological order (op_acc_index)
             for op in ops:
+                if op is ops[0]:
+                    print(
+                        "first op index",
+                        op["op_acc_index"],
+                        "threshold",
+                        start_index - start_index_offset,
+                    )
                 if op["op_acc_index"] < start_index - start_index_offset:
                     continue
                 if (
