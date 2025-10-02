@@ -955,9 +955,10 @@ class ParseAccountHist(list):
                         self.parse_transfer_in_op(op)
                         return
 
-                    # Normal transfer
-                    self.parse_transfer_in_op(op)
-                    return
+                    # Normal Enrollment
+                    if amt_float >= 1 and _amount.symbol == "HIVE":
+                        self.parse_transfer_in_op(op)
+                        return
                 else:
                     # Non-SBI accounts: normal behavior
                     self.parse_transfer_in_op(op)
