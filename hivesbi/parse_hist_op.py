@@ -1,7 +1,6 @@
 # This Python file uses the following encoding: utf-8
 
 import json
-import re
 import logging
 from datetime import datetime
 
@@ -582,29 +581,30 @@ class ParseAccountHist(list):
             print(
                 f"[PointTransfer] Decrypted memo: trx_id={trx_id} memo={processed_memo}"
             )
-        memo_norm = " ".join(str(processed_memo).split()).strip().lower()
-        # Extract first valid hive account-like token from memo using regex
-        # Hive account: lowercase letters, digits, hyphen, optional dots for sub-accounts, 3-16 per segment
-        # We also allow an optional leading '@' and surrounding quotes/punctuation
+        processed_memo = " ".join(str(processed_memo).split()).strip()
+        memo_norm = processed_memo.lower()
         nominee = ""
-        if memo_norm:
-            # Remove leading @ and outer quotes/backticks/unicode quotes repeatedly
-            token = memo_norm.split()[0]
-            token = token.lstrip("@")
-            token = token.strip(" \t\r\n\f\v'\"`‘’“”<>()[]{}.,;:!?")
-            # Rule approximation:
-            # - cannot start with a number: first char [a-z]
-            # - dot/hyphen only allowed after the 3rd character
-            # - total length 3–16
-            account_pat = r"[a-z][a-z0-9]{2}[a-z0-9\-\.]{0,13}"
-            m = re.search(account_pat, token)
-            if m:
-                nominee = m.group(0)
-            else:
-                # Fallback: scan entire memo for an account-like string
-                m2 = re.search(account_pat, memo_norm)
-                if m2:
-                    nominee = m2.group(0)
+
+        shares_hint = max(int(round(amount * 1000)), 1)
+        try:
+            _, memo_sponsees, _, _ = self.memo_parser.parse_memo(
+                processed_memo, shares_hint, sender
+            )
+        except Exception as exc:
+            log.warning(
+                "[PointTransfer] MemoParser failed: trx_id=%s memo=%s error=%s",
+                trx_id,
+                processed_memo,
+                exc,
+            )
+            memo_sponsees = {}
+
+        if memo_sponsees:
+            nominee = next(iter(memo_sponsees))
+        elif memo_norm:
+            nominee = memo_norm.split()[0].lstrip("@")
+
+        nominee = nominee.strip(" \t\r\n\f\v'\"`‘’“”<>()[]{}.,;:!?")
         print(
             f"[PointTransfer] Memo parsed: trx_id={trx_id} nominee={nominee} memo_norm={memo_norm}"
         )
@@ -943,31 +943,16 @@ class ParseAccountHist(list):
                         return
                     amt_float = float(_amount)
 
-                    # HBD unit transfer
-                    if _amount.symbol == "HBD" and self.account["name"] == "steembasicincome":
-                        if amt_float >= 0.005 and self.memberStorage is not None:
-                            processed = self._handle_point_transfer(op)
-                            if processed:
+                    handled_point = False
+                    if self.account["name"] == "steembasicincome" and self.memberStorage is not None:
+                        if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
+                            _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
+                        ):
+                            handled_point = self._handle_point_transfer(op)
+                            if handled_point:
                                 return
-                        # Not processed as units transfer; skip enrollment
-                        print(
-                            f"[ParseOp] HBD point transfer not processed; skipping enrollment: trx_id={op.get('trx_id')}"
-                        )
-                        return
 
-                    # Lovegun point-transfer flow for HIVE
-                    if amt_float < 1 and self.account["name"] == "steembasicincome":
-                        if amt_float >= 0.005 and self.memberStorage is not None:
-                            processed = self._handle_point_transfer(op)
-                            if processed:
-                                return
-                        # Not processed as rshares transfer; skip enrollment
-                        print(
-                            f"[ParseOp] HIVE point transfer not processed; skipping enrollment: trx_id={op.get('trx_id')}"
-                        )
-                        return
-
-                    # Normal Enrollment
+                    # Fall back to normal enrollment processing when point handling does not apply
                     self.parse_transfer_in_op(op)
                     return
                 else:
