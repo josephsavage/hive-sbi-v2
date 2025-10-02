@@ -33,7 +33,7 @@ def run():
     accountTrx = {}
     for account in accounts:
         if account == "steembasicincome":
-            accountTrx["sbi"] = AccountTrx(db, "sbi")
+            accountTrx[account] = AccountTrx(db, "sbi")
         else:
             accountTrx[account] = AccountTrx(db, account)
 
@@ -84,11 +84,7 @@ def run():
         # stop_index = formatTimeString("2018-07-21T23:46:09")
 
         for account_name in accounts:
-            account_trx = (
-                accountTrx["sbi"]
-                if account_name == "steembasicincome"
-                else accountTrx[account_name]
-            )
+            account_trx = accountTrx[account_name]
             parse_vesting = account_name == "steembasicincome"
             account = Account(account_name, blockchain_instance=hv)
             # print(account["name"])
