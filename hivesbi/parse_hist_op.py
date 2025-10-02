@@ -357,7 +357,7 @@ class ParseAccountHist(list):
             return
         if amount.symbol == self.hive.hbd_symbol:
             share_type = self.hive.hbd_symbol
-            
+
         # Check if any sponsee is the same as the sponsor and remove them
         filtered_sponsee = {}
         for a in sponsee:
@@ -944,13 +944,12 @@ class ParseAccountHist(list):
                     amt_float = float(_amount)
 
                     handled_point = False
-                    if self.account["name"] == "steembasicincome" and self.memberStorage is not None:
-                        if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
-                            _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
-                        ):
-                            handled_point = self._handle_point_transfer(op)
-                            if handled_point:
-                                return
+                    if (_amount.symbol == "HBD" and amt_float >= 0.005) or (
+                        _amount.symbol != "HBD" and amt_float < 1 and amt_float >= 0.005
+                    ):
+                        handled_point = self._handle_point_transfer(op)
+                        if handled_point:
+                            return
 
                     # Fall back to normal enrollment processing when point handling does not apply
                     self.parse_transfer_in_op(op)
