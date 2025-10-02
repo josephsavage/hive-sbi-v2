@@ -942,7 +942,7 @@ class ParseAccountHist(list):
                     if memo_str[:8] == "https://":
                         return
                     amt_float = float(_amount)
-
+                    print(f"{self.account['name']}: {op['from']} {op['to']} {op['memo']} {op['amount']} {op['timestamp']}")
                     handled_point = False
                     normalized_recipient = str(self.account["name"]).strip().lower()
                     if normalized_recipient == "steembasicincome":
