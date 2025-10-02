@@ -84,11 +84,11 @@ def run():
         # stop_index = formatTimeString("2018-07-21T23:46:09")
 
         for account_name in accounts:
-            if account_name == "steembasicincome":
-                account_name = "sbi"
             account_trx = accountTrx[account_name]
             parse_vesting = account_name == "steembasicincome"
             account = Account(account_name, blockchain_instance=hv)
+            if account_name == "steembasicincome":
+                account_name = "sbi"
             # print(account["name"])
             pah = ParseAccountHist(
                 account,
