@@ -350,7 +350,7 @@ class ParseAccountHist(list):
             self.transactionStorage.add(data)
             return
         if amount.symbol == self.hive.hbd_symbol:
-            return
+            share_type = self.hive.hbd_symbol
             
         # Check if any sponsee is the same as the sponsor and remove them
         filtered_sponsee = {}
