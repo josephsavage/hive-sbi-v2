@@ -211,25 +211,28 @@ def run():
         dt_created = c["created"]
         dt_created = dt_created.replace(tzinfo=None)
         skip = False
-        if (
-            "tags" in c and c["tags"] is not None and isinstance(c["tags"], list)
-        ):  # ensure that tags is an array
-            for tag in c["tags"]:
-                if (
-                    tag is not None
-                    and isinstance(tag, str)
-                    and tag.lower() in blacklist_tags
-                ):
-                    skip = True
+        # Tags: check intersection with blacklist (case-insensitive)
+        tags_lower = set()
+        if "tags" in c and isinstance(c["tags"], list):
+            tags_lower = {t.lower() for t in c["tags"] if isinstance(t, str)}
+        if tags_lower.intersection(blacklist_tags):
+            skip = True
+
+        # App: from json_metadata.app
         json_metadata = c.json_metadata
         if isinstance(json_metadata, str):
             try:
                 json_metadata = json.loads(json_metadata)
             except Exception:
                 json_metadata = {}
-        for s in blacklist_body:
-            if s in c.body.lower():
-                skip = True
+        app_val = json_metadata.get("app") if isinstance(json_metadata, dict) else None
+        if isinstance(app_val, str) and app_val and app_val.lower() in blacklist_apps:
+            skip = True
+
+        # Body: any blacklisted substring present
+        body_lower = c.body.lower() if hasattr(c, "body") and isinstance(c.body, str) else ""
+        if any(s and s in body_lower for s in blacklist_body):
+            skip = True
 
         vote_delay = member_data[ops["author"]]["upvote_delay"]
         if vote_delay is None:
