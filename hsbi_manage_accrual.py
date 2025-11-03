@@ -84,7 +84,7 @@ def run():
                 mana_pct = (current_mana / max_mana * 100) if max_mana else 0
                 accounts_processed += 1
 
-                 accountStorage.update({
+                accountStorage.update({
                     "name": acc,
                     "current_mana": int(current_mana),
                     "max_mana": int(max_mana),
