@@ -77,9 +77,22 @@ def run():
         for acc in account_names:
             try:
                 mana = Account(acc, blockchain_instance=hv).get_manabar()
+                current_mana = mana.get("current_mana", 0)
                 total_current_mana += mana.get("current_mana", 0)
+                max_mana = mana.get("max_mana", 0)
                 total_max_mana += mana.get("max_mana", 0)
+                mana_pct = (current_mana / max_mana * 100) if max_mana else 0
                 accounts_processed += 1
+
+                 accountStorage.update({
+                    "name": acc,
+                    "current_mana": int(current_mana),
+                    "max_mana": int(max_mana),
+                    "mana_pct": float(mana_pct),
+                    # Store UTC without tzinfo to match TIMESTAMP/DATETIME
+                    "last_checked": datetime.utcnow(),
+                })
+
             except Exception as e:
                 print(f"hsbi_manage_accrual: Could not fetch mana for {acc}: {e}")
 
