@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timezone
 
 from nectar.account import Account
-
+from nectar.utils import formatTimeString
 from hivesbi.settings import get_runtime, make_hive
 from hivesbi.storage import AccountsDB, ConfigurationDB
 from hivesbi.utils import (
