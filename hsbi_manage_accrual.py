@@ -64,7 +64,7 @@ def run():
                     "max_mana": int(max_mana),
                     "mana_pct": float(mana_pct),
                     # Store UTC without tzinfo to match TIMESTAMP/DATETIME
-                    "last_checked": (datetime.now(timezone.utc),
+                    "last_checked": formatTimeString(timestamp),
                 })
 
             except Exception as e:
