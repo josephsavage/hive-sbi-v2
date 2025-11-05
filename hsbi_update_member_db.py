@@ -10,7 +10,7 @@ from nectar.nodelist import NodeList
 from nectar.utils import (
     formatTimeString,
 )
-
+from hivesbi.issue import get_tokenholders
 from hivesbi.member import Member
 from hivesbi.settings import Config
 from hivesbi.storage import (
@@ -146,6 +146,7 @@ def run():
     last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
+    balance = tokenholders.get(member_name, "0")
 
     accountTrx = {}
     for account in accounts:
@@ -216,6 +217,8 @@ def run():
                 print(
                     f"hsbi_update_member_db: {memo_transfer_acc} is not a valid hive account! Will be able to send transfer memos..."
                 )
+        # Fetch all tokenholders for HSBI (default symbol)
+        tokenholders = {h["account"]: h["balance"] for h in get_tokenholders()}
 
         member_data = {}
         for m in member_accounts:
@@ -232,7 +235,7 @@ def run():
             delegation[m] = 0
             delegation_timestamp[m] = None
             member_data[m].reset_share_age_list()
-
+            member_data[m]["tokens"] = 0
         shares_sum = 0
         latest_share = trxStorage.get_lastest_share_type("Mgmt")
         mngt_shares_sum = (latest_share["index"] + 1) / len(mgnt_shares) * 100
@@ -555,6 +558,8 @@ def run():
             bonus_shares += member_data[m]["bonus_shares"]
             if m in delegation:
                 delegation_shares += delegation[m]
+            if m in tokenholders:
+                tokens += balance[m]
         print(f"hsbi_update_member_db: shares: {shares}")
         print(f"hsbi_update_member_db: delegation bonus shares: {delegation_shares}")
         print(f"hsbi_update_member_db: Mngt bonus shares {mngt_shares}")
