@@ -17,6 +17,7 @@ from hivesbi.issue import (
 
 log = logging.getLogger(__name__)
 
+
 def main():
     rt = get_runtime()
     cfg = rt.get("cfg", {})
@@ -34,7 +35,11 @@ def main():
     if last_cycle is not None:
         elapsed_min = (now - last_cycle).total_seconds() / 60.0
 
-    log.info("hsbi_token_snapshot: last_cycle is %s (%s min ago)", last_cycle, f"{elapsed_min:.2f}" if elapsed_min is not None else "N/A")
+    log.info(
+        "hsbi_token_snapshot: last_cycle is %s (%s min ago)",
+        last_cycle,
+        f"{elapsed_min:.2f}" if elapsed_min is not None else "N/A",
+    )
 
     # If first run (no last_cycle) or enough minutes elapsed, create a new snapshot
     should_run = last_cycle is None or (elapsed_min is not None and elapsed_min > share_cycle_min)
@@ -52,7 +57,7 @@ def main():
     except Exception as exc:
         log.exception("Failed to connect to DBs: %s", exc)
         raise
- 
+
     try:
         # Determine next batch_id using dataset API
         token_table = db2["tokenholders"]
@@ -84,24 +89,21 @@ def main():
         except Exception:
             # commit may not be supported depending on the dataset/driver, ignore if so
             pass
-         log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
 
-         # Update last_cycle in configuration storage if available
-         if confStorage is not None:
-             conf_setup["last_cycle"] = ts
-             confStorage.set(conf_setup)
+        log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
 
-     finally:
-        try:
-            if cur is not None:
-                cur.close()
-        except Exception:
-            pass
+        # Update last_cycle in configuration storage if available
+        if confStorage is not None:
+            conf_setup["last_cycle"] = ts
+            confStorage.set(conf_setup)
+
+    finally:
         try:
             if db2 is not None:
                 db2.close()
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     main()
