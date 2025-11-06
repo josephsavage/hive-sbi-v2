@@ -143,13 +143,31 @@ def get_tokenholders(symbol: str | None = None, limit: int = 1000, offset: int =
 
     holders: list[dict] = []
     while True:
-        page = api.find(
-            contract="tokens",
-            table="balances",
-            query={"symbol": token_symbol},
-            limit=limit,
-            offset=offset,
-        )
+        # Try the most explicit, keyword-argument call first (current code).
+        # If the installed nectarengine.Api.find has a different signature we'll fall
+        # back to positional forms.
+        page = None
+        try:
+            page = api.find(
+                contract="tokens",
+                table="balances",
+                query={"symbol": token_symbol},
+                limit=limit,
+                offset=offset,
+            )
+        except TypeError:
+            # Fallback: try common positional-signature variants.
+            # Variant 1: api.find(contract, table, query, limit, offset)
+            try:
+                page = api.find("tokens", "balances", {"symbol": token_symbol}, limit, offset)
+            except TypeError:
+                # Variant 2: api.find(table, query, limit, offset) (no contract param)
+                try:
+                    page = api.find("balances", {"symbol": token_symbol}, limit, offset)
+                except Exception as e:
+                    # If all attempts fail, re-raise the original TypeError to show the root cause.
+                    raise
+
         if not page:
             break
         # Only keep account and balance fields
