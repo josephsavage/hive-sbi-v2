@@ -126,3 +126,38 @@ def connect_dbs_cached(cfg: Config):
     _config_cache = cfg
     _db_cache = connect_dbs(cfg)
     return _db_cache
+
+from nectarengine.api import Api
+
+def get_tokenholders(symbol: str | None = None, limit: int = 1000, offset: int = 0) -> list[dict]:
+    """
+    Return a list of account/balance dicts for the given Hive Engine token symbol.
+    Defaults to the configured DEFAULT_TOKEN_SYMBOL if none is provided.
+
+    Each dict has at least:
+      - account: Hive account name
+      - balance: string balance amount
+    """
+    token_symbol = (symbol or DEFAULT_TOKEN_SYMBOL).upper()
+    api = Api()
+
+    holders: list[dict] = []
+    while True:
+        page = api.find(
+            contract="tokens",
+            table="balances",
+            query={"symbol": token_symbol},
+            limit=limit,
+            offset=offset,
+        )
+        if not page:
+            break
+        # Only keep account and balance fields
+        for row in page:
+            holders.append({
+                "account": row["account"],
+                "balance": row["balance"],
+            })
+        offset += limit
+
+    return holders
