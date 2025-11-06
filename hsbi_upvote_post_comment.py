@@ -69,27 +69,56 @@ def run():
     _blockchain = Blockchain(blockchain_instance=hv)
     # print("reading all authorperm")
     rshares_sum = 0
-    post_list = postTrx.get_unvoted_post()
-    for authorperm in post_list:
-        created = ensure_timezone_aware(post_list[authorperm]["created"])
+
+    # --- start: sequence posts by member balance_rshares instead of creation time ---
+    unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
+    posts = []
+    for authorperm, p in unvoted.items():
+        author = p.get("author")
+        # ensure we have a timezone-aware datetime for sorting
+        try:
+            created_dt = ensure_timezone_aware(p["created"])
+        except Exception:
+            created_dt = p["created"]
+        # get member balance_rshares (default 0 if missing)
+        try:
+            member_obj = Member(memberStorage.get(author))
+            balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
+        except Exception:
+            balance_rshares = 0
+        # keep the original post dict with added sort keys
+        posts.append({"authorperm": authorperm, "post": p, "created": created_dt, "balance_rshares": balance_rshares})
+
+    # sort by balance_rshares desc (highest first), then by created asc (older first) as tiebreaker
+    posts_sorted = sorted(posts, key=lambda x: (-x["balance_rshares"], x["created"]))
+
+    # iterate the sorted posts (preserves the rest of the logic below)
+    for entry in posts_sorted:
+        authorperm = entry["authorperm"]
+        post_data = entry["post"]
+        created = entry["created"]
+        # existing logic expects post_list[authorperm], so assign a local alias
+        # (you can access fields via post_data[...] instead of post_list[authorperm][...])
+        # --- end: sequencing change ---
+
         if (datetime.now(timezone.utc) - created).total_seconds() > 1 * 24 * 60 * 60:
             continue
         if start_timestamp > created:
             continue
-        author = post_list[authorperm]["author"]
+        author = post_data["author"]
         if author not in member_accounts:
             continue
         if upvote_counter[author] > 0:
             continue
         if (
-            post_list[authorperm]["main_post"] == 0
+            post_data["main_post"] == 0
             and (datetime.now(timezone.utc) - created).total_seconds()
             > comment_vote_timeout_h * 60 * 60
         ):
             postTrx.update_comment_to_old(author, created, True)
 
         member = Member(memberStorage.get(author))
-        if post_list[authorperm]["main_post"] == 0:
+        if post_data["main_post"] == 0:
             continue
         if member["blacklisted"]:
             continue
@@ -98,14 +127,14 @@ def run():
         ):
             continue
 
-        if post_list[authorperm]["main_post"] == 1:
+        if post_data["main_post"] == 1:
             rshares = member["balance_rshares"] / comment_vote_divider
         else:
             rshares = member["balance_rshares"] / (comment_vote_divider**2)
-        if post_list[authorperm]["main_post"] == 1 and rshares < minimum_vote_threshold:
+        if post_data["main_post"] == 1 and rshares < minimum_vote_threshold:
             continue
         elif (
-            post_list[authorperm]["main_post"] == 0
+            post_data["main_post"] == 0
             and rshares < minimum_vote_threshold * 2
         ):
             continue
@@ -161,7 +190,7 @@ def run():
         ):
             continue
 
-        if post_list[authorperm]["main_post"] == 0:
+        if post_data["main_post"] == 0:
             highest_pct = 0
             voter = None
             current_mana = {}
