@@ -48,7 +48,7 @@ def main():
 
         count = 0
         for h in holders:
-        cur.execute(insert_sql, (datetime.utcnow(), h["account"], h["balance"], batch_id))
+        cur.execute(insert_sql, (datetime.now(timezone.utc), h["account"], h["balance"], batch_id))
         count += 1
 
     db2.commit()
@@ -57,7 +57,7 @@ def main():
 
     log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
     else:
-            print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
+            print("hsbi_token_snapshot: Not time for a new cycle yet. Exiting.")
             
 if __name__ == "__main__":
     main()
