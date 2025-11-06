@@ -17,6 +17,7 @@ from hivesbi.issue import (
 
 log = logging.getLogger(__name__)
 
+
 def main():
     rt = get_runtime()
     cfg = rt.get("cfg", {})
@@ -34,7 +35,11 @@ def main():
     if last_cycle is not None:
         elapsed_min = (now - last_cycle).total_seconds() / 60.0
 
-    log.info("hsbi_token_snapshot: last_cycle is %s (%s min ago)", last_cycle, f"{elapsed_min:.2f}" if elapsed_min is not None else "N/A")
+    log.info(
+        "hsbi_token_snapshot: last_cycle is %s (%s min ago)",
+        last_cycle,
+        f"{elapsed_min:.2f}" if elapsed_min is not None else "N/A",
+    )
 
     # If first run (no last_cycle) or enough minutes elapsed, create a new snapshot
     should_run = last_cycle is None or (elapsed_min is not None and elapsed_min > share_cycle_min)
@@ -44,34 +49,47 @@ def main():
         return
 
     # Connect to DBs (uses workspace helper)
-    db2 = None
-    cur = None
     try:
-        db2, cur = connect_dbs_cached()  # expects (connection, cursor)-style return
+        # connect_dbs_cached expects the Config object
+        _db1, db2, _db3 = connect_dbs_cached(cfg)
+        if db2 is None:
+            raise RuntimeError("Database connection (db2) is not configured/available")
     except Exception as exc:
         log.exception("Failed to connect to DBs: %s", exc)
         raise
 
     try:
-        # Determine next batch_id
-        cur.execute("SELECT COALESCE(MAX(batch_id), 0) + 1 FROM tokenholders")
-        batch_id = cur.fetchone()[0]
+        # Determine next batch_id using dataset API
+        token_table = db2["tokenholders"]
+        latest = token_table.find_one(order_by="-batch_id")
+        if latest and latest.get("batch_id") is not None:
+            batch_id = int(latest["batch_id"]) + 1
+        else:
+            batch_id = 1
 
         # Fetch tokenholders (defaults to HSBI symbol)
         holders = get_tokenholders()
 
-        insert_sql = """
-            INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens, batch_id)
-            VALUES (%s, %s, %s, %s)
-        """
-
         count = 0
         ts = now
         for h in holders:
-            cur.execute(insert_sql, (ts, h["account"], h["balance"], batch_id))
+            token_table.insert(
+                {
+                    "snapshot_timestamp": ts,
+                    "member_name": h["account"],
+                    "tokens": h["balance"],
+                    "batch_id": batch_id,
+                }
+            )
             count += 1
 
-        db2.commit()
+        # dataset usually commits automatically, but call commit if you're using transactions
+        try:
+            db2.commit()
+        except Exception:
+            # commit may not be supported depending on the dataset/driver, ignore if so
+            pass
+
         log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
 
         # Update last_cycle in configuration storage if available
@@ -81,15 +99,11 @@ def main():
 
     finally:
         try:
-            if cur is not None:
-                cur.close()
-        except Exception:
-            pass
-        try:
             if db2 is not None:
                 db2.close()
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     main()
