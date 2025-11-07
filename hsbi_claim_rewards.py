@@ -1,8 +1,12 @@
 import time
-from nectar.account import Account
+import sys
+from datetime import datetime, timezone
 
+
+from nectar.account import Account
+from nectar.utils import formatTimeString
 from hivesbi.settings import get_runtime, make_hive
-from hivesbi.storage import AccountsDB, KeysDB
+from hivesbi.storage import AccountsDB, ConfigurationDB
 
 
 def main():
@@ -13,9 +17,15 @@ def main():
     db2 = rt["db2"]
 
     # Prefer storages from the runtime if available, otherwise instantiate
-    storages = rt.get("storages", {})
-    accounts_db = storages.get("accounts") if storages else AccountsDB(db2)
-    keys_db = storages.get("keys") if storages else KeysDB(db2)
+    stor = rt.get("storages", {})
+    confStorage: ConfigurationDB = stor["conf"]
+    conf_setup = confStorage.get()
+    
+    # Fetch account list from the accounts table
+    accountStorage: AccountsDB = stor["accounts"]
+    account_names = accountStorage.get()
+    accounts_db = stor.get("accounts") if stor else AccountsDB(db2)
+    keys_db = stor.get("keys") if stor else KeysDB(db2)
 
     accounts = rt.get("accounts", [])
 
@@ -29,7 +39,7 @@ def main():
             print(f"No posting key found for account {account_name}")
 
     # Build a Hive instance with collected posting keys
-    hv = make_hive(cfg, keys=posting_keys)
+    hv = make_hive(cfg, keys=posting_keys, num_retries=5, call_num_retries=3, timeout=15)
 
     # Iterate accounts and claim rewards when present
     for account_name in accounts:
@@ -52,6 +62,14 @@ def main():
                     reward_vests
                 )
                 time.sleep(3)
+
+                accountStorage.update({
+                    "name": acct,
+                    "reward_hive": varchar(reward_hive),
+                    "reward_hbd": varchar(reward_hbd),
+                    "reward_vests": varchar(reward_vests),
+                })
+
             else:
                 print(f"No rewards to claim for {account_name}")
 
