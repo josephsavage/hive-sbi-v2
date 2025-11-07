@@ -327,7 +327,7 @@ def run():
                     try:
                         if voter is not None and voter in eligible_voter_counters:
                             eligible_voter_counters[voter] += vote_percentage / 100.0
-                            if eligible_voter_counters[voter] > 1:
+                            if eligible_voter_counters[voter] >= 1:
                                 try:
                                     eligible_voters.remove(voter)
                                 except ValueError:
@@ -447,7 +447,7 @@ def run():
                             try:
                                 if voter is not None and voter in eligible_voter_counters:
                                     eligible_voter_counters[voter] += vote_percentage / 100.0
-                                    if eligible_voter_counters[voter] > 1:
+                                    if eligible_voter_counters[voter] >= 1:
                                         try:
                                             eligible_voters.remove(voter)
                                         except ValueError:
@@ -540,7 +540,7 @@ def run():
                         try:
                             if voter is not None and voter in eligible_voter_counters:
                                 eligible_voter_counters[voter] += vote_percentage / 100.0
-                                if eligible_voter_counters[voter] > 1:
+                                if eligible_voter_counters[voter] >= 1:
                                     try:
                                         eligible_voters.remove(voter)
                                     except ValueError:
