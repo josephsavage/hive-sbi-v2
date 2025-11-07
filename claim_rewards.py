@@ -38,9 +38,9 @@ def main():
 
             # Keep underlying attribute names from the account object but rename
             # local variables to repository conventions (hive/hbd/vesting)
-            reward_hive = acct.reward_hive_balance
-            reward_hbd = acct.reward_hbd_balance
-            reward_vesting = acct.reward_vesting_balance
+            reward_hive = acct.reward_hive
+            reward_hbd = acct.reward_hbd
+            reward_vesting = acct.reward_vests
 
             print(
                 f"{account_name}: reward_hive={reward_hive}, reward_hbd={reward_hbd}, reward_vesting={reward_vesting}"
