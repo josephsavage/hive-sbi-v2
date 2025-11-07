@@ -19,7 +19,7 @@ def run():
     stor = rt["storages"]
     confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
-
+    
     # Fetch account list from the accounts table
     accountStorage: AccountsDB = stor["accounts"]
     account_names = accountStorage.get()
@@ -28,7 +28,8 @@ def run():
     share_cycle_min = conf_setup["share_cycle_min"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
-
+    mana_pct_target = conf_setup["mana_pct_target"]
+    
     # Determine whether a new cycle should run (proper logic from example)
     elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
     print(
@@ -82,7 +83,7 @@ def run():
         )
 
         # Adjust accrual rates based on 50% threshold
-        factor = 1.025 if overall_mana_pct > 50 else 0.99
+        factor = 1.025 if overall_mana_pct > mana_pct_target else 0.99
         rshares_per_cycle *= factor
         del_rshares_per_cycle *= factor
         minimum_vote_threshold = rshares_needed
