@@ -1,5 +1,5 @@
+
 import sys
-import logging
 from datetime import datetime, timezone
 from nectar.account import Account
 from nectar.utils import formatTimeString
@@ -10,100 +10,55 @@ from hivesbi.utils import (
     estimate_hbd_for_rshares,
 )
 from hivesbi.issue import (
-    get_tokenholders,
-    connect_dbs_cached,
+    get_tokenholders, 
+    connect_dbs_cached, 
     get_config,
 )
 
-log = logging.getLogger(__name__)
-
-
 def main():
     rt = get_runtime()
-    cfg = rt.get("cfg", {})
-    stor = rt.get("storages", {})
-    confStorage: ConfigurationDB = stor.get("conf")
-    conf_setup = confStorage.get() if confStorage is not None else {}
-    last_cycle = conf_setup.get("last_cycle")
-    if last_cycle is not None:
-        last_cycle = ensure_timezone_aware(last_cycle)
+    cfg = rt["cfg"]
 
-    share_cycle_min = cfg.get("share_cycle_min", 60)
+    # Open configuration database via storages
+    stor = rt["storages"]
+    confStorage: ConfigurationDB = stor["conf"]
+    conf_setup = confStorage.get()
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
 
-    now = datetime.now(timezone.utc)
-    elapsed_min = None
-    if last_cycle is not None:
-        elapsed_min = (now - last_cycle).total_seconds() / 60.0
-
-    log.info(
-        "hsbi_token_snapshot: last_cycle is %s (%s min ago)",
-        last_cycle,
-        f"{elapsed_min:.2f}" if elapsed_min is not None else "N/A",
+    # Determine whether a new cycle should run (proper logic from example)
+    elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
+    print(
+        f"hsbi_token_snapshot: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)"
     )
-
-    # If first run (no last_cycle) or enough minutes elapsed, create a new snapshot
-    should_run = last_cycle is None or (elapsed_min is not None and elapsed_min > share_cycle_min)
-
-    if not should_run:
-        print("hsbi_token_snapshot: Not time for a new cycle yet. Exiting.")
-        return
-
-    # Connect to DBs (uses workspace helper)
-    try:
-        # connect_dbs_cached expects the Config object
-        _db1, db2, _db3 = connect_dbs_cached(cfg)
-        if db2 is None:
-            raise RuntimeError("Database connection (db2) is not configured/available")
-    except Exception as exc:
-        log.exception("Failed to connect to DBs: %s", exc)
-        raise
-
-    try:
-        # Determine next batch_id using dataset API
-        token_table = db2["tokenholders"]
-        latest = token_table.find_one(order_by="-batch_id")
-        if latest and latest.get("batch_id") is not None:
-            batch_id = int(latest["batch_id"]) + 1
-        else:
-            batch_id = 1
-
+    if (
+        last_cycle is not None
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
+        > 60 * share_cycle_min
+    ):        
+        # Determine next batch_id
+        cur.execute("SELECT COALESCE(MAX(batch_id), 0) + 1 FROM tokenholders")
+        batch_id = cur.fetchone()[0]
+        
         # Fetch tokenholders (defaults to HSBI symbol)
         holders = get_tokenholders()
 
+        insert_sql = """
+            INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens, batch_id)
+            VALUES (%s, %s, %s, %s)
+        """
+
         count = 0
-        ts = now
         for h in holders:
-            token_table.insert(
-                {
-                    "snapshot_timestamp": ts,
-                    "member_name": h["account"],
-                    "tokens": h["balance"],
-                    "batch_id": batch_id,
-                }
-            )
-            count += 1
+        cur.execute(insert_sql, (datetime.utcnow(), h["account"], h["balance"], batch_id))
+        count += 1
 
-        # dataset usually commits automatically, but call commit if you're using transactions
-        try:
-            db2.commit()
-        except Exception:
-            # commit may not be supported depending on the dataset/driver, ignore if so
-            pass
+    db2.commit()
+    cur.close()
+    db2.close()
 
-        log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
-
-        # Update last_cycle in configuration storage if available
-        if confStorage is not None:
-            conf_setup["last_cycle"] = ts
-            confStorage.set(conf_setup)
-
-    finally:
-        try:
-            if db2 is not None:
-                db2.close()
-        except Exception:
-            pass
-
-
+    log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
+    else:
+            print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
+            
 if __name__ == "__main__":
     main()
