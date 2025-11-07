@@ -36,25 +36,17 @@ def main():
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):        
-        # Determine next batch_id
-        cur.execute("SELECT COALESCE(MAX(batch_id), 0) + 1 FROM tokenholders")
-        batch_id = cur.fetchone()[0]
-        
         # Fetch tokenholders (defaults to HSBI symbol)
         holders = get_tokenholders()
 
         insert_sql = """
-            INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens, batch_id)
+            INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
             VALUES (%s, %s, %s, %s)
         """
 
         count = 0
-        for h in holders:
-            cur.execute(insert_sql, (datetime.utcnow(), h["account"], h["balance"], batch_id))
-            count += 1
 
         db2.commit()
-        cur.close()
         db2.close()
 
         log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
