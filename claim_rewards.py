@@ -36,20 +36,18 @@ def main():
         try:
             acct = Account(account_name, blockchain_instance=hv)
 
-            # Rewards are strings like "1.234 HIVE"
-            reward_hive = acct["reward_hive_balance"]
-            reward_hbd = acct["reward_hbd_balance"]
-            reward_vests = acct["reward_vesting_balance"]
+            reward_hive = acct["reward_hive_balance"]      # Amount object
+            reward_hbd = acct["reward_hbd_balance"]        # Amount object
+            reward_vests = acct["reward_vesting_balance"]  # Amount object
 
-            print(
-                f"{account_name}: reward_hive={reward_hive}, reward_hbd={reward_hbd}, reward_vests={reward_vests}"
-            )
-            
+            print(f"{account_name}: reward_hive={reward_hive}, reward_hbd={reward_hbd}, reward_vests={reward_vests}")
+
             has_rewards = any(float(r.amount) > 0 for r in [reward_hive, reward_hbd, reward_vests])
+
 
             if has_rewards:
                 print(f"Claiming rewards for {account_name}")
-                Account.claim_reward_balance(
+                hv.claim_reward_balance(
                     account_name,
                     reward_hive,
                     reward_hbd,
