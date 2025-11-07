@@ -100,6 +100,13 @@ def run():
     # initialize per-eligible-voter counters (fraction of full capacity used)
     # counters track cumulative vote share as a fraction (vote_percentage/100)
     eligible_voter_counters = {acc: 0.0 for acc in eligible_voters}
+    
+    # Print eligible voters and their mana levels
+    print("\nEligible voters and their mana levels:")
+    for acc in eligible_voters:
+        mana = voter_accounts[acc].get_manabar()
+        print(f"{acc}: {mana.get('current_mana_pct', 0):.2f}%")
+    print("")  # Extra newline for readability
     # --- end: eligible voter computation ---
 
     _blockchain = Blockchain(blockchain_instance=hv)
