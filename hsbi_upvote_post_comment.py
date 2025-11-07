@@ -198,6 +198,9 @@ def run():
                 rshares = int(minimum_vote_threshold * 20)
             for acc in voter_accounts:
                 mana = voter_accounts[acc].get_manabar()
+                # enforce configured mana % threshold
+                if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+                    continue
                 vote_percentage = (
                     rshares
                     / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
@@ -212,8 +215,13 @@ def run():
                     current_mana = mana
                     voter = acc
             if voter is None:
-                voter = "steembasicincome"
-                current_mana = voter_accounts[acc].get_manabar()
+                # try using the pool account only if it meets threshold
+                fb = "steembasicincome"
+                if fb in voter_accounts:
+                    fb_mana = voter_accounts[fb].get_manabar()
+                    if not mana_threshold or fb_mana.get("current_mana_pct", 0) >= mana_threshold:
+                        voter = fb
+                        current_mana = fb_mana
             vote_percentage = (
                 rshares
                 / (
@@ -281,6 +289,9 @@ def run():
             for acc in voter_accounts:
                 voter_accounts[acc].refresh()
                 mana = voter_accounts[acc].get_manabar()
+                # skip low-mana accounts (and ones already used in the pool)
+                if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+                    continue
                 vote_percentage = (
                     rshares
                     / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
