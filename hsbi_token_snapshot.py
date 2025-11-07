@@ -49,14 +49,14 @@ def main():
 
         count = 0
         for h in holders:
-        cur.execute(insert_sql, (datetime.utcnow(), h["account"], h["balance"], batch_id))
-        count += 1
+            cur.execute(insert_sql, (datetime.utcnow(), h["account"], h["balance"], batch_id))
+            count += 1
 
-    db2.commit()
-    cur.close()
-    db2.close()
+        db2.commit()
+        cur.close()
+        db2.close()
 
-    log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
+        log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
     else:
             print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
             
