@@ -299,6 +299,15 @@ class ConfigurationDB(object):
         table = self.db[self.__tablename__]
         table.upsert(data, ["id"])
 
+    def update_max_mana(self):
+        # Sum max_mana from accounts table
+        result = self.db.query("SELECT SUM(max_mana) AS total FROM accounts").next()
+        total = result["total"] or 0
+
+        # Update configuration table
+        self.db["configuration"].update(dict(id=1, max_mana=total), ["id"])
+        return total
+        
     def update(self, data):
         """Change share_age depending on timestamp"""
         data["id"] = 1
