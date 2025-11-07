@@ -97,6 +97,9 @@ def run():
     if not eligible_voters:
         print("hsbi_upvote_post_comment: no eligible voters available (mana threshold/capacity). Exiting.")
         return
+    # initialize per-eligible-voter counters (fraction of full capacity used)
+    # counters track cumulative vote share as a fraction (vote_percentage/100)
+    eligible_voter_counters = {acc: 0.0 for acc in eligible_voters}
     # --- end: eligible voter computation ---
 
     _blockchain = Blockchain(blockchain_instance=hv)
@@ -313,6 +316,18 @@ def run():
                     )
                     memberStorage.update_last_vote(author, vote_time)
                     upvote_counter[author] += 1
+                    # update voter usage counter and remove voter if exceeded 100% total
+                    try:
+                        if voter is not None and voter in eligible_voter_counters:
+                            eligible_voter_counters[voter] += vote_percentage / 100.0
+                            if eligible_voter_counters[voter] > 1:
+                                try:
+                                    eligible_voters.remove(voter)
+                                except ValueError:
+                                    pass
+                                del eligible_voter_counters[voter]
+                    except Exception:
+                        pass
                 postTrx.update_voted(author, created, vote_sucessfull, voted_after)
         else:
             highest_pct = 0
@@ -421,6 +436,18 @@ def run():
                                 f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
                             )
                             memberStorage.update_last_vote(author, vote_time)
+                            # update voter usage counter and remove voter if exceeded 100% total
+                            try:
+                                if voter is not None and voter in eligible_voter_counters:
+                                    eligible_voter_counters[voter] += vote_percentage / 100.0
+                                    if eligible_voter_counters[voter] > 1:
+                                        try:
+                                            eligible_voters.remove(voter)
+                                        except ValueError:
+                                            pass
+                                        del eligible_voter_counters[voter]
+                            except Exception:
+                                pass
                     rshares_sum += (
                         current_mana["max_mana"]
                         / 50
@@ -502,6 +529,18 @@ def run():
                         )
                         memberStorage.update_last_vote(author, vote_time)
                         upvote_counter[author] += 1
+                        # update voter usage counter and remove voter if exceeded 100% total
+                        try:
+                            if voter is not None and voter in eligible_voter_counters:
+                                eligible_voter_counters[voter] += vote_percentage / 100.0
+                                if eligible_voter_counters[voter] > 1:
+                                    try:
+                                        eligible_voters.remove(voter)
+                                    except ValueError:
+                                        pass
+                                    del eligible_voter_counters[voter]
+                        except Exception:
+                            pass
                     postTrx.update_voted(author, created, vote_sucessfull, voted_after)
 
             print(f"hsbi_upvote_post_comment: rshares_sum {rshares_sum}")
