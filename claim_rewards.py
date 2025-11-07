@@ -44,20 +44,12 @@ def main():
             print(
                 f"{account_name}: reward_hive={reward_hive}, reward_hbd={reward_hbd}, reward_vests={reward_vests}"
             )
-
-            # Convert to floats by splitting the string
-            def parse_amount(balance_str):
-                return float(balance_str.split()[0])
             
-            has_rewards = any(parse_amount(r) > 0 for r in [reward_hive, reward_hbd, reward_vests])
+            has_rewards = any(float(r.amount) > 0 for r in [reward_hive, reward_hbd, reward_vests])
 
             if has_rewards:
                 print(f"Claiming rewards for {account_name}")
-                acct.claim_rewards(
-                    reward_hive,
-                    reward_hbd,
-                    reward_vests
-                )
+                acct.claim_rewards(reward_hive, reward_hbd, reward_vests)
                 time.sleep(3)
             else:
                 print(f"No rewards to claim for {account_name}")
