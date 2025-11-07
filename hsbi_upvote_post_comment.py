@@ -67,6 +67,38 @@ def run():
     for acc in accounts:
         voter_accounts[acc] = Account(acc, blockchain_instance=hv)
 
+    # --- start: compute eligible voters once, early exit if none ---
+    eligible_voters = []
+    # minimal capacity (rshares) required for a voter to be considered.
+    # Default: 1% of minimum_vote_threshold, but can be overridden in config:
+    min_voter_capacity = conf_setup.get("min_voter_capacity_rshares", minimum_vote_threshold * 0.01)
+
+    for acc in voter_accounts:
+        try:
+            # refresh to get recent manabar state if possible
+            try:
+                voter_accounts[acc].refresh()
+            except Exception:
+                pass
+            mana = voter_accounts[acc].get_manabar()
+            # compute effective rshares capacity for a single full-weight vote:
+            capacity = (mana["max_mana"] / 50.0) * (mana.get("current_mana_pct", 0) / 100.0)
+            # enforce configured mana percentage threshold if set
+            if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+                continue
+            # enforce minimal capacity requirement
+            if capacity < min_voter_capacity:
+                continue
+            eligible_voters.append(acc)
+        except Exception:
+            # If any voter lookup fails, just skip that voter
+            continue
+
+    if not eligible_voters:
+        print("hsbi_upvote_post_comment: no eligible voters available (mana threshold/capacity). Exiting.")
+        return
+    # --- end: eligible voter computation ---
+
     _blockchain = Blockchain(blockchain_instance=hv)
     # print("reading all authorperm")
     rshares_sum = 0
@@ -197,7 +229,7 @@ def run():
             current_mana = {}
             if rshares > minimum_vote_threshold * 20:
                 rshares = int(minimum_vote_threshold * 20)
-            for acc in voter_accounts:
+            for acc in eligible_voters:
                 mana = voter_accounts[acc].get_manabar()
                 # enforce configured mana % threshold
                 if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
@@ -287,7 +319,7 @@ def run():
             voter = None
             current_mana = {}
             pool_rshars = []
-            for acc in voter_accounts:
+            for acc in eligible_voters:
                 voter_accounts[acc].refresh()
                 mana = voter_accounts[acc].get_manabar()
                 # skip low-mana accounts (and ones already used in the pool)
@@ -315,7 +347,7 @@ def run():
                 while rshares > 0 and not pool_completed:
                     highest_mana = 0
                     voter = None
-                    for acc in voter_accounts:
+                    for acc in eligible_voters:
                         voter_accounts[acc].refresh()
                         mana = voter_accounts[acc].get_manabar()
                         vote_percentage = (
