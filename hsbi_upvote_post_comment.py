@@ -31,6 +31,7 @@ def run():
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
     upvote_delay_correction = 18
+    mana_threshold = conf_setup.get("mana_pct_target", 0)   # <-- add this
     member_accounts = memberStorage.get_all_accounts()
 
     nobroadcast = False
@@ -69,27 +70,56 @@ def run():
     _blockchain = Blockchain(blockchain_instance=hv)
     # print("reading all authorperm")
     rshares_sum = 0
-    post_list = postTrx.get_unvoted_post()
-    for authorperm in post_list:
-        created = ensure_timezone_aware(post_list[authorperm]["created"])
+
+    # --- start: sequence posts by member balance_rshares instead of creation time ---
+    unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
+    posts = []
+    for authorperm, p in unvoted.items():
+        author = p.get("author")
+        # ensure we have a timezone-aware datetime for sorting
+        try:
+            created_dt = ensure_timezone_aware(p["created"])
+        except Exception:
+            created_dt = p["created"]
+        # get member balance_rshares (default 0 if missing)
+        try:
+            member_obj = Member(memberStorage.get(author))
+            balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
+        except Exception:
+            balance_rshares = 0
+        # keep the original post dict with added sort keys
+        posts.append({"authorperm": authorperm, "post": p, "created": created_dt, "balance_rshares": balance_rshares})
+
+    # sort by balance_rshares desc (highest first), then by created asc (older first) as tiebreaker
+    posts_sorted = sorted(posts, key=lambda x: (-x["balance_rshares"], x["created"]))
+
+    # iterate the sorted posts (preserves the rest of the logic below)
+    for entry in posts_sorted:
+        authorperm = entry["authorperm"]
+        post_data = entry["post"]
+        created = entry["created"]
+        # existing logic expects post_list[authorperm], so assign a local alias
+        # (you can access fields via post_data[...] instead of post_list[authorperm][...])
+        # --- end: sequencing change ---
+
         if (datetime.now(timezone.utc) - created).total_seconds() > 1 * 24 * 60 * 60:
             continue
         if start_timestamp > created:
             continue
-        author = post_list[authorperm]["author"]
+        author = post_data["author"]
         if author not in member_accounts:
             continue
         if upvote_counter[author] > 0:
             continue
         if (
-            post_list[authorperm]["main_post"] == 0
+            post_data["main_post"] == 0
             and (datetime.now(timezone.utc) - created).total_seconds()
             > comment_vote_timeout_h * 60 * 60
         ):
             postTrx.update_comment_to_old(author, created, True)
 
         member = Member(memberStorage.get(author))
-        if post_list[authorperm]["main_post"] == 0:
+        if post_data["main_post"] == 0:
             continue
         if member["blacklisted"]:
             continue
@@ -98,14 +128,14 @@ def run():
         ):
             continue
 
-        if post_list[authorperm]["main_post"] == 1:
+        if post_data["main_post"] == 1:
             rshares = member["balance_rshares"] / comment_vote_divider
         else:
             rshares = member["balance_rshares"] / (comment_vote_divider**2)
-        if post_list[authorperm]["main_post"] == 1 and rshares < minimum_vote_threshold:
+        if post_data["main_post"] == 1 and rshares < minimum_vote_threshold:
             continue
         elif (
-            post_list[authorperm]["main_post"] == 0
+            post_data["main_post"] == 0
             and rshares < minimum_vote_threshold * 2
         ):
             continue
@@ -161,7 +191,7 @@ def run():
         ):
             continue
 
-        if post_list[authorperm]["main_post"] == 0:
+        if post_data["main_post"] == 0:
             highest_pct = 0
             voter = None
             current_mana = {}
@@ -169,6 +199,9 @@ def run():
                 rshares = int(minimum_vote_threshold * 20)
             for acc in voter_accounts:
                 mana = voter_accounts[acc].get_manabar()
+                # enforce configured mana % threshold
+                if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+                    continue
                 vote_percentage = (
                     rshares
                     / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
@@ -183,8 +216,13 @@ def run():
                     current_mana = mana
                     voter = acc
             if voter is None:
-                voter = "steembasicincome"
-                current_mana = voter_accounts[acc].get_manabar()
+                # try using the pool account only if it meets threshold
+                fb = "steembasicincome"
+                if fb in voter_accounts:
+                    fb_mana = voter_accounts[fb].get_manabar()
+                    if not mana_threshold or fb_mana.get("current_mana_pct", 0) >= mana_threshold:
+                        voter = fb
+                        current_mana = fb_mana
             vote_percentage = (
                 rshares
                 / (
@@ -252,6 +290,9 @@ def run():
             for acc in voter_accounts:
                 voter_accounts[acc].refresh()
                 mana = voter_accounts[acc].get_manabar()
+                # skip low-mana accounts (and ones already used in the pool)
+                if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+                    continue
                 vote_percentage = (
                     rshares
                     / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
