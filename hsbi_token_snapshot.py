@@ -43,7 +43,7 @@ def main():
             INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
             VALUES (%s, %s, %s, %s)
         """
-        print("Inserted %s tokenholders", count)
+        print("Inserted tokenholders")
     else:
             print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
             
