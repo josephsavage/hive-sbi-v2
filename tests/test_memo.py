@@ -1,6 +1,6 @@
 import unittest
 
-from hivesbi.memo_parser import MemoParser
+from steembi.memo_parser import MemoParser
 
 
 class Testcases(unittest.TestCase):
