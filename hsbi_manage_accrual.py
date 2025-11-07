@@ -58,6 +58,26 @@ def run():
                 total_max_mana += mana.get("max_mana", 0)
                 mana_pct = (current_mana / max_mana * 100) if max_mana else 0
                 accounts_processed += 1
+                acct = Account(account_name, blockchain_instance=hv)
+
+                reward_hive = acct["reward_hive_balance"]      # Amount object
+                reward_hbd = acct["reward_hbd_balance"]        # Amount object
+                reward_vests = acct["reward_vesting_balance"]  # Amount object
+
+                print(f"{account_name}: reward_hive={reward_hive}, reward_hbd={reward_hbd}, reward_vests={reward_vests}")
+
+                has_rewards = any(float(r.amount) > 0 for r in [reward_hive, reward_hbd, reward_vests])
+
+                if has_rewards:
+                    print(f"Claiming rewards for {account_name}")
+                    acct.claim_reward_balance(
+                        reward_hive,
+                        reward_hbd,
+                        reward_vests
+                    )
+                    time.sleep(3)
+                else:
+                    print(f"No rewards to claim for {account_name}")
 
                 accountStorage.update({
                     "name": acc,
@@ -66,6 +86,9 @@ def run():
                     "mana_pct": float(mana_pct),
                     # Store UTC without tzinfo to match TIMESTAMP/DATETIME
                     "last_checked": datetime.now(timezone.utc),
+                    "reward_hive": float(reward_hive),
+                    "reward_hbd": float(reward_hbd),
+                    "reward_vests": float(reward_vests)
                 })
 
                 confdb = ConfigurationDB(db)
