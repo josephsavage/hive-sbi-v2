@@ -31,6 +31,7 @@ def run():
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
     upvote_delay_correction = 18
+    mana_threshold = conf_setup.get("mana_pct_target", 0)   # <-- add this
     member_accounts = memberStorage.get_all_accounts()
 
     nobroadcast = False
