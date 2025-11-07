@@ -43,13 +43,7 @@ def main():
             INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
             VALUES (%s, %s, %s, %s)
         """
-
-        count = 0
-
-        db2.commit()
-        db2.close()
-
-        log.info("Inserted %s tokenholders (batch_id=%s)", count, batch_id)
+        log.info("Inserted %s tokenholders", count)
     else:
             print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
             
