@@ -42,15 +42,15 @@ def main():
         if db2 is not None:
                     # Call stored procedure using the raw SQLAlchemy connection
                     with db2.engine.begin() as conn:
-                        print(
-                            "Inserting tokenholders into DB"
-                        )
-                        result = conn.exec_driver_sql(
-                            """
+                        print("Inserting tokenholders into DB")
+                        for h in holders:
+                            conn.exec_driver_sql(
+                                """
                                 INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
                                 VALUES (%s, %s, %s)
-                            """
-                        )
+                                """,
+                                (datetime.now(timezone.utc), h["account"], h["balance"])
+                            )
     else:
             print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
             
