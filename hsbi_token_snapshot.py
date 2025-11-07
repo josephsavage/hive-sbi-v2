@@ -52,7 +52,7 @@ def main():
                                 (datetime.now(timezone.utc), h["account"], h["balance"])
                             )
     else:
-            print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
+            print("hsbi_token_snapshot: Not time for a new cycle yet. Exiting.")
             
 if __name__ == "__main__":
     main()
