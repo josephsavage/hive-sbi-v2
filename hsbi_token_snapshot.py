@@ -24,6 +24,7 @@ def main():
     confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
+    share_cycle_min = conf_setup["share_cycle_min"]
 
     # Determine whether a new cycle should run (proper logic from example)
     elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
