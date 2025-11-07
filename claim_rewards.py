@@ -49,7 +49,7 @@ def main():
 
             if has_rewards:
                 print(f"Claiming rewards for {account_name}")
-                hv.claim_reward_balance(
+                Account.claim_reward_balance(
                     account_name,
                     reward_hive,
                     reward_hbd,
