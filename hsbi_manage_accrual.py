@@ -68,6 +68,10 @@ def run():
                     "last_checked": datetime.now(timezone.utc),
                 })
 
+                confdb = ConfigurationDB(db)
+                new_total = confdb.update_max_mana()
+                log.info("Configuration max_mana updated to %s", new_total)
+
             except Exception as e:
                 print(f"hsbi_manage_accrual: Could not fetch mana for {acc}: {e}")
 
