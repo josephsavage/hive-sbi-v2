@@ -44,11 +44,9 @@ def main():
 
             has_rewards = any(float(r.amount) > 0 for r in [reward_hive, reward_hbd, reward_vests])
 
-
             if has_rewards:
                 print(f"Claiming rewards for {account_name}")
                 acct.claim_reward_balance(
-                    account_name,
                     reward_hive,
                     reward_hbd,
                     reward_vests
