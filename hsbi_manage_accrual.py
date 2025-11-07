@@ -91,7 +91,9 @@ def run():
                     "reward_vests": float(reward_vests)
                 })
 
-                confdb = ConfigurationDB(db)
+                db = ConfigurationDB(db)
+                db2 = ConfigurationDB(db2)
+                db3 = ConfigurationDB(db3)
                 new_total = confdb.update_max_mana()
                 log.info("Configuration max_mana updated to %s", new_total)
 
