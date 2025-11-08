@@ -65,9 +65,9 @@ def main():
 
                 accountStorage.update({
                     "name": acct,
-                    "reward_hive": varchar(reward_hive),
-                    "reward_hbd": varchar(reward_hbd),
-                    "reward_vests": varchar(reward_vests),
+                    "reward_hive": reward_hive,
+                    "reward_hbd": reward_hbd,
+                    "reward_vests": reward_vests,
                 })
 
             else:
