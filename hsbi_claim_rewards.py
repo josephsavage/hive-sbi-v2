@@ -70,6 +70,14 @@ def main():
                     "reward_vests": reward_vests,
                 })
 
+                # Immediately run the curation dividends procedure
+                try:
+                    with db2.engine.begin() as conn:
+                        conn.exec_driver_sql("CALL usp_curation_dividends();")
+                        print("usp_curation_dividends executed successfully")
+                except Exception as e:
+                    print(f"Error executing usp_curation_dividends: {e}")
+
             else:
                 print(f"No rewards to claim for {account_name}")
 
