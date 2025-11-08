@@ -50,8 +50,12 @@ def main():
                         for h in holders:
                             conn.exec_driver_sql(
                                 """
-                                UPSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
+                                INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
                                 VALUES (%s, %s, %s)
+                                ON DUPLICATE KEY UPDATE
+                                    snapshot_timestamp = VALUES(snapshot_timestamp),
+                                    tokens = VALUES(tokens);
+
                                 """,
                                 (datetime.now(timezone.utc), h["account"], h["balance"])
                             )
