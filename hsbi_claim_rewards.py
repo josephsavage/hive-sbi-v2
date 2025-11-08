@@ -62,12 +62,19 @@ def main():
                     reward_vests
                 )
                 time.sleep(3)
-
+                
+                print("Updating accountStorage with:", {
+                    "name": account_name,
+                    "reward_hive": str(reward_hive),
+                    "reward_hbd": str(reward_hbd),
+                    "reward_vests": str(reward_vests),
+                })
+                
                 accountStorage.update({
-                    "name": acct,
-                    "reward_hive": reward_hive,
-                    "reward_hbd": reward_hbd,
-                    "reward_vests": reward_vests,
+                    "name": account_name,
+                    "reward_hive": str(reward_hive),
+                    "reward_hbd": str(reward_hbd),
+                    "reward_vests": str(reward_vests),
                 })
 
                 # Immediately run the curation dividends procedure
