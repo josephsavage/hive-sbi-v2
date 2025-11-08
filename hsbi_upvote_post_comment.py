@@ -133,7 +133,7 @@ def run():
         posts.append({"authorperm": authorperm, "post": p, "created": created_dt, "balance_rshares": balance_rshares})
 
     # sort by balance_rshares desc (highest first), then by created asc (older first) as tiebreaker
-    posts_sorted = sorted(posts, key=lambda x: (-x["balance_rshares"], x["created"]))
+    posts_sorted = sorted(posts, key=lambda x: (x["balance_rshares"], x["created"]))
 
     # iterate the sorted posts (preserves the rest of the logic below)
     for entry in posts_sorted:
