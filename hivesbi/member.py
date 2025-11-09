@@ -30,6 +30,7 @@ class Member(dict):
         self.shares_list = []
         self.share_timestamp = []
         super(Member, self).__init__(member)
+        
     def __iter__(self):
         # makes MemberDB iterable over account names
         return iter(self._members)
