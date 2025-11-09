@@ -113,16 +113,19 @@ def run():
     # print("reading all authorperm")
     rshares_sum = 0
     eligible_authors = []
-    for author in memberStorage.get("account"):
+    for account in memberStorage:
         try:
-            member_obj = Member(memberStorage.get(author))
+            member_obj = Member(memberStorage.get(account))
             balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
             if balance_rshares < int(minimum_vote_threshold * 3):
                 continue
-            eligible_authors.append(author)
+            eligible_authors.append(account)
         except Exception:
+            print(f"Error with {account}: {e}")
             continue
+    print("Total members in storage:", len(memberStorage))     
     print("Eligible authors:", len(eligible_authors))
+    print("Sample eligible:", eligible_authors[:10])
 
     # --- start: sequence posts by member balance_rshares instead of creation time ---
     unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
