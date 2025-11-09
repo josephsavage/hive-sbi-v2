@@ -113,7 +113,7 @@ def run():
     # print("reading all authorperm")
     rshares_sum = 0
     eligible_authors = []
-    for author in memberStorage.get("account")
+    for author in memberStorage.get("account"):
         try:
             member_obj = Member(memberStorage.get(author))
             balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
