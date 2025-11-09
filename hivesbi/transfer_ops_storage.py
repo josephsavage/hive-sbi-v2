@@ -371,9 +371,11 @@ class PostsTrx(object):
 
     def get_unvoted_post(self):
         table = self.db[self.__tablename__]
-        posts = {}
+        posts = {}    
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        
         for post in table.find(
-            voted=False, skip=False, comment_to_old=False, order_by="created"
+            voted=False, skip=False, comment_to_old=False, main_post=True, created={">=": cutoff}, order_by="created"
         ):
             posts[post["authorperm"]] = post
         return posts
