@@ -113,9 +113,10 @@ def run():
     # print("reading all authorperm")
     rshares_sum = 0
     eligible_authors = []
-    for author in memberStorage.keys():
+    for author in memberStorage:
         try:
             member_obj = Member(memberStorage.get(author))
+            account_name = member_obj.get("account")
             balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
             if balance_rshares < int(minimum_vote_threshold * 3):
                 continue
