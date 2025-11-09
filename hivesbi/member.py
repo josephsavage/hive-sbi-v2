@@ -30,11 +30,17 @@ class Member(dict):
         self.shares_list = []
         self.share_timestamp = []
         super(Member, self).__init__(member)
+        self._members = {}  # dict keyed by account name
+        
+    def get(self, account):
+        return self._members.get(account)
+        
+    def add(self, account, member_obj):
+        self._members[account] = member_obj        
         
     def __iter__(self):
         # makes MemberDB iterable over account names
-        return iter(self._account)
-
+        return iter(self._members)
 
     def reset_share_age_list(self):
         self.share_age_list = []
@@ -78,3 +84,12 @@ class Member(dict):
             self["avg_share_age"] = total_share_days / index
         else:
             self["avg_share_age"] = total_share_days
+            
+    def items(self):
+        return self._members.items()
+
+    def values(self):
+        return self._members.values()
+
+    def __len__(self):
+        return len(self._members)
