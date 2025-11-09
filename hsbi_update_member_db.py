@@ -534,6 +534,35 @@ def run():
                     member_json["last_received_vote"]
                 )
             member_data_json.append(member_json)
+            # Update 'ready' flag for all members
+            print("Updating 'ready' flag for voting eligibility...")
+            try:
+                # Define the rshares balance threshold
+                min_ready_balance = minimum_upvote_balance * 3
+        
+                # Set ready = True for all members who meet the criteria
+                sql_set_ready = """
+                    UPDATE members
+                    SET ready = 1
+                    WHERE skiplist = 0
+                    AND rshares_balance > :min_balance
+                """
+                db.query(sql_set_ready, min_balance=min_ready_balance)
+        
+                # Set ready = False for all members who DO NOT meet the criteria
+                sql_set_not_ready = """
+                    UPDATE members
+                    SET ready = 0
+                    WHERE skiplist != 0
+                    OR rshares_balance <= :min_balance
+                """
+                db.query(sql_set_not_ready, min_balance=min_ready_balance)
+        
+                print("'ready' flag update complete.")
+        
+            except Exception as e:
+                print(f"Error updating 'ready' flag: {e}")
+
         memberStorage.add_batch(member_data_list)
         member_data_list = []
         with open("/var/www/html/data.json", "w") as outfile:
