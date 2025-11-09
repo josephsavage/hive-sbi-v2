@@ -33,7 +33,7 @@ class Member(dict):
         
     def __iter__(self):
         # makes MemberDB iterable over account names
-        return iter(self._members)
+        return iter(self._account)
 
 
     def reset_share_age_list(self):
