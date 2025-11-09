@@ -122,7 +122,7 @@ def run():
             eligible_authors.append(author)
         except Exception:
             continue
-    print("Eligible voters:", len(eligible_voters))
+    print("Eligible authors:", len(eligible_authors))
 
     # --- start: sequence posts by member balance_rshares instead of creation time ---
     unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
