@@ -112,12 +112,25 @@ def run():
     _blockchain = Blockchain(blockchain_instance=hv)
     # print("reading all authorperm")
     rshares_sum = 0
+    eligible_authors = []
+    for author in memberStorage.keys():
+        try:
+            member_obj = Member(memberStorage.get(author))
+            balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
+            if balance_rshares < int(minimum_vote_threshold * 3):
+                continue
+            eligible_authors.append(author)
+        except Exception:
+            continue
 
     # --- start: sequence posts by member balance_rshares instead of creation time ---
     unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
     posts = []
     for authorperm, p in unvoted.items():
         author = p.get("author")
+        if author not in eligible_authors:
+            continue  # skip posts from ineligible authors
+
         # ensure we have a timezone-aware datetime for sorting
         try:
             created_dt = ensure_timezone_aware(p["created"])
