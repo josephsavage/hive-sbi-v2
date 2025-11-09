@@ -113,17 +113,27 @@ def run():
     # print("reading all authorperm")
     rshares_sum = 0
     eligible_authors = []
-    for account in memberStorage:
-        try:
-            member_obj = Member(memberStorage.get(account))
+
+    accounts = memberStorage.get_all_accounts()
+    print("Total members in storage:", len(accounts))
+
+
+    for account in accounts:
+        try:        
+            member_obj = memberStorage.get(account)
+            if not member_obj:
+                continue
+
             balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
             if balance_rshares < int(minimum_vote_threshold * 3):
                 continue
-            eligible_authors.append(account)
+                
+            eligible_authors.append(member_obj["account"])
+            
         except Exception:
             print(f"Error with {account}: {e}")
             continue
-    print("Total members in storage:", len(memberStorage))     
+               
     print("Eligible authors:", len(eligible_authors))
     print("Sample eligible:", eligible_authors[:10])
 
