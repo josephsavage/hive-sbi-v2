@@ -139,6 +139,7 @@ def run():
 
     # --- start: sequence posts by member balance_rshares instead of creation time ---
     unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
+    print("Unvoted posts:", len(unvoted))
     posts = []
     for authorperm, p in unvoted.items():
         author = p.get("author")
