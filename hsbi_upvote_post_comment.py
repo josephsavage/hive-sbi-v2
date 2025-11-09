@@ -129,6 +129,7 @@ def run():
                 continue
                 
             eligible_authors.append(member_obj["account"])
+            eligible_set = set(eligible_authors)
             
         except Exception:
             print(f"Error with {account}: {e}")
@@ -143,7 +144,7 @@ def run():
     posts = []
     for authorperm, p in unvoted.items():
         author = p.get("author")
-        if author not in eligible_authors:
+        if author not in eligible_set:
             continue  # skip posts from ineligible authors
 
         # ensure we have a timezone-aware datetime for sorting
