@@ -1,6 +1,6 @@
 # This Python file uses the following encoding: utf-8
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from sqlalchemy import and_
 
@@ -371,12 +371,9 @@ class PostsTrx(object):
 
     def get_unvoted_post(self):
         table = self.db[self.__tablename__]
-        posts = {}    
-        cutoff = datetime.now(timezone.utc) - timedelta(days=2)
-        
+        posts = {}
         for post in table.find(
-            #voted=False, skip=False, comment_to_old=False, created={">=": cutoff}, order_by="created"
-            voted=False, skip=False, comment_to_old=False
+            voted=False, skip=False, comment_to_old=False, order_by="created"
         ):
             posts[post["authorperm"]] = post
         return posts
