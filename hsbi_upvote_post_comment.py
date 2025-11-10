@@ -112,35 +112,9 @@ def run():
     _blockchain = Blockchain(blockchain_instance=hv)
     # print("reading all authorperm")
     rshares_sum = 0
-    eligible_authors = []
-
-    accounts = memberStorage.get_all_accounts()
-    print("Total members in storage:", len(accounts))
-
-
-    for account in accounts:
-        try:        
-            member_obj = memberStorage.get(account)
-            if not member_obj:
-                continue
-
-            balance_rshares = int(member_obj.get("balance_rshares", 0) or 0)
-            if balance_rshares < int(minimum_vote_threshold * 3):
-                continue
-                
-            eligible_authors.append(member_obj["account"])
-            eligible_set = set(eligible_authors)
-            
-        except Exception:
-            print(f"Error with {account}: {e}")
-            continue
-               
-    print("Eligible authors:", len(eligible_authors))
-    #print("Sample eligible:", eligible_authors[:10])
 
     # --- start: sequence posts by member balance_rshares instead of creation time ---
     unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
-    print("Unvoted posts:", len(unvoted))
     posts = []
     for authorperm, p in unvoted.items():
         author = p.get("author")
@@ -158,7 +132,7 @@ def run():
         # keep the original post dict with added sort keys
         posts.append({"authorperm": authorperm, "post": p, "created": created_dt, "balance_rshares": balance_rshares})
 
-    # sort by balance_rshares asc (highest first), then by created asc (older first) as tiebreaker
+    # sort by balance_rshares desc (highest first), then by created asc (older first) as tiebreaker
     posts_sorted = sorted(posts, key=lambda x: (x["balance_rshares"], x["created"]))
 
     # iterate the sorted posts (preserves the rest of the logic below)
