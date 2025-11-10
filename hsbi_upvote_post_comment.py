@@ -102,6 +102,7 @@ def run():
     eligible_voter_counters = {acc: 0.0 for acc in eligible_voters}
     
     # Print eligible voters and their mana levels
+    print("Mana threshold:" mana_threshold)
     print("\nEligible voters and their mana levels:")
     for acc in eligible_voters:
         mana = voter_accounts[acc].get_manabar()
