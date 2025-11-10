@@ -136,7 +136,7 @@ def run():
             continue
                
     print("Eligible authors:", len(eligible_authors))
-    print("Sample eligible:", eligible_authors[:10])
+    #print("Sample eligible:", eligible_authors[:10])
 
     # --- start: sequence posts by member balance_rshares instead of creation time ---
     unvoted = postTrx.get_unvoted_post()  # dict keyed by authorperm
