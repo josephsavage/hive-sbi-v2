@@ -102,7 +102,7 @@ def run():
     eligible_voter_counters = {acc: 0.0 for acc in eligible_voters}
     
     # Print eligible voters and their mana levels
-    print("Mana threshold:" mana_threshold)
+    print("Mana threshold:", mana_threshold)
     print("\nEligible voters and their mana levels:")
     for acc in eligible_voters:
         mana = voter_accounts[acc].get_manabar()
@@ -133,7 +133,7 @@ def run():
         # keep the original post dict with added sort keys
         posts.append({"authorperm": authorperm, "post": p, "created": created_dt, "balance_rshares": balance_rshares})
 
-    # sort by balance_rshares desc (highest first), then by created asc (older first) as tiebreaker
+    # sort by balance_rshares asc (highest first), then by created asc (older first) as tiebreaker
     posts_sorted = sorted(posts, key=lambda x: (x["balance_rshares"], x["created"]))
 
     # iterate the sorted posts (preserves the rest of the logic below)
