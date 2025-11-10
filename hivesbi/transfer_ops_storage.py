@@ -375,7 +375,7 @@ class PostsTrx(object):
         cutoff = datetime.now(timezone.utc) - timedelta(days=2)
         
         for post in table.find(
-            voted=False, skip=False, comment_to_old=False, main_post=True, created={">=": cutoff}, order_by="created"
+            voted=False, skip=False, comment_to_old=False, created={">=": cutoff}, order_by="created"
         ):
             posts[post["authorperm"]] = post
         return posts
