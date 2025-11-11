@@ -12,7 +12,7 @@ from hivesbi.utils import (
 from hivesbi.issue import (
     get_tokenholders, 
     connect_dbs_cached, 
-    get_config,,
+    get_config,
     get_default_token_issuer
 )
 
