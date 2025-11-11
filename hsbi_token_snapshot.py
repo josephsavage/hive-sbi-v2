@@ -26,41 +26,29 @@ def main():
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
 
-    # Determine whether a new cycle should run (proper logic from example)
-    elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
-    print(
-        f"hsbi_token_snapshot: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)"
-    )
-    if (
-        last_cycle is not None
-        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
-        > 60 * share_cycle_min
-    ):        
-        # Fetch tokenholders (defaults to HSBI symbol)
-        holders = get_tokenholders()
-        db2 = rt.get("db2")
-        if db2 is not None:
-                    # Call stored procedure using the raw SQLAlchemy connection
-                    with db2.engine.begin() as conn:
-                        print("Upserting tokenholders into DB")
-                        # Step 1: zero out all balances
-                        conn.exec_driver_sql("UPDATE tokenholders SET tokens = 0")
+    # Fetch tokenholders (defaults to HSBI symbol)
+    holders = get_tokenholders()
+    db2 = rt.get("db2")
+    if db2 is not None:
+                # Call stored procedure using the raw SQLAlchemy connection
+                with db2.engine.begin() as conn:
+                    print("Upserting tokenholders into DB")
+                    # Step 1: zero out all balances
+                    conn.exec_driver_sql("UPDATE tokenholders SET tokens = 0")
 
-                        # Step 2: upsert new balances
-                        for h in holders:
-                            conn.exec_driver_sql(
-                                """
-                                INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
-                                VALUES (%s, %s, %s)
-                                ON DUPLICATE KEY UPDATE
-                                    snapshot_timestamp = VALUES(snapshot_timestamp),
-                                    tokens = VALUES(tokens);
+                    # Step 2: upsert new balances
+                    for h in holders:
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
+                            VALUES (%s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                snapshot_timestamp = VALUES(snapshot_timestamp),
+                                tokens = VALUES(tokens);
 
-                                """,
-                                (datetime.now(timezone.utc), h["account"], h["balance"])
-                            )
-    else:
-            print("hsbi_token_snapshot: Not time for a new cycle yet. Exiting.")
+                            """,
+                            (datetime.now(timezone.utc), h["account"], h["balance"])
+                        )
             
 if __name__ == "__main__":
     main()
