@@ -7,13 +7,13 @@ from hivesbi.settings import get_runtime, make_hive
 from hivesbi.storage import AccountsDB, ConfigurationDB
 from hivesbi.utils import (
     ensure_timezone_aware,
-    estimate_hbd_for_rshares,
-    get_default_token_issuer
+    estimate_hbd_for_rshares
 )
 from hivesbi.issue import (
     get_tokenholders, 
     connect_dbs_cached, 
-    get_config,
+    get_config,,
+    get_default_token_issuer
 )
 
 def main():
