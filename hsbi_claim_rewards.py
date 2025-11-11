@@ -40,6 +40,7 @@ def main():
 
     # Build a Hive instance with collected posting keys
     hv = make_hive(cfg, keys=posting_keys, num_retries=5, call_num_retries=3, timeout=15)
+    claimed_count = 0  # counter for accounts with rewards claimed
 
     # Iterate accounts and claim rewards when present
     for account_name in accounts:
@@ -76,20 +77,38 @@ def main():
                     "reward_hbd": str(reward_hbd),
                     "reward_vests": str(reward_vests),
                 })
-
-                # Immediately run the curation dividends procedure
-                try:
-                    with db2.engine.begin() as conn:
-                        conn.exec_driver_sql("CALL usp_curation_dividends();")
-                        print("usp_curation_dividends executed successfully")
-                except Exception as e:
-                    print(f"Error executing usp_curation_dividends: {e}")
+                claimed_count += 1  # increment counter
+                
 
             else:
                 print(f"No rewards to claim for {account_name}")
+                
+                print("Updating accountStorage with:", {
+                    "name": account_name,
+                    "reward_hive": str(reward_hive),
+                    "reward_hbd": str(reward_hbd),
+                    "reward_vests": str(reward_vests),
+                })
+                
+                accountStorage.update({
+                    "name": account_name,
+                    "reward_hive": str(reward_hive),
+                    "reward_hbd": str(reward_hbd),
+                    "reward_vests": str(reward_vests),
+                })
+
 
         except Exception as e:
             print(f"Error processing {account_name}: {e}")
+            
+    # Only run dividends procedure if at least one account claimed rewards
+    if claimed_count > 0:
+        try:
+            with db2.engine.begin() as conn:
+                conn.exec_driver_sql("CALL usp_curation_dividends();")
+                print("usp_curation_dividends executed successfully")
+        except Exception as e:
+            print(f"Error executing usp_curation_dividends: {e}")
 
 
 if __name__ == "__main__":
