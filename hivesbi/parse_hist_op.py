@@ -540,6 +540,9 @@ class ParseAccountHist(list):
 
     def _handle_point_transfer(self, op):
         """Process a point transfer and return True if custom handling occurred."""
+        rt = get_runtime()
+        cfg = rt["cfg"]
+        db2 = rt.get("db2")
 
         amount_obj = Amount(op["amount"], blockchain_instance=self.hive)
         amount = float(amount_obj)
@@ -711,62 +714,64 @@ class ParseAccountHist(list):
                     "share_type": "Transfer",
                 }
             )
+            if db2 is not None:
+                with db2.engine.begin() as conn:
 
-            # Issue default tokens to the sender if nominee is sbi-tokens
-            if nominee == "sbi-tokens":
-                token_recipient = sender
-                print(
-                    f"[PointTransfer] Issuing default tokens: trx_id={trx_id} recipient={token_recipient} "
-                    f"units={transferable_units}"
-                )
-                try:
-                    issue_default_tokens(token_recipient, transferable_units)
-                except Exception:
-                    log.exception(
-                        "Failed to issue default tokens for %s (%s units)",
-                        token_recipient,
-                        transferable_units,
+                    # Issue default tokens to the sender if nominee is sbi-tokens
+                    if nominee == "sbi-tokens":
+                        token_recipient = sender
+                        print(
+                            f"[PointTransfer] Issuing default tokens: trx_id={trx_id} recipient={token_recipient} "
+                            f"units={transferable_units}"
+                        )
+                        try:
+                            issue_default_tokens(token_recipient, transferable_units)
+                        except Exception:
+                            log.exception(
+                                "Failed to issue default tokens for %s (%s units)",
+                                token_recipient,
+                                transferable_units,
+                            )
+                            # Insert failure record into log table
+                            conn.exec_driver_sql(
+                                """
+                                INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
+                                VALUES (%s, %s, %s, %s, %s)
+                                """,
+                                (trx_id, token_recipient, transferable_units, "FAILURE", str(e)),
+                            )
+                            conn.commit()
+
+                        else:
+                            log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
+                            # Insert success record into log table
+                            conn.exec_driver_sql(
+                                """
+                                INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                                VALUES (%s, %s, %s, %s, NULL, %s)
+                                """,
+                                (trx_id, token_recipient, transferable_units, "SUCCESS", "Unit Conversion"),
+                            )
+                            conn.commit()
+
+
+                    # Refund any excess units if any
+                    if refunded_units > 0:
+                        print(
+                            f"[PointTransfer] Refunding excess units: trx_id={trx_id} refund_units={refunded_units}"
+                        )
+                        self._refund_excess_transfer(
+                            recipient=sender,
+                            refund_units=refunded_units,
+                            symbol=amount_obj.symbol,
+                            nominee=nominee,
+                            op=op,
+                        )
+
+                    print(
+                        f"[PointTransfer] Completed HBD transfer: trx_id={trx_id} nominee={nominee} units={transferable_units}"
                     )
-                    # Insert failure record into log table
-                    cursor.execute(
-                        """
-                        INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
-                        VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (trx_id, token_recipient, transferable_units, "FAILURE", str(e)),
-                    )
-                    conn.commit()
-
-                else:
-                    log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
-                    # Insert success record into log table
-                    cursor.execute(
-                        """
-                        INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                        VALUES (%s, %s, %s, %s, NULL, %s)
-                        """,
-                        (trx_id, token_recipient, transferable_units, "SUCCESS", "Unit Conversion"),
-                    )
-                    conn.commit()
-
-
-            # Refund any excess units if any
-            if refunded_units > 0:
-                print(
-                    f"[PointTransfer] Refunding excess units: trx_id={trx_id} refund_units={refunded_units}"
-                )
-                self._refund_excess_transfer(
-                    recipient=sender,
-                    refund_units=refunded_units,
-                    symbol=amount_obj.symbol,
-                    nominee=nominee,
-                    op=op,
-                )
-
-            print(
-                f"[PointTransfer] Completed HBD transfer: trx_id={trx_id} nominee={nominee} units={transferable_units}"
-            )
-            return True
+                    return True
 
         # HIVE rshares transfer a.k.a Lovegun point transfer
         old_sender_rshares = sender_member["balance_rshares"]
