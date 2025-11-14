@@ -8,8 +8,8 @@ from nectarengine.wallet import Wallet as EngineWallet
 from hivesbi.settings import Config, get_config, make_hive
 from hivesbi.storage import KeysDB
 
-DEFAULT_ISSUER_ACCOUNT = "sbi-tokens"
-DEFAULT_TOKEN_SYMBOL = "HSBI"
+DEFAULT_ISSUER_ACCOUNT = "hivesbi"
+DEFAULT_TOKEN_SYMBOL = "HSBIDAO"
 DEFAULT_KEY_TYPE = "active"
 
 
@@ -101,7 +101,7 @@ class TokenIssuer:
 
 
 def get_default_token_issuer() -> "TokenIssuer":
-    """Return a cached `TokenIssuer` configured for default HSBI issuance."""
+    """Return a cached `TokenIssuer` configured for default HSBIDAO issuance."""
 
     return TokenIssuer()
 
