@@ -55,7 +55,7 @@ def main():
                             INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
                             VALUES (%s, %s, %s, %s, NULL, %s)
                             """,
-                            (tx, member_name, pik, "SUCCESS", "PIK"),
+                            (tx, member_name, pik, "SUCCESS", "Reissue"),
                         )
 
                     except Exception as e:
@@ -63,10 +63,10 @@ def main():
                         # Log failure
                         conn.exec_driver_sql(
                             """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
-                            VALUES (%s, %s, %s, %s, %s)
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                             """,
-                            ("N/A", member_name, pik, "FAILURE", str(e)),
+                            ("N/A", member_name, pik, "FAILURE", str(e), "FAILURE"),
                         )
 
 
