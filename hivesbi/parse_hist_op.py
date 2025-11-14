@@ -727,8 +727,28 @@ class ParseAccountHist(list):
                         token_recipient,
                         transferable_units,
                     )
+                    # Insert failure record into log table
+                    cursor.execute(
+                        """
+                        INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (trx_id, token_recipient, transferable_units, "FAILURE", str(e)),
+                    )
+                    conn.commit()
+
                 else:
                     log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
+                    # Insert success record into log table
+                    cursor.execute(
+                        """
+                        INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
+                        VALUES (%s, %s, %s, %s, NULL)
+                        """,
+                        (trx_id, token_recipient, transferable_units, "SUCCESS"),
+                    )
+                    conn.commit()
+
 
             # Refund any excess units if any
             if refunded_units > 0:
