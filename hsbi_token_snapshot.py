@@ -42,6 +42,8 @@ def main():
                     print(f"Issuing {pik} HSBI to {member_name}")
                     try:
                         tx = issuer.issue(member_name, float(pik))
+                        trx_id = tx.get("trx_id")  # extract the string
+
                         print("Issued:", tx)
 
                         # Reset pik to 0 after successful issuance
@@ -55,7 +57,7 @@ def main():
                             INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
                             VALUES (%s, %s, %s, %s, NULL, %s)
                             """,
-                            (tx, member_name, pik, "SUCCESS", "Reissue"),
+                            (trx_id, member_name, pik, "SUCCESS", "Reissue"),
                         )
 
                     except Exception as e:
