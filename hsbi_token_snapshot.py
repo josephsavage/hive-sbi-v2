@@ -57,7 +57,7 @@ def main():
                             INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
                             VALUES (%s, %s, %s, %s, NULL, %s)
                             """,
-                            (trx_id, member_name, pik, "SUCCESS", "Reissue"),
+                            (trx_id, member_name, pik, "SUCCESS", "pik"),
                         )
 
                     except Exception as e:
