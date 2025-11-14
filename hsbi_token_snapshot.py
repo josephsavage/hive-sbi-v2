@@ -27,7 +27,7 @@ def main():
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
 
-    # Fetch tokenholders (defaults to HSBI symbol)
+    # Fetch tokenholders (defaults to HSBIDAO symbol)
     holders = get_tokenholders()
     db2 = rt.get("db2")
     if db2 is not None:
@@ -49,8 +49,26 @@ def main():
                             "UPDATE tokenholders SET pik = 0 WHERE member_name = %s",
                             (member_name,)
                         )
+                        # Log success
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, NULL, %s)
+                            """,
+                            (tx, member_name, pik, "SUCCESS", "PIK"),
+                        )
+
                     except Exception as e:
                         print(f"Failed to issue to {member_name}: {e}")
+                        # Log failure
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            ("N/A", member_name, pik, "FAILURE", str(e)),
+                        )
+
 
                 print("Upserting tokenholders into DB")
                 # Step 1: zero out all balances
