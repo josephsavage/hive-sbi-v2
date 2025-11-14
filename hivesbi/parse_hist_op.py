@@ -740,7 +740,6 @@ class ParseAccountHist(list):
                                 """,
                                 (trx_id, token_recipient, transferable_units, "FAILURE", str(e)),
                             )
-                            conn.commit()
 
                         else:
                             log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
@@ -752,7 +751,6 @@ class ParseAccountHist(list):
                                 """,
                                 (trx_id, token_recipient, transferable_units, "SUCCESS", "Unit Conversion"),
                             )
-                            conn.commit()
 
 
                     # Refund any excess units if any
