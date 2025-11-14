@@ -742,10 +742,10 @@ class ParseAccountHist(list):
                     # Insert success record into log table
                     cursor.execute(
                         """
-                        INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
-                        VALUES (%s, %s, %s, %s, NULL)
+                        INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                        VALUES (%s, %s, %s, %s, NULL, %s)
                         """,
-                        (trx_id, token_recipient, transferable_units, "SUCCESS"),
+                        (trx_id, token_recipient, transferable_units, "SUCCESS", "Unit Conversion"),
                     )
                     conn.commit()
 
