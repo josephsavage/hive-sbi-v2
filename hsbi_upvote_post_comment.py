@@ -31,7 +31,7 @@ def run():
     comment_vote_divider = conf_setup["comment_vote_divider"]
     comment_vote_timeout_h = conf_setup["comment_vote_timeout_h"]
     upvote_delay_correction = 18
-    mana_threshold = conf_setup.get("mana_pct_target", 0)   # <-- add this
+    mana_threshold = conf_setup.get("mana_pct_target", 0)  # <-- add this
     member_accounts = memberStorage.get_all_accounts()
 
     nobroadcast = False
@@ -71,7 +71,9 @@ def run():
     eligible_voters = []
     # minimal capacity (rshares) required for a voter to be considered.
     # Default: 1% of minimum_vote_threshold, but can be overridden in config:
-    min_voter_capacity = conf_setup.get("min_voter_capacity_rshares", minimum_vote_threshold * 0.01)
+    min_voter_capacity = conf_setup.get(
+        "min_voter_capacity_rshares", minimum_vote_threshold * 0.01
+    )
 
     for acc in voter_accounts:
         try:
@@ -82,7 +84,9 @@ def run():
                 pass
             mana = voter_accounts[acc].get_manabar()
             # compute effective rshares capacity for a single full-weight vote:
-            capacity = (mana["max_mana"] / 50.0) * (mana.get("current_mana_pct", 0) / 100.0)
+            capacity = (mana["max_mana"] / 50.0) * (
+                mana.get("current_mana_pct", 0) / 100.0
+            )
             # enforce configured mana percentage threshold if set
             if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
                 continue
@@ -95,14 +99,16 @@ def run():
             continue
 
     if not eligible_voters:
-        print("hsbi_upvote_post_comment: no eligible voters available (mana threshold/capacity). Exiting.")
+        print(
+            "hsbi_upvote_post_comment: no eligible voters available (mana threshold/capacity). Exiting."
+        )
         return
     # initialize per-eligible-voter counters (fraction of full capacity used)
     # counters track cumulative vote share as a fraction (vote_percentage/100)
     eligible_voter_counters = {acc: 0.0 for acc in eligible_voters}
-    
+
     # Print eligible voters and their mana levels
-    print("Mana threshold:", mana_threshold,"%")
+    print("Mana threshold:", mana_threshold, "%")
     print("\nEligible voters and their mana levels:")
     for acc in eligible_voters:
         mana = voter_accounts[acc].get_manabar()
@@ -131,7 +137,14 @@ def run():
         except Exception:
             balance_rshares = 0
         # keep the original post dict with added sort keys
-        posts.append({"authorperm": authorperm, "post": p, "created": created_dt, "balance_rshares": balance_rshares})
+        posts.append(
+            {
+                "authorperm": authorperm,
+                "post": p,
+                "created": created_dt,
+                "balance_rshares": balance_rshares,
+            }
+        )
 
     # sort by balance_rshares desc (highest first), then by created asc (older first) as tiebreaker
     posts_sorted = sorted(posts, key=lambda x: (-x["balance_rshares"], x["created"]))
@@ -226,9 +239,7 @@ def run():
             if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
                 continue
             vote_percentage = (
-                rshares
-                / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
-                * 100
+                rshares / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100) * 100
             )
             if (
                 highest_pct < mana["current_mana_pct"]
@@ -321,7 +332,9 @@ def run():
                         memberStorage.update_last_vote(author, vote_time)
                         try:
                             if voter is not None and voter in eligible_voter_counters:
-                                eligible_voter_counters[voter] += vote_percentage / 100.0
+                                eligible_voter_counters[voter] += (
+                                    vote_percentage / 100.0
+                                )
                                 if eligible_voter_counters[voter] >= 1:
                                     try:
                                         eligible_voters.remove(voter)
@@ -355,10 +368,7 @@ def run():
                 * 100
             )
             rshares_sum += (
-                current_mana["max_mana"]
-                / 50
-                * current_mana["current_mana_pct"]
-                / 100
+                current_mana["max_mana"] / 50 * current_mana["current_mana_pct"] / 100
             )
             if nobroadcast:
                 print(f"hsbi_upvote_post_comment: {c['authorperm']}")
