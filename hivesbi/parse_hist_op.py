@@ -726,7 +726,7 @@ class ParseAccountHist(list):
                         )
                         try:
                             issue_default_tokens(token_recipient, transferable_units)
-                        except Exception:
+                        except Exception as e:
                             log.exception(
                                 "Failed to issue default tokens for %s (%s units)",
                                 token_recipient,
