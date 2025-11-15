@@ -154,16 +154,7 @@ def run():
             continue
         if upvote_counter[author] > 0:
             continue
-        if (
-            post_data["main_post"] == 0
-            and (datetime.now(timezone.utc) - created).total_seconds()
-            > comment_vote_timeout_h * 60 * 60
-        ):
-            postTrx.update_comment_to_old(author, created, True)
-
         member = Member(memberStorage.get(author))
-        if post_data["main_post"] == 0:
-            continue
         if member["blacklisted"]:
             continue
         elif member["blacklisted"] is None and (
@@ -171,16 +162,8 @@ def run():
         ):
             continue
 
-        if post_data["main_post"] == 1:
-            rshares = member["balance_rshares"] / comment_vote_divider
-        else:
-            rshares = member["balance_rshares"] / (comment_vote_divider**2)
-        if post_data["main_post"] == 1 and rshares < minimum_vote_threshold:
-            continue
-        elif (
-            post_data["main_post"] == 0
-            and rshares < minimum_vote_threshold * 2
-        ):
+        rshares = member["balance_rshares"] / comment_vote_divider
+        if rshares < minimum_vote_threshold:
             continue
         cnt = 0
         c = None
@@ -194,7 +177,6 @@ def run():
         if c is None:
             print(f"hsbi_upvote_post_comment: Error getting {authorperm}")
             continue
-        _main_post = c.is_main_post()
         already_voted = False
         if c.time_elapsed() >= timedelta(hours=24):
             continue
@@ -234,38 +216,134 @@ def run():
         ):
             continue
 
-        if post_data["main_post"] == 0:
-            highest_pct = 0
-            voter = None
-            current_mana = {}
-            if rshares > minimum_vote_threshold * 20:
-                rshares = int(minimum_vote_threshold * 20)
-            for acc in eligible_voters:
-                mana = voter_accounts[acc].get_manabar()
-                # enforce configured mana % threshold
-                if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+        highest_pct = 0
+        voter = None
+        current_mana = {}
+        if rshares > minimum_vote_threshold * 20:
+            rshares = int(minimum_vote_threshold * 20)
+        for acc in eligible_voters:
+            mana = voter_accounts[acc].get_manabar()
+            if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
+                continue
+            vote_percentage = (
+                rshares
+                / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
+                * 100
+            )
+            if (
+                highest_pct < mana["current_mana_pct"]
+                and rshares < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
+                and vote_percentage > 0.01
+            ):
+                highest_pct = mana["current_mana_pct"]
+                current_mana = mana
+                voter = acc
+        if voter is None:
+            print(f"hsbi_upvote_post_comment: Could not find voter for {author}")
+            pool_rshars = []
+            pool_completed = False
+            while rshares > 0 and not pool_completed:
+                highest_mana = 0
+                voter = None
+                for acc in eligible_voters:
+                    voter_accounts[acc].refresh()
+                    mana = voter_accounts[acc].get_manabar()
+                    vote_percentage = (
+                        rshares
+                        / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
+                        * 100
+                    )
+                    if (
+                        highest_mana
+                        < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
+                        and acc not in pool_rshars
+                        and vote_percentage > 0.01
+                    ):
+                        highest_mana = (
+                            mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
+                        )
+                        current_mana = mana
+                        voter = acc
+                if voter is None:
+                    pool_completed = True
                     continue
+                pool_rshars.append(voter)
                 vote_percentage = (
                     rshares
-                    / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
+                    / (
+                        current_mana["max_mana"]
+                        / 50
+                        * current_mana["current_mana_pct"]
+                        / 100
+                    )
                     * 100
                 )
-                if (
-                    highest_pct < mana["current_mana_pct"]
-                    and rshares < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
-                    and vote_percentage > 0.01
-                ):
-                    highest_pct = mana["current_mana_pct"]
-                    current_mana = mana
-                    voter = acc
-            if voter is None:
-                # try using the pool account only if it meets threshold
-                fb = "steembasicincome"
-                if fb in voter_accounts:
-                    fb_mana = voter_accounts[fb].get_manabar()
-                    if not mana_threshold or fb_mana.get("current_mana_pct", 0) >= mana_threshold:
-                        voter = fb
-                        current_mana = fb_mana
+                if vote_percentage > 100:
+                    vote_percentage = 100
+                if nobroadcast:
+                    print(f"hsbi_upvote_post_comment: {c['authorperm']}")
+                    print(
+                        f"hsbi_upvote_post_comment: Vote {author} from {voter} with {vote_percentage:.2f} %"
+                    )
+                else:
+                    print(
+                        f"hsbi_upvote_post_comment: Upvote {author} from {voter} with {vote_percentage:.2f} %"
+                    )
+                    vote_sucessfull = False
+                    cnt = 0
+                    vote_time = None
+                    while not vote_sucessfull and cnt < 5:
+                        try:
+                            if not Account(voter).has_voted(c):
+                                c.upvote(vote_percentage, voter=voter)
+                                time.sleep(6)
+                                c.refresh()
+                                for v in c.get_votes():
+                                    if voter == v["voter"]:
+                                        vote_sucessfull = True
+                                        if "time" in v:
+                                            vote_time = v["time"]
+                                        else:
+                                            vote_time = v["last_update"]
+                        except Exception as e:
+                            print(e)
+                            time.sleep(6)
+                            if cnt > 0:
+                                c.blockchain.rpc.next()
+                            print(
+                                f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}"
+                            )
+                        cnt += 1
+                    if vote_sucessfull:
+                        print(
+                            f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
+                        )
+                        memberStorage.update_last_vote(author, vote_time)
+                        try:
+                            if voter is not None and voter in eligible_voter_counters:
+                                eligible_voter_counters[voter] += vote_percentage / 100.0
+                                if eligible_voter_counters[voter] >= 1:
+                                    try:
+                                        eligible_voters.remove(voter)
+                                    except ValueError:
+                                        pass
+                                    del eligible_voter_counters[voter]
+                        except Exception:
+                            pass
+                rshares_sum += (
+                    current_mana["max_mana"]
+                    / 50
+                    * current_mana["current_mana_pct"]
+                    / 100
+                )
+                rshares -= (
+                    current_mana["max_mana"]
+                    / 50
+                    * current_mana["current_mana_pct"]
+                    / 100
+                )
+
+        else:
             vote_percentage = (
                 rshares
                 / (
@@ -276,19 +354,24 @@ def run():
                 )
                 * 100
             )
-
-            if nobroadcast and voter is not None:
+            rshares_sum += (
+                current_mana["max_mana"]
+                / 50
+                * current_mana["current_mana_pct"]
+                / 100
+            )
+            if nobroadcast:
                 print(f"hsbi_upvote_post_comment: {c['authorperm']}")
                 print(
-                    f"hsbi_upvote_post_comment: Comment Vote {author} from {voter} with {vote_percentage:.2f} %"
+                    f"hsbi_upvote_post_comment: Vote {author} from {voter} with {vote_percentage:.2f} %"
                 )
-            elif voter is not None:
+            else:
                 print(
-                    f"hsbi_upvote_post_comment: Comment Upvote {author} from {voter} with {vote_percentage:.2f} %"
+                    f"hsbi_upvote_post_comment: Upvote {author} from {voter} with {vote_percentage:.2f} %"
                 )
                 vote_sucessfull = False
-                voted_after = 300
                 cnt = 0
+                voted_after = 300
                 vote_time = None
                 while not vote_sucessfull and cnt < 5:
                     try:
@@ -300,14 +383,18 @@ def run():
                                 if voter == v["voter"]:
                                     vote_sucessfull = True
                                     if "time" in v:
-                                        vote_time = v["time"]
+                                        vote_time = ensure_timezone_aware(v["time"])
                                         voted_after = (
-                                            v["time"] - c["created"]
+                                            ensure_timezone_aware(v["time"])
+                                            - c["created"]
                                         ).total_seconds()
                                     else:
-                                        vote_time = v["last_update"]
+                                        vote_time = ensure_timezone_aware(
+                                            v["last_update"]
+                                        )
                                         voted_after = (
-                                            v["last_update"] - c["created"]
+                                            ensure_timezone_aware(v["last_update"])
+                                            - c["created"]
                                         ).total_seconds()
                     except Exception as e:
                         print(e)
@@ -324,7 +411,6 @@ def run():
                     )
                     memberStorage.update_last_vote(author, vote_time)
                     upvote_counter[author] += 1
-                    # update voter usage counter and remove voter if exceeded 100% total
                     try:
                         if voter is not None and voter in eligible_voter_counters:
                             eligible_voter_counters[voter] += vote_percentage / 100.0
@@ -336,222 +422,9 @@ def run():
                                 del eligible_voter_counters[voter]
                     except Exception:
                         pass
-                postTrx.update_voted(author, created, vote_sucessfull, voted_after)
-        else:
-            highest_pct = 0
-            voter = None
-            current_mana = {}
-            pool_rshars = []
-            for acc in eligible_voters:
-                voter_accounts[acc].refresh()
-                mana = voter_accounts[acc].get_manabar()
-                # skip low-mana accounts (and ones already used in the pool)
-                if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
-                    continue
-                vote_percentage = (
-                    rshares
-                    / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
-                    * 100
-                )
-                if (
-                    highest_pct < mana["current_mana_pct"]
-                    and rshares < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
-                    and vote_percentage > 0.01
-                ):
-                    highest_pct = mana["current_mana_pct"]
-                    current_mana = mana
-                    voter = acc
+            postTrx.update_voted(author, created, vote_sucessfull, voted_after)
 
-            if voter is None:
-                print(f"hsbi_upvote_post_comment: Could not find voter for {author}")
-                current_mana = {}
-                pool_rshars = []
-                pool_completed = False
-                while rshares > 0 and not pool_completed:
-                    highest_mana = 0
-                    voter = None
-                    for acc in eligible_voters:
-                        voter_accounts[acc].refresh()
-                        mana = voter_accounts[acc].get_manabar()
-                        vote_percentage = (
-                            rshares
-                            / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
-                            * 100
-                        )
-                        if (
-                            highest_mana
-                            < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
-                            and acc not in pool_rshars
-                            and vote_percentage > 0.01
-                        ):
-                            highest_mana = (
-                                mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
-                            )
-                            current_mana = mana
-                            voter = acc
-                    if voter is None:
-                        pool_completed = True
-                        continue
-                    pool_rshars.append(voter)
-                    vote_percentage = (
-                        rshares
-                        / (
-                            current_mana["max_mana"]
-                            / 50
-                            * current_mana["current_mana_pct"]
-                            / 100
-                        )
-                        * 100
-                    )
-                    if vote_percentage > 100:
-                        vote_percentage = 100
-                    if nobroadcast:
-                        print(f"hsbi_upvote_post_comment: {c['authorperm']}")
-                        print(
-                            f"hsbi_upvote_post_comment: Vote {author} from {voter} with {vote_percentage:.2f} %"
-                        )
-                    else:
-                        print(
-                            f"hsbi_upvote_post_comment: Upvote {author} from {voter} with {vote_percentage:.2f} %"
-                        )
-                        vote_sucessfull = False
-                        cnt = 0
-                        vote_time = None
-                        while not vote_sucessfull and cnt < 5:
-                            try:
-                                if not Account(voter).has_voted(c):
-                                    c.upvote(vote_percentage, voter=voter)
-                                    time.sleep(6)
-                                    c.refresh()
-                                    for v in c.get_votes():
-                                        if voter == v["voter"]:
-                                            vote_sucessfull = True
-                                            if "time" in v:
-                                                vote_time = v["time"]
-                                            else:
-                                                vote_time = v["last_update"]
-                            except Exception as e:
-                                print(e)
-                                time.sleep(6)
-                                if cnt > 0:
-                                    c.blockchain.rpc.next()
-                                print(
-                                    f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}"
-                                )
-                            cnt += 1
-                        if vote_sucessfull:
-                            print(
-                                f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
-                            )
-                            memberStorage.update_last_vote(author, vote_time)
-                            # update voter usage counter and remove voter if exceeded 100% total
-                            try:
-                                if voter is not None and voter in eligible_voter_counters:
-                                    eligible_voter_counters[voter] += vote_percentage / 100.0
-                                    if eligible_voter_counters[voter] >= 1:
-                                        try:
-                                            eligible_voters.remove(voter)
-                                        except ValueError:
-                                            pass
-                                        del eligible_voter_counters[voter]
-                            except Exception:
-                                pass
-                    rshares_sum += (
-                        current_mana["max_mana"]
-                        / 50
-                        * current_mana["current_mana_pct"]
-                        / 100
-                    )
-                    rshares -= (
-                        current_mana["max_mana"]
-                        / 50
-                        * current_mana["current_mana_pct"]
-                        / 100
-                    )
-
-            else:
-                vote_percentage = (
-                    rshares
-                    / (
-                        current_mana["max_mana"]
-                        / 50
-                        * current_mana["current_mana_pct"]
-                        / 100
-                    )
-                    * 100
-                )
-                rshares_sum += (
-                    current_mana["max_mana"]
-                    / 50
-                    * current_mana["current_mana_pct"]
-                    / 100
-                )
-                if nobroadcast:
-                    print(f"hsbi_upvote_post_comment: {c['authorperm']}")
-                    print(
-                        f"hsbi_upvote_post_comment: Vote {author} from {voter} with {vote_percentage:.2f} %"
-                    )
-                else:
-                    print(
-                        f"hsbi_upvote_post_comment: Upvote {author} from {voter} with {vote_percentage:.2f} %"
-                    )
-                    vote_sucessfull = False
-                    cnt = 0
-                    voted_after = 300
-                    vote_time = None
-                    while not vote_sucessfull and cnt < 5:
-                        try:
-                            if not Account(voter).has_voted(c):
-                                c.upvote(vote_percentage, voter=voter)
-                                time.sleep(6)
-                                c.refresh()
-                                for v in c.get_votes():
-                                    if voter == v["voter"]:
-                                        vote_sucessfull = True
-                                        if "time" in v:
-                                            vote_time = ensure_timezone_aware(v["time"])
-                                            voted_after = (
-                                                ensure_timezone_aware(v["time"])
-                                                - c["created"]
-                                            ).total_seconds()
-                                        else:
-                                            vote_time = ensure_timezone_aware(
-                                                v["last_update"]
-                                            )
-                                            voted_after = (
-                                                ensure_timezone_aware(v["last_update"])
-                                                - c["created"]
-                                            ).total_seconds()
-                        except Exception as e:
-                            print(e)
-                            time.sleep(6)
-                            if cnt > 0:
-                                c.blockchain.rpc.next()
-                            print(
-                                f"hsbi_upvote_post_comment: retry to vote {c['authorperm']}"
-                            )
-                        cnt += 1
-                    if vote_sucessfull:
-                        print(
-                            f"hsbi_upvote_post_comment: Vote for {author} at {str(vote_time)} was sucessfully"
-                        )
-                        memberStorage.update_last_vote(author, vote_time)
-                        upvote_counter[author] += 1
-                        # update voter usage counter and remove voter if exceeded 100% total
-                        try:
-                            if voter is not None and voter in eligible_voter_counters:
-                                eligible_voter_counters[voter] += vote_percentage / 100.0
-                                if eligible_voter_counters[voter] >= 1:
-                                    try:
-                                        eligible_voters.remove(voter)
-                                    except ValueError:
-                                        pass
-                                    del eligible_voter_counters[voter]
-                        except Exception:
-                            pass
-                    postTrx.update_voted(author, created, vote_sucessfull, voted_after)
-
-            print(f"hsbi_upvote_post_comment: rshares_sum {rshares_sum}")
+        print(f"hsbi_upvote_post_comment: rshares_sum {rshares_sum}")
     print(
         f"hsbi_upvote_post_comment: upvote script run {time.time() - start_prep_time:.2f} s"
     )
