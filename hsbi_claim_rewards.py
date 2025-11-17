@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from nectar.account import Account
 from nectar.utils import formatTimeString
 from hivesbi.settings import get_runtime, make_hive
-from hivesbi.storage import AccountsDB, ConfigurationDB
+from hivesbi.storage import AccountsDB, ConfigurationDB, KeysDB
 
 
 def main():
@@ -24,10 +24,9 @@ def main():
     # Fetch account list from the accounts table
     accountStorage: AccountsDB = stor["accounts"]
     account_names = accountStorage.get()
-    accounts_db = stor.get("accounts") if stor else AccountsDB(db2)
     keys_db = stor.get("keys") if stor else KeysDB(db2)
 
-    accounts = rt.get("accounts", [])
+    accounts = account_names or rt.get("accounts", [])
 
     # Gather posting keys for each account (used to sign claim ops)
     posting_keys = []
