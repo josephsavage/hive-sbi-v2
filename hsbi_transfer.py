@@ -24,6 +24,8 @@ from hivesbi.utils import ensure_timezone_aware
 def run():
     start_prep_time = time.time()
     rt = get_runtime()
+    
+    stor = rt["storages"]
     cfg = rt["cfg"]
     db = rt["db"]
     db2 = rt["db2"]
