@@ -31,14 +31,13 @@ def run():
     mana_pct_target = conf_setup["mana_pct_target"]
     
     # Determine whether a new cycle should run (proper logic from example)
-    elapsed_min = (datetime.now(timezone.utc) - last_cycle).total_seconds() / 60
+    elapsed_min = (datetime.now(timezone.utc) - ).total_seconds() / 60
     print(
-        f"hsbi_manage_accrual: last_cycle is {last_cycle} ({elapsed_min:.2f} min ago)"
+        f"hsbi_manage_accrual:  is {} ({elapsed_min:.2f} min ago)"
     )
     if (
-        last_cycle is not None
-        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
-        > 60 * share_cycle_min
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
     ):        
         # Build Hive instance and collect mana for each account
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
