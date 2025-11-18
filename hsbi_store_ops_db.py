@@ -133,6 +133,7 @@ def run():
     stor = rt["storages"]
     cfg = rt["cfg"]
     db = rt["db"]
+    db2 = rt["db2"]
     accounts = rt["accounts"]
     confage = ConfigurationDB(db2)
     confage: ConfigurationDB = stor["conf"]
