@@ -29,6 +29,7 @@ def run():
     db2 = rt["db2"]
     
     confStorage = ConfigurationDB(db2)
+    confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
     if db2 is not None:
             with db2.engine.begin() as conn:
