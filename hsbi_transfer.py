@@ -68,7 +68,6 @@ def run():
 
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
-     = ensure_timezone_aware(conf_setup[""])
     share_cycle_min = conf_setup["share_cycle_min"]
     # Calculate how many rshares correspond to 1 HBD using the rule:
     #   rshares_per_hbd = minimum_vote_threshold / 0.021
