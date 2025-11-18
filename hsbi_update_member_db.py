@@ -122,6 +122,7 @@ def run():
     mgnt_shares = cfg["mgnt_shares"]
     hive_blockchain = cfg["hive_blockchain"]
     
+    rt = get_runtime()
     stor = rt["storages"]
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)
@@ -138,7 +139,6 @@ def run():
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
 
-    confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
