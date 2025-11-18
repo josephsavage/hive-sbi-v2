@@ -54,7 +54,7 @@ def main():
                 ).fetchall()
 
                 for member_name, pik in pending_rows:
-                    print(f"Issuing {pik} HSBI to {member_name}")
+                    print(f"Issuing {pik} HSBIDAO to {member_name}")
                     try:
                         tx = issuer.issue(member_name, float(pik))
                         trx_id = tx.get("trx_id")  # extract the string
