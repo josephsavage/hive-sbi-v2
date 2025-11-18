@@ -87,17 +87,11 @@ def run():
             f"hsbi_manage_accrual: Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
         )
 
-        # Adjust accrual rates based on 50% threshold
-        # factor = 1.025 if overall_mana_pct > mana_pct_target else 0.99
-        rshares_per_cycle *= factor
-        del_rshares_per_cycle *= factor
         minimum_vote_threshold = rshares_needed
 
         # Persist updated values
         confStorage.update(
             {
-                "rshares_per_cycle": rshares_per_cycle,
-                "del_rshares_per_cycle": del_rshares_per_cycle,
                 "minimum_vote_threshold": minimum_vote_threshold,
             }
         )
