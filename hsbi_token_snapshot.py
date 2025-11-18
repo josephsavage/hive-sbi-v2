@@ -37,7 +37,7 @@ def main():
                 ).fetchone()
 
                 max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
-                print("hsbi_manage_accrual fetching max VP level: ", max_mana_pct)
+                print("hsbi_token_snapshot fetching max VP level: ", max_mana_pct)
     
     mana_threshold = conf_setup.get("mana_pct_target", 0)
     max_mana_threshold = mana_threshold * 1.05            
