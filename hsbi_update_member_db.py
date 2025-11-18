@@ -131,6 +131,8 @@ def run():
     memberStorage = MemberDB(db2)
     # accountStorage = MemberHistDB(db)
     confStorage = ConfigurationDB(db2)
+    confStorage: ConfigurationDB = stor["conf"]
+
     transferMemosStorage = TransferMemoDB(db2)
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
@@ -149,14 +151,15 @@ def run():
     comment_vote_divider = conf_setup["comment_vote_divider"]
     
     if db2 is not None:
-            with db2.engine.begin() as conn:
-                # get max mana_pct from accounts table
-                result = conn.exec_driver_sql(
-                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
-                ).fetchone()
+        with db2.engine.begin() as conn:
+            result = conn.exec_driver_sql(
+                "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+            ).fetchone()
+            max_mana_pct = result.max_mana_pct if result and result.max_mana_pct else 0
+            print("Fetching max VP level:", max_mana_pct)
 
-                max_mana_pct = result[0]   # or result.max_mana_pct if using RowMapping
-                print("Fetching max VP level: ", max_mana_pct)
+    mana_threshold = conf_setup.get("mana_pct_target", 0)
+    max_mana_threshold = mana_threshold * 1.05
                 
     accountTrx = {}
     for account in accounts:
