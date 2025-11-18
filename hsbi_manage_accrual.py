@@ -28,6 +28,16 @@ def run():
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     mana_pct_target = conf_setup["mana_pct_target"]
     
+    if db2 is not None:
+            with db2.engine.begin() as conn:
+                # get max mana_pct from accounts table
+                result = conn.exec_driver_sql(
+                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+                ).fetchone()
+
+                max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
+                print("Fetching max VP level: ", max_mana_pct)
+                
     # Determine whether a new cycle should run (proper logic from example)
     if (
         max_mana_pct is not None
