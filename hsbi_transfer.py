@@ -27,6 +27,9 @@ def run():
     cfg = rt["cfg"]
     db = rt["db"]
     db2 = rt["db2"]
+    
+    confStorage = ConfigurationDB(db2)
+    conf_setup = confStorage.get()
     if db2 is not None:
             with db2.engine.begin() as conn:
                 # get max mana_pct from accounts table
@@ -39,7 +42,6 @@ def run():
                 
     accounts = rt["accounts"]
     
-    conf_setup = confStorage.get()
     
     mana_threshold = conf_setup.get("mana_pct_target", 0)
     max_mana_threshold = mana_threshold * 1.05
