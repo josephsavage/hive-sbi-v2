@@ -38,7 +38,7 @@ def run():
                     "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
                 ).fetchone()
 
-                max_mana_pct = result[0]   # or result.max_mana_pct if using RowMapping
+                max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
                 print("Fetching max VP level: ", max_mana_pct)
                 
     accounts = rt["accounts"]
