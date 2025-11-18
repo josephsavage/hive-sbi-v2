@@ -24,7 +24,6 @@ def main():
     stor = rt["storages"]
     confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
 
     # Fetch tokenholders (defaults to HSBIDAO symbol)
