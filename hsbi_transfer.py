@@ -68,15 +68,11 @@ def run():
 
     confStorage = ConfigurationDB(db2)
     conf_setup = confStorage.get()
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
+     = ensure_timezone_aware(conf_setup[""])
     share_cycle_min = conf_setup["share_cycle_min"]
     # Calculate how many rshares correspond to 1 HBD using the rule:
     #   rshares_per_hbd = minimum_vote_threshold / 0.021
     # minimum_vote_threshold = conf_setup.get("minimum_vote_threshold", 0)
-
-    print(
-        f"hsbi_transfer: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
-    )
 
     if (
         max_mana_pct is not None
