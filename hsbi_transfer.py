@@ -27,10 +27,26 @@ def run():
     cfg = rt["cfg"]
     db = rt["db"]
     db2 = rt["db2"]
+    if db2 is not None:
+            with db2.engine.begin() as conn:
+                # get max mana_pct from accounts table
+                result = conn.exec_driver_sql(
+                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+                ).fetchone()
 
+                max_mana_pct = result[0]   # or result.max_mana_pct if using RowMapping
+                print("Fetching max VP level: ", max_mana_pct)
+                
     accounts = rt["accounts"]
-
+    
+    conf_setup = confStorage.get()
+    
+    mana_threshold = conf_setup.get("mana_pct_target", 0)
+    max_mana_threshold = mana_threshold * 1.05
+    
     accountTrx = {}
+    mana_pcts = []
+
     for account in accounts:
         if account == "steembasicincome":
             accountTrx["sbi"] = AccountTrx(db, "sbi")
