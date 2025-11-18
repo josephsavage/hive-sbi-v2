@@ -472,6 +472,7 @@ def run():
             if cfg.get("build_reporting", False):
                 try:
                     for m in member_data:
+                        current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
                         if member_data[m]["shares"] <= 0:
                             continue
                         if "first_cycle_at" not in member_data[m]:
