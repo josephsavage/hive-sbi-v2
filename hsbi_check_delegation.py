@@ -22,6 +22,9 @@ def run():
     databaseConnector2 = cfg["databaseConnector2"]
     hive_blockchain = cfg["hive_blockchain"]
 
+    rt = get_runtime()
+    
+    stor = rt["storages"]
     db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)
     confStorage = ConfigurationDB(db2)
