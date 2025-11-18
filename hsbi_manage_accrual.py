@@ -82,7 +82,7 @@ def run():
         )
 
         # Adjust accrual rates based on 50% threshold
-        factor = 1.025 if overall_mana_pct > mana_pct_target else 0.99
+        # factor = 1.025 if overall_mana_pct > mana_pct_target else 0.99
         rshares_per_cycle *= factor
         del_rshares_per_cycle *= factor
         minimum_vote_threshold = rshares_needed
