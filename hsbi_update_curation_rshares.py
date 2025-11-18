@@ -164,7 +164,7 @@ def run():
     mana_threshold = conf_setup.get("mana_pct_target", 0)
     max_mana_threshold = mana_threshold * 1.05
 
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
+     = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
@@ -186,7 +186,10 @@ def run():
         f"hsbi_update_curation_rshares: last_paid_post: {formatTimeString(last_paid_post)} - last_paid_comment: {formatTimeString(last_paid_comment)}"
     )
 
-    if (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min:
+    if (
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
+    ):
         new_cycle = (
             datetime.now(timezone.utc) - last_cycle
         ).total_seconds() > 60 * share_cycle_min
