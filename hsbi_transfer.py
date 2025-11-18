@@ -79,9 +79,8 @@ def run():
     )
 
     if (
-        last_cycle is not None
-        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
-        > 60 * share_cycle_min
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
     ):
         key_list = []
         print("hsbi_transfer: Parse new transfers.")
