@@ -149,17 +149,11 @@ def run():
 
     mana_threshold = conf_setup.get("mana_pct_target", 0)
     max_mana_threshold = mana_threshold * 1.05
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
 
-    print(
-        f"hsbi_store_ops_db: last_cycle: {formatTimeString(last_cycle)} - {(datetime.now(timezone.utc) - last_cycle).total_seconds() / 60:.2f} min"
-    )
-
     if (
-        last_cycle is not None
-        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
-        > 60 * share_cycle_min
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
     ):
         hv = make_hive(cfg)
         print(f"hsbi_store_ops_db: {hv}")
