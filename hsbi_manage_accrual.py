@@ -23,18 +23,12 @@ def run():
     # Fetch account list from the accounts table
     accountStorage: AccountsDB = stor["accounts"]
     account_names = accountStorage.get()
-
-    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     mana_pct_target = conf_setup["mana_pct_target"]
     
     # Determine whether a new cycle should run (proper logic from example)
-    elapsed_min = (datetime.now(timezone.utc) - ).total_seconds() / 60
-    print(
-        f"hsbi_manage_accrual:  is {} ({elapsed_min:.2f} min ago)"
-    )
     if (
         max_mana_pct is not None
         and max_mana_pct > max_mana_threshold
@@ -87,13 +81,12 @@ def run():
         del_rshares_per_cycle *= factor
         minimum_vote_threshold = rshares_needed
 
-        # Persist updated values and reset last_cycle
+        # Persist updated values
         confStorage.update(
             {
                 "rshares_per_cycle": rshares_per_cycle,
                 "del_rshares_per_cycle": del_rshares_per_cycle,
                 "minimum_vote_threshold": minimum_vote_threshold,
-                # "last_cycle": datetime.now(timezone.utc), # TODO: enable this if it's needed
             }
         )
         print(
