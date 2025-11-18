@@ -95,12 +95,6 @@ def run():
                 "minimum_vote_threshold": minimum_vote_threshold,
             }
         )
-        print(
-            f"hsbi_manage_accrual: Updated rshares_per_cycle to {rshares_per_cycle:.6f}"
-        )
-        print(
-            f"hsbi_manage_accrual: Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}"
-        )
         
     else:
         
