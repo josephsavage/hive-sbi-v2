@@ -121,7 +121,8 @@ def run():
     databaseConnector2 = cfg["databaseConnector2"]
     mgnt_shares = cfg["mgnt_shares"]
     hive_blockchain = cfg["hive_blockchain"]
-
+    
+    stor = rt["storages"]
     start_prep_time = time.time()
     db2 = dataset.connect(databaseConnector2)
     db = dataset.connect(databaseConnector)
