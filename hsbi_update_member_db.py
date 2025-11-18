@@ -183,12 +183,8 @@ def run():
         max_mana_pct is not None
         and max_mana_pct > max_mana_threshold
     ):
-        new_cycle = (
-            datetime.now(timezone.utc) - last_cycle
-        ).total_seconds() > 60 * share_cycle_min
-        current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
+        new_cycle = (max_mana_pct > max_mana_threshold)
 
-        print(f"hsbi_update_member_db: Update member database, new cycle: {new_cycle}")
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
         data = trxStorage.get_all_data()
@@ -558,7 +554,7 @@ def run():
         member_data_json = []
 
         if new_cycle:
-            last_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
+            last_cycle = (datetime.now(timezone.utc)
         print(f"hsbi_update_member_db: update last_cycle to {str(last_cycle)}")
         confStorage.update({"last_cycle": last_cycle})
 
