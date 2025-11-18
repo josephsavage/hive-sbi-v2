@@ -1,4 +1,4 @@
-"""Hive Engine token issuance helpers for HSBI."""
+"""Hive Engine token issuance helpers for HSBIDAO."""
 
 from typing import Optional
 
@@ -107,7 +107,7 @@ def get_default_token_issuer() -> "TokenIssuer":
 
 
 def issue_default_tokens(recipient: str, amount: float) -> dict:
-    """Issue default HSBI tokens using the cached issuer."""
+    """Issue default HSBIDAO tokens using the cached issuer."""
 
     issuer = get_default_token_issuer()
     return issuer.issue(recipient, amount)
