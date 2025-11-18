@@ -135,8 +135,8 @@ def run():
     db = rt["db"]
     db2 = rt["db2"]
     accounts = rt["accounts"]
-    confage = ConfigurationDB(db2)
-    confage: ConfigurationDB = stor["conf"]
+    confStorage = ConfigurationDB(db2)
+    confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
 
     if db2 is not None:
