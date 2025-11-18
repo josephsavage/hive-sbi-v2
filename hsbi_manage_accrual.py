@@ -14,7 +14,7 @@ from hivesbi.utils import (
 def run():
     rt = get_runtime()
     cfg = rt["cfg"]
-
+    db2 = rt["db2"]
     # Open configuration database via storages
     stor = rt["storages"]
     confStorage: ConfigurationDB = stor["conf"]
