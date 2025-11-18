@@ -43,7 +43,7 @@ def run():
     # Determine whether a new cycle should run (proper logic from example)
     if (
         max_mana_pct is not None
-        and max_mana_pct > max_mana_threshold
+        and max_mana_pct < max_mana_threshold
     ):        
         # Build Hive instance and collect mana for each account
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
@@ -108,6 +108,8 @@ def run():
             f"hsbi_manage_accrual: Updated del_rshares_per_cycle to {del_rshares_per_cycle:.6f}"
         )
         
+    else:
+        
         if cfg.get("build_reporting", False):
             try:
                 # Example: use third DB connector directly from the runtime
@@ -134,8 +136,6 @@ def run():
                 "hsbi_manage_accrual: build_reporting is false; skipping reporting procedure call"
             )
 
-    else:
-        print("hsbi_manage_accrual: Not time for a new cycle yet. Exiting.")
 
 
 if __name__ == "__main__":
