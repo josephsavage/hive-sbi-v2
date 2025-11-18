@@ -501,7 +501,7 @@ def run():
 
         else:
             print(
-                "hsbi_manage_accrual: build_reporting is false; skipping reporting procedure call"
+                "hsbi_update_member_db: build_reporting is false; skipping reporting procedure call"
             )
 
         # print("%d new curation rshares for posts" % post_rshares)
