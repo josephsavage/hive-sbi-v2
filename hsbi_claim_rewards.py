@@ -44,7 +44,7 @@ def main():
     # Determine whether a new cycle should run (proper logic from example)
     if (
         max_mana_pct is not None
-        and max_mana_pct < max_mana_threshold
+        and max_mana_pct > max_mana_threshold
     ):        
 
         # Gather posting keys for each account (used to sign claim ops)
