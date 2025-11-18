@@ -135,6 +135,7 @@ def run():
     accountStorage = AccountsDB(db2)
     accounts = accountStorage.get()
 
+    confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
@@ -146,7 +147,17 @@ def run():
     last_paid_comment = ensure_timezone_aware(conf_setup["last_paid_comment"])
     minimum_vote_threshold = conf_setup["minimum_vote_threshold"]
     comment_vote_divider = conf_setup["comment_vote_divider"]
+    
+    if db2 is not None:
+            with db2.engine.begin() as conn:
+                # get max mana_pct from accounts table
+                result = conn.exec_driver_sql(
+                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+                ).fetchone()
 
+                max_mana_pct = result[0]   # or result.max_mana_pct if using RowMapping
+                print("Fetching max VP level: ", max_mana_pct)
+                
     accountTrx = {}
     for account in accounts:
         if account == "steembasicincome":
