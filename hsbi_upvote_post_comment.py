@@ -84,8 +84,7 @@ def run():
                 pass
             mana = voter_accounts[acc].get_manabar()
             # compute effective rshares capacity for a single full-weight vote:
-            capacity = (mana["max_mana"] / 50.0) * (
-                mana.get("current_mana_pct", 0) / 100.0
+            capacity = (mana["max_mana"] / 50.0)
             )
             # enforce configured mana percentage threshold if set
             if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
@@ -239,11 +238,11 @@ def run():
             if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
                 continue
             vote_percentage = (
-                rshares / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100) * 100
+                rshares / (mana["max_mana"] / 50) * 100
             )
             if (
                 highest_pct < mana["current_mana_pct"]
-                and rshares < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
+                and rshares < mana["max_mana"] / 50
                 and vote_percentage > 0.01
             ):
                 highest_pct = mana["current_mana_pct"]
@@ -261,17 +260,17 @@ def run():
                     mana = voter_accounts[acc].get_manabar()
                     vote_percentage = (
                         rshares
-                        / (mana["max_mana"] / 50 * mana["current_mana_pct"] / 100)
+                        / (mana["max_mana"] / 50)
                         * 100
                     )
                     if (
                         highest_mana
-                        < mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
+                        < mana["max_mana"] / 50
                         and acc not in pool_rshars
                         and vote_percentage > 0.01
                     ):
                         highest_mana = (
-                            mana["max_mana"] / 50 * mana["current_mana_pct"] / 100
+                            mana["max_mana"] / 50
                         )
                         current_mana = mana
                         voter = acc
@@ -284,8 +283,6 @@ def run():
                     / (
                         current_mana["max_mana"]
                         / 50
-                        * current_mana["current_mana_pct"]
-                        / 100
                     )
                     * 100
                 )
@@ -346,14 +343,10 @@ def run():
                 rshares_sum += (
                     current_mana["max_mana"]
                     / 50
-                    * current_mana["current_mana_pct"]
-                    / 100
                 )
                 rshares -= (
                     current_mana["max_mana"]
                     / 50
-                    * current_mana["current_mana_pct"]
-                    / 100
                 )
 
         else:
@@ -362,13 +355,11 @@ def run():
                 / (
                     current_mana["max_mana"]
                     / 50
-                    * current_mana["current_mana_pct"]
-                    / 100
                 )
                 * 100
             )
             rshares_sum += (
-                current_mana["max_mana"] / 50 * current_mana["current_mana_pct"] / 100
+                current_mana["max_mana"] / 50
             )
             if nobroadcast:
                 print(f"hsbi_upvote_post_comment: {c['authorperm']}")
