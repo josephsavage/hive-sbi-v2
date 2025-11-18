@@ -175,12 +175,14 @@ def run():
     print(
         f"hsbi_update_member_db: last_paid_post: {formatTimeString(last_paid_post)} - last_paid_comment: {formatTimeString(last_paid_comment)}"
     )
+    
     if last_cycle is None:
         last_cycle = datetime.now(timezone.utc) - timedelta(seconds=60 * 145)
         confStorage.update({"last_cycle": last_cycle})
     elif (
-        datetime.now(timezone.utc) - last_cycle
-    ).total_seconds() > 60 * share_cycle_min:
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
+    ):
         new_cycle = (
             datetime.now(timezone.utc) - last_cycle
         ).total_seconds() > 60 * share_cycle_min
