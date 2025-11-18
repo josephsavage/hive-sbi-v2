@@ -149,7 +149,20 @@ def run():
     accountStorage = stor["accounts"]
     accounts = rt["accounts"]
     accounts_data = rt["accounts_data"]
-    conf_setup = rt["conf_setup"]
+    confStorage = ConfigurationDB(db2)
+    confStorage: ConfigurationDB = stor["conf"]
+    conf_setup = confStorage.get()
+
+    if db2 is not None:
+        with db2.engine.begin() as conn:
+            result = conn.exec_driver_sql(
+                "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+            ).fetchone()
+            max_mana_pct = result.max_mana_pct if result and result.max_mana_pct else 0
+            print("Fetching max VP level:", max_mana_pct)
+
+    mana_threshold = conf_setup.get("mana_pct_target", 0)
+    max_mana_threshold = mana_threshold * 1.05
 
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
