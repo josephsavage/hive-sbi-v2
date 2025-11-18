@@ -31,6 +31,22 @@ def main():
     db2 = rt.get("db2")
     if db2 is not None:
             with db2.engine.begin() as conn:
+                # get max mana_pct from accounts table
+                result = conn.exec_driver_sql(
+                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+                ).fetchone()
+
+                max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
+                print("hsbi_manage_accrual fetching max VP level: ", max_mana_pct)
+    
+    mana_threshold = conf_setup.get("mana_pct_target", 0)
+    max_mana_threshold = mana_threshold * 1.05            
+    # Determine whether a new cycle should run (proper logic from example)
+    if (
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
+    ):        
+            with db2.engine.begin() as conn:
                 issuer = get_default_token_issuer()
                 #issue tokens for members with pik > 0
                 pending_rows = conn.exec_driver_sql(
