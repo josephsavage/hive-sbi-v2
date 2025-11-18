@@ -37,7 +37,9 @@ def run():
 
                 max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
                 print("Fetching max VP level: ", max_mana_pct)
-                
+    
+    mana_threshold = conf_setup.get("mana_pct_target", 0)
+    max_mana_threshold = mana_threshold * 1.05            
     # Determine whether a new cycle should run (proper logic from example)
     if (
         max_mana_pct is not None
