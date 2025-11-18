@@ -41,7 +41,7 @@ def run():
                 ).fetchone()
 
                 max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
-                print("Fetching max VP level: ", max_mana_pct)
+                print("hsbi_transfer fetching max VP level: ", max_mana_pct)
                 
     accounts = rt["accounts"]
     
