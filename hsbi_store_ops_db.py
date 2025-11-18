@@ -84,13 +84,13 @@ def get_account_trx_data(account, start_block, start_index):
     return data
 
 
-def get_account_trx_storage_data(account, start_index, hv):
+def get_account_trx_age_data(account, start_index, hv):
     if start_index is not None:
         start_index = start_index["op_acc_index"] + 1
-        print(f"hsbi_store_ops_db: account {account['name']} - {start_index}")
+        print(f"hsbi_e_ops_db: account {account['name']} - {start_index}")
 
     data = []
-    for op in account.history(
+    for op in account.hiy(
         start=start_index, use_block_num=False, only_ops=["transfer"]
     ):
         amount = Amount(op["amount"], blockchain_instance=hv)
@@ -121,11 +121,12 @@ def get_account_trx_storage_data(account, start_index, hv):
 def run():
     start_prep_time = time.time()
     rt = get_runtime()
+    stor = rt["storages"]
     cfg = rt["cfg"]
     db = rt["db"]
     accounts = rt["accounts"]
-    confStorage = ConfigurationDB(db2)
-    confStorage: ConfigurationDB = stor["conf"]
+    confage = ConfigurationDB(db2)
+    confage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
 
     if db2 is not None:
