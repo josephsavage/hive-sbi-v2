@@ -85,7 +85,7 @@ def run():
             mana = voter_accounts[acc].get_manabar()
             # compute effective rshares capacity for a single full-weight vote:
             capacity = (mana["max_mana"] / 50.0)
-            )
+            
             # enforce configured mana percentage threshold if set
             if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
                 continue
