@@ -47,7 +47,8 @@ def run():
     
     
     mana_threshold = conf_setup.get("mana_pct_target", 0)
-    max_mana_threshold = mana_threshold * 1.05
+    mana_range = conf_setup.get("mana_threshold", 0)
+    max_mana_threshold = mana_threshold * mana_range
     
     accountTrx = {}
     mana_pcts = []
