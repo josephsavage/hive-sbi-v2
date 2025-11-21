@@ -72,6 +72,23 @@ def _reconstruct_op_from_row(row: dict) -> dict:
     amount_val = float(row.get("amount", 0.0))
     symbol = row.get("amount_symbol", "HBD")
     amount_str = f"{amount_val:.3f} {symbol}"
+
+    def _safe_int(value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    # Prefer the original blockchain op index so TrxDB ordering stays consistent.
+    memo_index = next(
+        (
+            _safe_int(row.get(field))
+            for field in ("index", "op_acc_index")
+            if row.get(field) is not None
+        ),
+        0,
+    )
+
     op = {
         "type": "transfer",
         "from": row.get("sender"),
@@ -80,8 +97,7 @@ def _reconstruct_op_from_row(row: dict) -> dict:
         "memo": row.get("memo", ""),
         "timestamp": ensure_timezone_aware(row.get("timestamp"))
         or datetime.now(timezone.utc),
-        # Use transaction_memo.id as stable index for TrxDB upsert idempotency
-        "index": row.get("id", 0),
+        "index": memo_index,
     }
     # Optional pass-through
     if "trx_id" in row:
