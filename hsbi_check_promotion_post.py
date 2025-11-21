@@ -34,8 +34,10 @@ def run():
             max_mana_pct = result.max_mana_pct if result and result.max_mana_pct else 0
             print("Fetching max VP level:", max_mana_pct)
 
-    mana_threshold = conf_setup.get("mana_pct_target", 0)
-    max_mana_threshold = mana_threshold * 1.05
+    
+    mana_pct_target = conf_setup.get("mana_pct_target", 0)
+    mana_threshold = conf_setup.get("mana_threshold", 0)
+    max_mana_threshold = mana_threshold * mana_pct_target
 
     accountTrx = {}
     for account in accounts:
