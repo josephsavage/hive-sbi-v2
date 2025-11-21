@@ -29,40 +29,26 @@ def run():
     mana_pct_target = conf_setup["mana_pct_target"]
     
     if db2 is not None:
-            with db2.engine.begin() as conn:
-                # get max mana_pct from accounts table
-                result = conn.exec_driver_sql(
-                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
-                ).fetchone()
+        with db2.engine.begin() as conn:
+            # get max mana_pct from accounts table
+            result = conn.exec_driver_sql(
+                "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+            ).fetchone()
 
-                max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
-    
-    mana_threshold = conf_setup.get("mana_pct_target", 0)
-    max_mana_threshold = mana_threshold * 1.05            
-    # Determine whether a new cycle should run (proper logic from example)
-    if (
-        max_mana_pct is not None
-        and max_mana_pct < max_mana_threshold
-    ):        
-        # Build Hive instance and collect mana for each account
-        hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
+            max_mana_pct = result.max_mana_pct or 0   
+            hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
         rshares_needed = hv.hbd_to_rshares(0.021)
         print(
             f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
         )
-        total_current_mana = 0
-        total_max_mana = 0
         accounts_processed = 0
         for acc in account_names:
             try:
                 mana = Account(acc, blockchain_instance=hv).get_manabar()
                 current_mana = mana.get("current_mana", 0)
-                total_current_mana += mana.get("current_mana", 0)
                 max_mana = mana.get("max_mana", 0)
-                total_max_mana += mana.get("max_mana", 0)
                 mana_pct = (current_mana / max_mana * 100) if max_mana else 0
-                accounts_processed += 1
-
+                
                 accountStorage.update({
                     "name": acc,
                     "current_mana": int(current_mana),
@@ -74,29 +60,12 @@ def run():
 
             except Exception as e:
                 print(f"hsbi_manage_accrual: Could not fetch mana for {acc}: {e}")
-
-        if total_max_mana == 0:
-            print(
-                "hsbi_manage_accrual: Unable to retrieve mana information for any account. Exiting."
-            )
-            sys.exit(1)
-
-        overall_mana_pct = (total_current_mana / total_max_mana) * 100
-        print(
-            f"hsbi_manage_accrual: Overall mana across {accounts_processed} accounts: {overall_mana_pct:.2f}%"
-        )
-
-        minimum_vote_threshold = rshares_needed
-
-        # Persist updated values
-        confStorage.update(
-            {
-                "minimum_vote_threshold": minimum_vote_threshold,
-            }
-        )
         
-    else:
-        
+    # Determine whether a new cycle should run (proper logic from example)
+    if (
+        max_mana_pct is not None
+        and max_mana_pct > max_mana_threshold
+    ):
         if cfg.get("build_reporting", False):
             try:
                 # Example: use third DB connector directly from the runtime
