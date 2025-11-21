@@ -46,9 +46,9 @@ def run():
     accounts = rt["accounts"]
     
     
-    mana_threshold = conf_setup.get("mana_pct_target", 0)
-    mana_range = conf_setup.get("mana_threshold", 0)
-    max_mana_threshold = mana_threshold * mana_range
+    mana_pct_target = conf_setup.get("mana_pct_target", 0)
+    mana_threshold = conf_setup.get("mana_threshold", 0)
+    max_mana_threshold = mana_threshold * mana_pct_target
     
     accountTrx = {}
     mana_pcts = []
