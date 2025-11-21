@@ -34,6 +34,8 @@ def run():
             result = conn.exec_driver_sql(
                 "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
             ).fetchone()
+            mana_threshold = conf_setup.get("mana_pct_target", 0)
+            max_mana_threshold = mana_threshold * 1.05
 
             max_mana_pct = result.max_mana_pct or 0   
             hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
