@@ -161,10 +161,12 @@ def run():
             max_mana_pct = result.max_mana_pct if result and result.max_mana_pct else 0
             print("Fetching max VP level:", max_mana_pct)
 
-    mana_threshold = conf_setup.get("mana_pct_target", 0)
-    max_mana_threshold = mana_threshold * 1.05
+    
+    mana_pct_target = conf_setup.get("mana_pct_target", 0)
+    mana_threshold = conf_setup.get("mana_threshold", 0)
+    max_mana_threshold = mana_threshold * mana_pct_target
 
-     = ensure_timezone_aware(conf_setup["last_cycle"])
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     share_cycle_min = conf_setup["share_cycle_min"]
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     upvote_multiplier = conf_setup["upvote_multiplier"]
