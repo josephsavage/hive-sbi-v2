@@ -35,15 +35,15 @@ def run():
             result = conn.exec_driver_sql(
                 "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
             ).fetchone()
+            max_mana_pct = result.max_mana_pct or 0
             result = conn.exec_driver_sql(
                 "SELECT MIN(mana_pct) AS min_mana_pct FROM accounts"
             ).fetchone()
+            min_mana_pct = result.min_mana_pct or 0
             mana_pct_target = conf_setup.get("mana_pct_target", 0)
             mana_threshold = conf_setup.get("mana_threshold", 0)
             max_mana_threshold = mana_threshold * mana_pct_target
 
-            max_mana_pct = result.max_mana_pct or 0
-            min_mana_pct = result.min_mana_pct or 0
             
         accounts_processed = 0
         for acc in account_names:
