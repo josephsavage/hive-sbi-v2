@@ -42,12 +42,17 @@ def main():
     mana_pct_target = conf_setup.get("mana_pct_target", 0)
     mana_threshold = conf_setup.get("mana_threshold", 0)
     max_mana_threshold = mana_threshold * mana_pct_target
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     
     # Determine whether a new cycle should run (proper logic from example)
     if (
-        max_mana_pct is not None
-        and max_mana_pct > max_mana_threshold
-    ):        
+        (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
+        or (
+            last_cycle is not None
+            and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
+        )
+    ):
+        # your logic here     
             with db2.engine.begin() as conn:
                 issuer = get_default_token_issuer()
                 #issue tokens for members with pik > 0
