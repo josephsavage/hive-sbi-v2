@@ -27,6 +27,7 @@ def run():
     rshares_per_cycle = conf_setup["rshares_per_cycle"]
     del_rshares_per_cycle = conf_setup["del_rshares_per_cycle"]
     mana_pct_target = conf_setup["mana_pct_target"]
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     
     if db2 is not None:
         with db2.engine.begin() as conn:
@@ -66,9 +67,13 @@ def run():
         
     # Determine whether a new cycle should run (proper logic from example)
     if (
-        max_mana_pct is not None
-        and max_mana_pct > max_mana_threshold
+        (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
+        or (
+            last_cycle is not None
+            and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
+        )
     ):
+        # your logic here
         if cfg.get("build_reporting", False):
             try:
                 # Example: use third DB connector directly from the runtime
