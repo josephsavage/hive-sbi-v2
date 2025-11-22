@@ -503,10 +503,13 @@ def run():
                     member_data[m]["delegation_rshares"] += (
                         member_data[m]["bonus_shares"] * del_rshares_per_cycle
                     )
-                    
                 except Exception as e:
                     print(f"Error calling stored procedure: {e}")
 
+            else:
+                print(
+                    "hsbi_update_member_db: build_reporting is false; skipping reporting procedure call"
+                )
         print("hsbi_update_member_db: write member database")
         memberStorage.db = dataset.connect(databaseConnector2)
         member_data_list = []
