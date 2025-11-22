@@ -567,13 +567,14 @@ def run():
         print(f"hsbi_update_member_db: shares: {shares}")
         print(f"hsbi_update_member_db: delegation bonus shares: {delegation_shares}")
         print(f"hsbi_update_member_db: Mngt bonus shares {mngt_shares}")
+        
+        print(f"hsbi_update_member_db: update last_cycle to {str(datetime.now(timezone.utc))}")
+        confStorage.update({"last_cycle": datetime.now(timezone.utc)})
+
+
 
     print(
         f"hsbi_update_member_db: update member script run {time.time() - start_prep_time:.2f} s"
     )
-    print(f"hsbi_update_member_db: update last_cycle to {str(datetime.now(timezone.utc))}")
-    confStorage.update({"last_cycle": datetime.now(timezone.utc)})
-
-
 if __name__ == "__main__":
     run()
