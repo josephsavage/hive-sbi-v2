@@ -182,9 +182,13 @@ def run():
         last_cycle = datetime.now(timezone.utc) - timedelta(seconds=60 * 145)
         confStorage.update({"last_cycle": last_cycle})
     elif (
-        max_mana_pct is not None
-        and max_mana_pct > max_mana_threshold
+        (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
+        or (
+            last_cycle is not None
+            and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
+        )
     ):
+        # your logic here
         new_cycle = (max_mana_pct > max_mana_threshold)
 
         # memberStorage.wipe(True)
