@@ -35,12 +35,17 @@ def run():
             result = conn.exec_driver_sql(
                 "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
             ).fetchone()
+            result = conn.exec_driver_sql(
+                "SELECT MIN(mana_pct) AS min_mana_pct FROM accounts"
+            ).fetchone()
             mana_pct_target = conf_setup.get("mana_pct_target", 0)
             mana_threshold = conf_setup.get("mana_threshold", 0)
             max_mana_threshold = mana_threshold * mana_pct_target
 
-            max_mana_pct = result.max_mana_pct or 0   
+            max_mana_pct = result.max_mana_pct or 0
+            min_mana_pct = result.min_mana_pct or 0
             hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
+            
         rshares_needed = hv.hbd_to_rshares(0.021)
         print(
             f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
