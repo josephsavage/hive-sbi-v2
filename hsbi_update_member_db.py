@@ -410,6 +410,7 @@ def run():
                                 HIVE_symbol=hv.hive_symbol,
                             )
                             member_data[s].append_share_age(timestamp, shares)
+                            
 
         print(
             "mngt_shares: %d, shares_sum %d - (mngt_shares * 20): %d - shares_sum - 100: %d"
@@ -502,6 +503,9 @@ def run():
                     member_data[m]["delegation_rshares"] += (
                         member_data[m]["bonus_shares"] * del_rshares_per_cycle
                     )
+                    
+                except Exception as e:
+                    print(f"Error calling stored procedure: {e}")
 
         print("hsbi_update_member_db: write member database")
         memberStorage.db = dataset.connect(databaseConnector2)
