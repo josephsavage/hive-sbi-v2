@@ -148,6 +148,7 @@ def run():
             print("hsbi_store_ops_db fetching max VP level:", max_mana_pct)
 
     
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
     mana_pct_target = conf_setup.get("mana_pct_target", 0)
     mana_threshold = conf_setup.get("mana_threshold", 0)
     max_mana_threshold = mana_threshold * mana_pct_target
@@ -156,6 +157,10 @@ def run():
     if (
         max_mana_pct is not None
         and max_mana_pct > max_mana_threshold
+    ) or if (
+        last_cycle is not None
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
+        > 60 * share_cycle_min
     ):
         hv = make_hive(cfg)
         print(f"hsbi_store_ops_db: {hv}")
