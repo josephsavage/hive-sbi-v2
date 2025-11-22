@@ -78,13 +78,25 @@ def run():
         print(
             f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
             )
-            
+        
+        # Adjust accrual rates based on 50% threshold
+        factor = (
+            1.025
+            if max_mana_pct > max_mana_threshold 
+            else 0.99
+            if min_mana_pct < mana_pct_target 
+            else 1
+        )
+        rshares_per_cycle *= factor
+        del_rshares_per_cycle *= factor    
         minimum_vote_threshold = rshares_needed
 
         # Persist updated values
         confStorage.update(
             {
                 "minimum_vote_threshold": minimum_vote_threshold,
+                "rshares_per_cycle": rshares_per_cycle,
+                "del_rshares_per_cycle": del_rshares_per_cycle,
             }
         )
         
