@@ -48,6 +48,7 @@ def main():
     mana_threshold = conf_setup.get("mana_threshold", 0)
     max_mana_threshold = mana_threshold * mana_pct_target
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
+    share_cycle_min = conf_setup["share_cycle_min"]
     
     # Determine whether a new cycle should run (proper logic from example)
     if (
