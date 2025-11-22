@@ -502,12 +502,7 @@ def run():
                     )
                     member_data[m]["delegation_rshares"] += (
                         member_data[m]["bonus_shares"] * del_rshares_per_cycle
-                    )
-                    
-                    last_cycle = current_cycle
-                    print(f"hsbi_update_member_db: update last_cycle to {str(last_cycle)}")
-                    confStorage.update({"last_cycle": last_cycle})
-                    
+                    )                    
             except Exception as e:
                 print(f"Error calling stored procedure: {e}")
 
@@ -576,6 +571,8 @@ def run():
     print(
         f"hsbi_update_member_db: update member script run {time.time() - start_prep_time:.2f} s"
     )
+    print(f"hsbi_update_member_db: update last_cycle to {str(datetime.now(timezone.utc))}")
+    confStorage.update({"last_cycle": datetime.now(timezone.utc)})
 
 
 if __name__ == "__main__":
