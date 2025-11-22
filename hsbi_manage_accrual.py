@@ -48,6 +48,8 @@ def run():
         accounts_processed = 0
         for acc in account_names:
             try:
+                
+                hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
                 mana = Account(acc, blockchain_instance=hv).get_manabar()
                 current_mana = mana.get("current_mana", 0)
                 max_mana = mana.get("max_mana", 0)
