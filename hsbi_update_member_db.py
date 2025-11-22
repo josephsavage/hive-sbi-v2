@@ -503,6 +503,11 @@ def run():
                     member_data[m]["delegation_rshares"] += (
                         member_data[m]["bonus_shares"] * del_rshares_per_cycle
                     )
+                    
+                    last_cycle = current_cycle
+                    print(f"hsbi_update_member_db: update last_cycle to {str(last_cycle)}")
+                    confStorage.update({"last_cycle": last_cycle})
+                    
             except Exception as e:
                 print(f"Error calling stored procedure: {e}")
 
@@ -553,10 +558,6 @@ def run():
             json.dump(member_data_json, outfile)
         member_data_json = []
 
-        if new_cycle:
-            last_cycle = datetime.now(timezone.utc)
-        print(f"hsbi_update_member_db: update last_cycle to {str(last_cycle)}")
-        confStorage.update({"last_cycle": last_cycle})
 
         # Statistics
         shares = 0
