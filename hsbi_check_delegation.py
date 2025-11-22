@@ -43,15 +43,20 @@ def run():
     mana_pct_target = conf_setup.get("mana_pct_target", 0)
     mana_threshold = conf_setup.get("mana_threshold", 0)
     max_mana_threshold = mana_threshold * mana_pct_target
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
 
     share_cycle_min = conf_setup["share_cycle_min"]
     hp_share_ratio = conf_setup["sp_share_ratio"]
     last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
 
     if (
-        max_mana_pct is not None
-        and max_mana_pct > max_mana_threshold
+        (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
+        or (
+            last_cycle is not None
+            and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
+        )
     ):
+        # your logic here
         nodes = NodeList()
         try:
             nodes.update_nodes()
