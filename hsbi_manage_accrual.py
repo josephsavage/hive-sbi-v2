@@ -44,12 +44,7 @@ def run():
 
             max_mana_pct = result.max_mana_pct or 0
             min_mana_pct = result.min_mana_pct or 0
-            hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
             
-        rshares_needed = hv.hbd_to_rshares(0.021)
-        print(
-            f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
-        )
         accounts_processed = 0
         for acc in account_names:
             try:
@@ -78,7 +73,21 @@ def run():
             and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
         )
     ):
-        # your logic here
+        hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
+        rshares_needed = hv.hbd_to_rshares(0.021)
+        print(
+            f"hsbi_manage_accrual: Target threshold: {rshares_needed} rshares (≈ {estimate_hbd_for_rshares(hv, rshares_needed):.5f} HBD)"
+            )
+            
+        minimum_vote_threshold = rshares_needed
+
+        # Persist updated values
+        confStorage.update(
+            {
+                "minimum_vote_threshold": minimum_vote_threshold,
+            }
+        )
+        
         if cfg.get("build_reporting", False):
             try:
                 # Example: use third DB connector directly from the runtime
@@ -104,8 +113,6 @@ def run():
             print(
                 "hsbi_manage_accrual: build_reporting is false; skipping reporting procedure call"
             )
-
-
 
 if __name__ == "__main__":
     run()
