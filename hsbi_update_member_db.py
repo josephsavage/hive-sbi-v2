@@ -475,8 +475,7 @@ def run():
         )
 
         if new_cycle:
-            if cfg.get("build_reporting", False):
-                try:
+            try:
                     for m in member_data:
                         current_cycle = last_cycle + timedelta(seconds=60 * share_cycle_min)
                         if member_data[m]["shares"] <= 0:
