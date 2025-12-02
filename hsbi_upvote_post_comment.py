@@ -231,8 +231,8 @@ def run():
         highest_pct = 0
         voter = None
         current_mana = {}
-        if rshares > minimum_vote_threshold * 20:
-            rshares = int(minimum_vote_threshold * 20)
+        #if rshares > minimum_vote_threshold * 20:
+        #    rshares = int(minimum_vote_threshold * 20)
         for acc in eligible_voters:
             mana = voter_accounts[acc].get_manabar()
             if mana_threshold and mana.get("current_mana_pct", 0) < mana_threshold:
