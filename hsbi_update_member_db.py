@@ -189,7 +189,7 @@ def run():
         )
     ):
         # your logic here
-        new_cycle = (max_mana_pct > max_mana_threshold)
+        new_cycle = (True)
 
         # memberStorage.wipe(True)
         member_accounts = memberStorage.get_all_accounts()
