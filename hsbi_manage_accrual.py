@@ -69,10 +69,8 @@ def run():
         
     # Determine whether a new cycle should run (proper logic from example)
     if (
-        (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
-        or (
-            last_cycle is not None
-            and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
+        last_cycle is not None
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds() < 15 * share_cycle_min
         )
     ):
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
