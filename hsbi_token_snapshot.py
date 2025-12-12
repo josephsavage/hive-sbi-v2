@@ -52,7 +52,7 @@ def main():
             and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
         )
     ):
-        # your logic here     
+        # curation PIK token issuance     
             with db2.engine.begin() as conn:
                 issuer = get_default_token_issuer()
                 #issue tokens for members with pik > 0
@@ -93,6 +93,46 @@ def main():
                             ("N/A", member_name, pik, "FAILURE", str(e), "FAILURE"),
                         )
 
+          # Pending Balance Conversion logic here     
+            with db2.engine.begin() as conn:
+                issuer = get_default_token_issuer()
+                #issue tokens for members with abc_pik > 0
+                pending_rows = conn.exec_driver_sql(
+                    "SELECT member_name, abc_pik FROM tokenholders WHERE abc_pik > 0"
+                ).fetchall()
+
+                for member_name, abc_pik in pending_rows:
+                    print(f"Issuing {abc_pik} HSBIDAO to {member_name}")
+                    try:
+                        tx = issuer.issue(member_name, float(abc_pik))
+                        trx_id = tx.get("trx_id")  # extract the string
+
+                        print("Issued:", tx)
+
+                        # Reset abc_pik to 0 after successful issuance
+                        conn.exec_driver_sql(
+                            "UPDATE tokenholders SET abc_pik = 0 WHERE member_name = %s",
+                            (member_name,)
+                        )
+                        # Log success
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, NULL, %s)
+                            """,
+                            (trx_id, member_name, abc_pik, "SUCCESS", "Pending Balance Conversion"),
+                        )
+
+                    except Exception as e:
+                        print(f"Failed to issue to {member_name}: {e}")
+                        # Log failure
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            ("N/A", member_name, abc_pik, "FAILURE", str(e), "FAILURE"),
+                        )
 
                 print("Upserting tokenholders into DB")
                 # Step 1: zero out all balances
@@ -110,7 +150,7 @@ def main():
 
                         """,
                         (datetime.now(timezone.utc), h["account"], h["balance"])
-                    )
+                    )          
             
 if __name__ == "__main__":
     main()
