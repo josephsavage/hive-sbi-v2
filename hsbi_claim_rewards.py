@@ -136,6 +136,8 @@ def main():
                 with db2.engine.begin() as conn:
                     conn.exec_driver_sql("CALL usp_curation_dividends();")
                     print("usp_curation_dividends executed successfully")
+                    conn.exec_driver_sql("CALL usp_member_accrual_cutoff();")
+                    print("Pending Vote Balance conversion executed successfully")
             except Exception as e:
                 print(f"Error executing usp_curation_dividends: {e}")
 
