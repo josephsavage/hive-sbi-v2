@@ -70,7 +70,7 @@ def run():
     # Determine whether a new cycle should run (proper logic from example)
     if (
         last_cycle is not None
-        and (datetime.now(timezone.utc) - last_cycle).total_seconds() < 5 * share_cycle_min
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds() < 4 * share_cycle_min
     ):
         hv = make_hive(cfg, num_retries=5, call_num_retries=3, timeout=15)
         rshares_needed = hv.hbd_to_rshares(0.021)
