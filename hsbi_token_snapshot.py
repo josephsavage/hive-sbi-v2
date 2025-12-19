@@ -104,56 +104,61 @@ def main():
         time.sleep(BATCH_SLEEP_TIME)
 
         # Pending Balance Conversion logic here
-        with db2.engine.begin() as conn:
-            issuer = get_default_token_issuer()
-            # issue tokens for members with abc_pik > 0
-            pending_rows = conn.exec_driver_sql(
-                "SELECT member_name, abc_pik FROM tokenholders WHERE abc_pik > 0"
-            ).fetchall()
+        issuer = get_default_token_issuer()
+            
+        # issue tokens for members with abc_pik > 0
+        pending_rows = db2.engine.execute(
+            "SELECT member_name, abc_pik FROM tokenholders WHERE abc_pik > 0"
+        ).fetchall()
 
-            for i, (member_name, abc_pik) in enumerate(pending_rows):
-                if i > 0 and i % 5 == 0:
-                    print(f"Sleeping for {BATCH_SLEEP_TIME} seconds...")
-                    time.sleep(BATCH_SLEEP_TIME)
-                print(f"Issuing {abc_pik} HSBIDAO to {member_name}")
-                try:
-                    tx = issuer.issue(member_name, float(abc_pik))
-                    trx_id = tx.get("trx_id")  # extract the string
-
-                    print("Issued:", tx)
-
-                    # Reset abc_pik to 0 after successful issuance
-                    conn.exec_driver_sql(
-                        "UPDATE tokenholders SET abc_pik = 0 WHERE member_name = %s",
-                        (member_name,),
-                    )
-                    # Log success
-                    conn.exec_driver_sql(
-                        """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, NULL, %s)
-                            """,
-                        (
-                            trx_id,
-                            member_name,
-                            abc_pik,
-                            "SUCCESS",
-                            "Pending Balance Conversion",
-                        ),
-                    )
-
-                except Exception as e:
-                    print(f"Failed to issue to {member_name}: {e}")
-                    # Log failure
+        for i, (member_name, abc_pik) in enumerate(pending_rows):
+            if i > 0 and i % 5 == 0:
+                print(f"Sleeping for {BATCH_SLEEP_TIME} seconds...")
+                time.sleep(BATCH_SLEEP_TIME)
+                    
+            print(f"Issuing {abc_pik} HSBIDAO to {member_name}")
+            try:
+                tx = issuer.issue(member_name, float(abc_pik))
+                trx_id = tx.get("trx_id")  # extract the string
+                print("Issued:", tx)
+                    
+            except Exception as e:
+                print(f"Failed to issue to {member_name}: {e}")
+                    
+                # Log failure
+                with db2.engine.begin() as conn:
                     conn.exec_driver_sql(
                         """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
+                        INSERT INTO token_issuance_log
+                            (trx_id, recipient, units, status, error_message, rationale)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
                         ("N/A", member_name, abc_pik, "FAILURE", str(e), "FAILURE"),
                     )
+                continue
 
-            print("Upserting tokenholders into DB")
+            # Reset abc_pik to 0 after successful issuance
+            with db2.engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "UPDATE tokenholders SET abc_pik = 0 WHERE member_name = %s",
+                    (member_name,),
+                )
+                    
+                # Log success
+                conn.exec_driver_sql(
+                    """
+                    INSERT INTO token_issuance_log 
+                        (trx_id, recipient, units, status, error_message, rationale)
+                    VALUES (%s, %s, %s, %s, NULL, %s)
+                    """,
+                    (trx_id, member_name, abc_pik, "SUCCESS", "Pending Balance Conversion"),
+                )
+
+        time.sleep(BATCH_SLEEP_TIME)
+
+        print("Upserting tokenholders into DB")
+
+        with db2.engine.begin() as conn:
             # Step 1: zero out all balances
             conn.exec_driver_sql("UPDATE tokenholders SET tokens = 0")
 
@@ -161,13 +166,13 @@ def main():
             for h in holders:
                 conn.exec_driver_sql(
                     """
-                        INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
-                        VALUES (%s, %s, %s)
-                        ON DUPLICATE KEY UPDATE
-                            snapshot_timestamp = VALUES(snapshot_timestamp),
-                            tokens = VALUES(tokens);
+                    INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        snapshot_timestamp = VALUES(snapshot_timestamp),
+                        tokens = VALUES(tokens);
 
-                        """,
+                    """,
                     (datetime.now(timezone.utc), h["account"], h["balance"]),
                 )
 
