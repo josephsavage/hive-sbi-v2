@@ -62,35 +62,45 @@ def main():
                     time.sleep(BATCH_SLEEP_TIME)
                 print(f"Issuing {pik} HSBIDAO to {member_name}")
                 try:
+                    # 1. Blockchain side-effect (cannot be rolled back)
+
                     tx = issuer.issue(member_name, float(pik))
                     trx_id = tx.get("trx_id")  # extract the string
 
                     print("Issued:", tx)
 
-                    # Reset pik to 0 after successful issuance
-                    conn.exec_driver_sql(
-                        "UPDATE tokenholders SET pik = 0 WHERE member_name = %s",
-                        (member_name,),
-                    )
-                    # Log success
-                    conn.exec_driver_sql(
-                        """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, NULL, %s)
-                            """,
-                        (trx_id, member_name, pik, "SUCCESS", "pik"),
-                    )
+                    # 2. Now open a DB transaction for the state change + audit log
+                    with db2.engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE tokenholders SET pik = 0 WHERE member_name = :m"),
+                            {"m": member_name},
+                        )
+
+                        conn.execute(
+                            text("""
+                                INSERT INTO token_issuance_log
+                                    (trx_id, recipient, units, status, error_message, rationale)
+                                VALUES
+                                    (:trx, :recipient, :units, 'SUCCESS', NULL, 'pik')
+                            """),
+                            {"trx": trx_id, "recipient": member_name, "units": pik},
+                        )
 
                 except Exception as e:
                     print(f"Failed to issue to {member_name}: {e}")
-                    # Log failure
-                    conn.exec_driver_sql(
-                        """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
-                        ("N/A", member_name, pik, "FAILURE", str(e), "FAILURE"),
-                    )
+
+                    # Log failure in its own transaction
+                    with db2.engine.begin() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO token_issuance_log
+                                    (trx_id, recipient, units, status, error_message, rationale)
+                                VALUES
+                                    ('N/A', :recipient, :units, 'FAILURE', :err, 'FAILURE')
+                            """),
+                            {"recipient": member_name, "units": pik, "err": str(e)},
+                        )
+
 
         # Pending Balance Conversion logic here
         with db2.engine.begin() as conn:
