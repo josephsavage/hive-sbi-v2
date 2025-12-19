@@ -1,4 +1,5 @@
 import time
+from sqlalchemy import text
 from datetime import datetime, timezone
 from hivesbi.settings import get_runtime
 from hivesbi.storage import ConfigurationDB
