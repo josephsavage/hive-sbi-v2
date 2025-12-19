@@ -1,20 +1,16 @@
-
-import sys
+import time
 from datetime import datetime, timezone
-from nectar.account import Account
-from nectar.utils import formatTimeString
-from hivesbi.settings import get_runtime, make_hive
-from hivesbi.storage import AccountsDB, ConfigurationDB
-from hivesbi.utils import (
-    ensure_timezone_aware,
-    estimate_hbd_for_rshares
-)
+from hivesbi.settings import get_runtime
+from hivesbi.storage import ConfigurationDB
+from hivesbi.utils import ensure_timezone_aware
 from hivesbi.issue import (
-    get_tokenholders, 
-    connect_dbs_cached, 
-    get_config,
-    get_default_token_issuer
+    get_tokenholders,
+    get_default_token_issuer,
 )
+
+
+BATCH_SLEEP_TIME = 3
+
 
 def main():
     rt = get_runtime()
@@ -30,118 +26,130 @@ def main():
     holders = get_tokenholders()
     db2 = rt.get("db2")
     if db2 is not None:
-            with db2.engine.begin() as conn:
-                # get max mana_pct from accounts table
-                result = conn.exec_driver_sql(
-                    "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
-                ).fetchone()
+        with db2.engine.begin() as conn:
+            # get max mana_pct from accounts table
+            result = conn.exec_driver_sql(
+                "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+            ).fetchone()
 
-                max_mana_pct = result.max_mana_pct or 0   # or result.max_mana_pct if using RowMapping
-                print("hsbi_token_snapshot fetching max VP level: ", max_mana_pct)
-    
+            max_mana_pct = (
+                result.max_mana_pct or 0
+            )  # or result.max_mana_pct if using RowMapping
+            print("hsbi_token_snapshot fetching max VP level: ", max_mana_pct)
+
     mana_pct_target = conf_setup.get("mana_pct_target", 0)
     mana_threshold = conf_setup.get("mana_threshold", 0)
     max_mana_threshold = mana_threshold * mana_pct_target
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
-    
+
     # Determine whether a new cycle should run (proper logic from example)
-    if (
-        (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
-        or (
-            last_cycle is not None
-            and (datetime.now(timezone.utc) - last_cycle).total_seconds() > 60 * share_cycle_min
-        )
+    if (max_mana_pct is not None and max_mana_pct > max_mana_threshold) or (
+        last_cycle is not None
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
+        > 60 * share_cycle_min
     ):
-        # curation PIK token issuance     
-            with db2.engine.begin() as conn:
-                issuer = get_default_token_issuer()
-                #issue tokens for members with pik > 0
-                pending_rows = conn.exec_driver_sql(
-                    "SELECT member_name, pik FROM tokenholders WHERE pik > 0"
-                ).fetchall()
+        # curation PIK token issuance
+        with db2.engine.begin() as conn:
+            issuer = get_default_token_issuer()
+            # issue tokens for members with pik > 0
+            pending_rows = conn.exec_driver_sql(
+                "SELECT member_name, pik FROM tokenholders WHERE pik > 0"
+            ).fetchall()
 
-                for member_name, pik in pending_rows:
-                    print(f"Issuing {pik} HSBIDAO to {member_name}")
-                    try:
-                        tx = issuer.issue(member_name, float(pik))
-                        trx_id = tx.get("trx_id")  # extract the string
+            for i, (member_name, pik) in enumerate(pending_rows):
+                if i > 0 and i % 5 == 0:
+                    print(f"Sleeping for {BATCH_SLEEP_TIME} seconds...")
+                    time.sleep(BATCH_SLEEP_TIME)
+                print(f"Issuing {pik} HSBIDAO to {member_name}")
+                try:
+                    tx = issuer.issue(member_name, float(pik))
+                    trx_id = tx.get("trx_id")  # extract the string
 
-                        print("Issued:", tx)
+                    print("Issued:", tx)
 
-                        # Reset pik to 0 after successful issuance
-                        conn.exec_driver_sql(
-                            "UPDATE tokenholders SET pik = 0 WHERE member_name = %s",
-                            (member_name,)
-                        )
-                        # Log success
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, NULL, %s)
-                            """,
-                            (trx_id, member_name, pik, "SUCCESS", "pik"),
-                        )
-
-                    except Exception as e:
-                        print(f"Failed to issue to {member_name}: {e}")
-                        # Log failure
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
-                            ("N/A", member_name, pik, "FAILURE", str(e), "FAILURE"),
-                        )
-
-          # Pending Balance Conversion logic here     
-            with db2.engine.begin() as conn:
-                issuer = get_default_token_issuer()
-                #issue tokens for members with abc_pik > 0
-                pending_rows = conn.exec_driver_sql(
-                    "SELECT member_name, abc_pik FROM tokenholders WHERE abc_pik > 0"
-                ).fetchall()
-
-                for member_name, abc_pik in pending_rows:
-                    print(f"Issuing {abc_pik} HSBIDAO to {member_name}")
-                    try:
-                        tx = issuer.issue(member_name, float(abc_pik))
-                        trx_id = tx.get("trx_id")  # extract the string
-
-                        print("Issued:", tx)
-
-                        # Reset abc_pik to 0 after successful issuance
-                        conn.exec_driver_sql(
-                            "UPDATE tokenholders SET abc_pik = 0 WHERE member_name = %s",
-                            (member_name,)
-                        )
-                        # Log success
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, NULL, %s)
-                            """,
-                            (trx_id, member_name, abc_pik, "SUCCESS", "Pending Balance Conversion"),
-                        )
-
-                    except Exception as e:
-                        print(f"Failed to issue to {member_name}: {e}")
-                        # Log failure
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
-                            ("N/A", member_name, abc_pik, "FAILURE", str(e), "FAILURE"),
-                        )
-
-                print("Upserting tokenholders into DB")
-                # Step 1: zero out all balances
-                conn.exec_driver_sql("UPDATE tokenholders SET tokens = 0")
-
-                # Step 2: upsert new balances
-                for h in holders:
+                    # Reset pik to 0 after successful issuance
+                    conn.exec_driver_sql(
+                        "UPDATE tokenholders SET pik = 0 WHERE member_name = %s",
+                        (member_name,),
+                    )
+                    # Log success
                     conn.exec_driver_sql(
                         """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, NULL, %s)
+                            """,
+                        (trx_id, member_name, pik, "SUCCESS", "pik"),
+                    )
+
+                except Exception as e:
+                    print(f"Failed to issue to {member_name}: {e}")
+                    # Log failure
+                    conn.exec_driver_sql(
+                        """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                        ("N/A", member_name, pik, "FAILURE", str(e), "FAILURE"),
+                    )
+
+        # Pending Balance Conversion logic here
+        with db2.engine.begin() as conn:
+            issuer = get_default_token_issuer()
+            # issue tokens for members with abc_pik > 0
+            pending_rows = conn.exec_driver_sql(
+                "SELECT member_name, abc_pik FROM tokenholders WHERE abc_pik > 0"
+            ).fetchall()
+
+            for i, (member_name, abc_pik) in enumerate(pending_rows):
+                if i > 0 and i % 5 == 0:
+                    print(f"Sleeping for {BATCH_SLEEP_TIME} seconds...")
+                    time.sleep(BATCH_SLEEP_TIME)
+                print(f"Issuing {abc_pik} HSBIDAO to {member_name}")
+                try:
+                    tx = issuer.issue(member_name, float(abc_pik))
+                    trx_id = tx.get("trx_id")  # extract the string
+
+                    print("Issued:", tx)
+
+                    # Reset abc_pik to 0 after successful issuance
+                    conn.exec_driver_sql(
+                        "UPDATE tokenholders SET abc_pik = 0 WHERE member_name = %s",
+                        (member_name,),
+                    )
+                    # Log success
+                    conn.exec_driver_sql(
+                        """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, NULL, %s)
+                            """,
+                        (
+                            trx_id,
+                            member_name,
+                            abc_pik,
+                            "SUCCESS",
+                            "Pending Balance Conversion",
+                        ),
+                    )
+
+                except Exception as e:
+                    print(f"Failed to issue to {member_name}: {e}")
+                    # Log failure
+                    conn.exec_driver_sql(
+                        """
+                            INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                        ("N/A", member_name, abc_pik, "FAILURE", str(e), "FAILURE"),
+                    )
+
+            print("Upserting tokenholders into DB")
+            # Step 1: zero out all balances
+            conn.exec_driver_sql("UPDATE tokenholders SET tokens = 0")
+
+            # Step 2: upsert new balances
+            for h in holders:
+                conn.exec_driver_sql(
+                    """
                         INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
                         VALUES (%s, %s, %s)
                         ON DUPLICATE KEY UPDATE
@@ -149,8 +157,9 @@ def main():
                             tokens = VALUES(tokens);
 
                         """,
-                        (datetime.now(timezone.utc), h["account"], h["balance"])
-                    )          
-            
+                    (datetime.now(timezone.utc), h["account"], h["balance"]),
+                )
+
+
 if __name__ == "__main__":
     main()
