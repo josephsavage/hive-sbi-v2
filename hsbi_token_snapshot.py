@@ -101,7 +101,7 @@ def main():
                             """),
                             {"recipient": member_name, "units": pik, "err": str(e)},
                         )
-
+        time.sleep(BATCH_SLEEP_TIME)
 
         # Pending Balance Conversion logic here
         with db2.engine.begin() as conn:
