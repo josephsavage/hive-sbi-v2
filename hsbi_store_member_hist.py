@@ -1,7 +1,6 @@
 import time
 from datetime import datetime, timedelta, timezone
 
-from nectar import Hive
 from nectar.blockchain import Blockchain
 from nectar.comment import Comment
 from nectar.utils import addTzInfo, construct_authorperm, formatTimeString
@@ -51,7 +50,6 @@ def run():
 
     curationOptimTrx = CurationOptimizationTrx(db)
     #    curationOptimTrx.delete_old_posts(days=7)
-    # Update current node list from @fullnodeupdate
     nodes = make_nodes()
     node_list = (
         nodes.get_nodes(hive=cfg["hive_blockchain"])
@@ -172,7 +170,9 @@ def run():
                     vote = None
                     for alt_node in node_list:
                         try:
-                            alt_hv = Hive(node=[alt_node], num_retries=3, timeout=10)
+                            alt_hv = make_hive(
+                                cfg, node=[alt_node], num_retries=3, timeout=10
+                            )
                             vote = Vote(
                                 op["voter"],
                                 authorperm=authorperm,

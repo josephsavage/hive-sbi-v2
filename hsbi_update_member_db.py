@@ -4,9 +4,7 @@ from datetime import datetime, timedelta, timezone
 from time import sleep
 
 import dataset
-from nectar import Hive
 from nectar.account import Account
-from nectar.nodelist import NodeList
 from nectar.utils import (
     formatTimeString,
 )
@@ -120,7 +118,6 @@ def run():
     databaseConnector = cfg["databaseConnector"]
     databaseConnector2 = cfg["databaseConnector2"]
     mgnt_shares = cfg["mgnt_shares"]
-    hive_blockchain = cfg["hive_blockchain"]
     
     rt = get_runtime()
     stor = rt["storages"]
@@ -203,7 +200,6 @@ def run():
             reverse=True,
         )
 
-        # Update current node list from @fullnodeupdate
         keys_list = []
         key = keyStorage.get("steembasicincome", "memo")
         if key is not None:
@@ -224,9 +220,7 @@ def run():
             }
 
         # print(key_list)
-        nodes = NodeList()
-        nodes.update_nodes()
-        hv = Hive(keys=keys_list, node=nodes.get_nodes(hive=hive_blockchain))
+        hv = make_hive(cfg, keys=keys_list)
 
         if memo_transfer_acc is not None:
             try:

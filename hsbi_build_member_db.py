@@ -21,7 +21,6 @@ def run():
     if not memberStorage.exists_table():
         memberStorage.create_table()
 
-    # Update current node list from @fullnodeupdate
     print("hsbi_build_member_db: build member database")
     # memberStorage.wipe(True)
     accs = memberStorage.get_all_accounts()
