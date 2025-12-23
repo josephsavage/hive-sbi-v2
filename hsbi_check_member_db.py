@@ -10,7 +10,6 @@ def run():
 
     hv = make_hive(cfg)
 
-    # Update current node list from @fullnodeupdate
     print("hsbi_check_member_db: check member database")
     # memberStorage.wipe(True)
     member_accounts = memberStorage.get_all_accounts()

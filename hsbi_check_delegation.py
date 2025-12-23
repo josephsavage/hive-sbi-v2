@@ -1,10 +1,7 @@
 from datetime import datetime, timezone
 
 import dataset
-from nectar import Hive
 from nectar.instance import set_shared_blockchain_instance
-from nectar.nodelist import NodeList
-from nectar.utils import formatTimeString
 
 from hivesbi.settings import get_runtime, make_hive, Config
 from hivesbi.storage import ConfigurationDB, TrxDB
@@ -20,8 +17,6 @@ def run():
     cfg = Config.load()
     databaseConnector = cfg["databaseConnector"]
     databaseConnector2 = cfg["databaseConnector2"]
-    hive_blockchain = cfg["hive_blockchain"]
-
     rt = get_runtime()
     
     stor = rt["storages"]
@@ -57,12 +52,7 @@ def run():
         )
     ):
         # your logic here
-        nodes = NodeList()
-        try:
-            nodes.update_nodes()
-        except Exception:
-            print("hsbi_check_delegation: could not update nodes")
-        hv = Hive(node=nodes.get_nodes(hive=hive_blockchain))
+        hv = make_hive(cfg)
         set_shared_blockchain_instance(hv)
 
         transferStorage = TransferTrx(db)

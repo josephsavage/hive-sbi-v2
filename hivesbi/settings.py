@@ -155,11 +155,6 @@ def connect_dbs(cfg: Config):
 
 def make_nodes() -> NodeList:
     nodes = NodeList()
-    try:
-        nodes.update_nodes()
-    except Exception:
-        # Keep NodeList usable even if update fails; callers still get a default list
-        pass
     return nodes
 
 
@@ -212,14 +207,13 @@ def make_storages(db, db2) -> Dict[str, Any]:
 
 
 def get_runtime(path: Optional[os.PathLike[str] | str] = None) -> Dict[str, Any]:
-    """Assemble a common runtime package: cfg, dbs, storages, conf, accounts, and a Hive instance."""
+    """Assemble a common runtime package: cfg, dbs, storages, conf, and accounts."""
     cfg = get_config(path)
     db, db2, db3 = connect_dbs(cfg)
     stor = make_storages(db, db2)
     conf_setup = stor["conf"].get() if "conf" in stor else None
     accounts = stor["accounts"].get() if "accounts" in stor else []
     accounts_data = stor["accounts"].get_data() if "accounts" in stor else {}
-    hv = make_hive(cfg)
     return {
         "cfg": cfg,
         "db": db,
@@ -229,5 +223,4 @@ def get_runtime(path: Optional[os.PathLike[str] | str] = None) -> Dict[str, Any]
         "conf_setup": conf_setup,
         "accounts": accounts,
         "accounts_data": accounts_data,
-        "hv": hv,
     }
