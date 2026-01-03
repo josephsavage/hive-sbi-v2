@@ -117,7 +117,7 @@ def run():
     cfg = Config.load()
     databaseConnector = cfg["databaseConnector"]
     databaseConnector2 = cfg["databaseConnector2"]
-    mgnt_shares = cfg["mgnt_shares"]
+    # mgnt_shares = cfg["mgnt_shares"]
     
     rt = get_runtime()
     stor = rt["storages"]
@@ -247,9 +247,9 @@ def run():
             member_data[m].reset_share_age_list()
 
         shares_sum = 0
-        latest_share = trxStorage.get_lastest_share_type("Mgmt")
-        mngt_shares_sum = (latest_share["index"] + 1) / len(mgnt_shares) * 100
-        print(f"hsbi_update_member_db: mngt_shares sum {mngt_shares_sum}")
+        # latest_share = trxStorage.get_lastest_share_type("Mgmt")
+        # mngt_shares_sum = (latest_share["index"] + 1) / len(mgnt_shares) * 100
+        #vprint(f"hsbi_update_member_db: mngt_shares sum {mngt_shares_sum}")
         latest_data_timestamp = None
 
         for op in data:
@@ -406,37 +406,37 @@ def run():
                             member_data[s].append_share_age(timestamp, shares)
                             
 
-        print(
-            "mngt_shares: %d, shares_sum %d - (mngt_shares * 20): %d - shares_sum - 100: %d"
-            % (mngt_shares, shares_sum, (mngt_shares * 20), shares_sum - 100)
-        )
-        if (mngt_shares * 20) < shares_sum - 100 and not mngt_shares_assigned:
-            mngt_shares_assigned = True
-            mngt_shares_sum += 100
-            print("hsbi_update_member_db: add mngt shares")
-            latest_share = trxStorage.get_lastest_share_type("Mgmt")
-            if latest_share is not None:
-                start_index = latest_share["index"] + 1
-            else:
-                start_index = 0
-            for account in mgnt_shares:
-                shares = mgnt_shares[account]
-                mgmt_data = {
-                    "index": start_index,
-                    "source": "mgmt",
-                    "memo": "",
-                    "account": account,
-                    "sponsor": account,
-                    "sponsee": {},
-                    "shares": shares,
-                    "vests": float(0),
-                    "timestamp": formatTimeString(timestamp),
-                    "status": "Valid",
-                    "share_type": "Mgmt",
-                }
-                start_index += 1
-                print(f"hsbi_update_member_db: {mgmt_data}")
-                trxStorage.add(mgmt_data)
+       # print(
+       #     "mngt_shares: %d, shares_sum %d - (mngt_shares * 20): %d - shares_sum - 100: %d"
+       #     % (mngt_shares, shares_sum, (mngt_shares * 20), shares_sum - 100)
+       # )
+       # if (mngt_shares * 20) < shares_sum - 100 and not mngt_shares_assigned:
+       #     mngt_shares_assigned = True
+       #     mngt_shares_sum += 100
+       #     print("hsbi_update_member_db: add mngt shares")
+       #     latest_share = trxStorage.get_lastest_share_type("Mgmt")
+       #     if latest_share is not None:
+       #         start_index = latest_share["index"] + 1
+       #     else:
+       #         start_index = 0
+       #     for account in mgnt_shares:
+       #         shares = mgnt_shares[account]
+       #         mgmt_data = {
+       #             "index": start_index,
+       #             "source": "mgmt",
+       #             "memo": "",
+       #             "account": account,
+       #             "sponsor": account,
+       #             "sponsee": {},
+       #             "shares": shares,
+       #             "vests": float(0),
+       #             "timestamp": formatTimeString(timestamp),
+       #             "status": "Valid",
+       #             "share_type": "Mgmt",
+       #         }
+       #         start_index += 1
+       #         print(f"hsbi_update_member_db: {mgmt_data}")
+       #         trxStorage.add(mgmt_data)
 
         # add bonus_shares from active delegation
         for m in member_data:
