@@ -5,11 +5,8 @@ from hivesbi.settings import get_runtime, Config
 from hivesbi.storage import ConfigurationDB
 from hivesbi.utils import ensure_timezone_aware
 from hivesbi.issue import get_tokenholders, get_default_token_issuer
-
 from decimal import Decimal
 from collections import defaultdict
-
-from nectar.engine import HiveEngine
 
 def lp_token_symbol(pair: str) -> str:
     return "LPS" + pair.replace(":", "_")
