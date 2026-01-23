@@ -11,8 +11,6 @@ from collections import defaultdict
 
 from nectar.engine import HiveEngine
 
-he = HiveEngine()
-
 def lp_token_symbol(pair: str) -> str:
     return "LPS" + pair.replace(":", "_")
 
@@ -92,11 +90,18 @@ def aggregate_hsbidao_across_pools():
             totals[member] += amt
 
     return totals
+    
+def main():
+    rt = get_runtime()
+    cfg = rt["cfg"]
 
 
-if __name__ == "__main__":
     totals = aggregate_hsbidao_across_pools()
 
     print("\nHSBIDAO exposure across all configured LP pools:\n")
     for member, amt in sorted(totals.items(), key=lambda x: x[0]):
         print(f"{member}: {amt}")
+
+
+if __name__ == "__main__":
+    main()
