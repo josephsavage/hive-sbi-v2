@@ -80,7 +80,7 @@ def aggregate_hsbidao_across_pools():
     """
     totals = defaultdict(Decimal)
 
-    for lp_symbol in config.LP_SYMBOL:
+    for lp_symbol in Config.LP_SYMBOL:
         pool_amounts = extract_hsbidao_amounts(lp_symbol)
 
         for member, amt in pool_amounts.items():
