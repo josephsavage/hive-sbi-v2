@@ -1,7 +1,7 @@
 import time
 from sqlalchemy import text
 from datetime import datetime, timezone
-from hivesbi.settings import get_runtime, config
+from hivesbi.settings import get_runtime, Config
 from hivesbi.storage import ConfigurationDB
 from hivesbi.utils import ensure_timezone_aware
 from hivesbi.issue import get_tokenholders, get_default_token_issuer
