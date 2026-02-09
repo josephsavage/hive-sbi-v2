@@ -1,5 +1,7 @@
 from collections import defaultdict
 from decimal import Decimal
+from hivesbi.storage import ConfigurationDB
+from hivesbi.utils import ensure_timezone_aware
 
 from nectarengine.api import Api
 
@@ -95,17 +97,46 @@ def main():
     cfg = rt["cfg"]
     db2 = rt.get("db2")
     
-    totals = aggregate_hsbidao_across_pools(cfg)
+    # Open configuration database via storages
+    stor = rt["storages"]
+    confStorage: ConfigurationDB = stor["conf"]
+    conf_setup = confStorage.get()
+    share_cycle_min = conf_setup["share_cycle_min"]
 
-    print("\nHSBIDAO exposure across all configured LP pools:\n")
-    for member, amt in sorted(totals.items(), key=lambda x: x[0]):
-        print(f"{member}: {amt}")
-
-    # --- NEW: write LP_tokens into tokenholders ---------------------------
     if db2 is not None:
         print("\nUpdating LP_tokens in tokenholders…")
         
         with db2.engine.begin() as conn:
+            # get max mana_pct from accounts table
+            result = conn.exec_driver_sql(
+                "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
+            ).fetchone()
+
+            max_mana_pct = (
+                result.max_mana_pct or 0
+            )  # or result.max_mana_pct if using RowMapping
+            print("hsbi_liquidpools fetching max VP level: ", max_mana_pct)
+
+    mana_pct_target = conf_setup.get("mana_pct_target", 0)
+    mana_threshold = conf_setup.get("mana_threshold", 0)
+    max_mana_threshold = mana_threshold * mana_pct_target
+    last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
+
+    # Determine whether a new cycle should run (proper logic from example)
+    if (max_mana_pct is not None and max_mana_pct > max_mana_threshold) or (
+        last_cycle is not None
+        and (datetime.now(timezone.utc) - last_cycle).total_seconds()
+        > 60 * share_cycle_min
+    ):
+        
+        totals = aggregate_hsbidao_across_pools(cfg)
+
+        print("\nHSBIDAO exposure across all configured LP pools:\n")
+        for member, amt in sorted(totals.items(), key=lambda x: x[0]):
+            print(f"{member}: {amt}")
+
+
+        
             conn.exec_driver_sql(
                 "UPDATE tokenholders SET LP_tokens = 0",
             )
