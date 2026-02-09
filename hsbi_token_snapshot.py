@@ -160,17 +160,17 @@ def main():
 
         with db2.engine.begin() as conn:
             # Step 1: zero out all balances
-            conn.exec_driver_sql("UPDATE tokenholders SET tokens = 0")
+            conn.exec_driver_sql("UPDATE tokenholders SET liquid_tokens = 0")
 
             # Step 2: upsert new balances
             for h in holders:
                 conn.exec_driver_sql(
                     """
-                    INSERT INTO tokenholders (snapshot_timestamp, member_name, tokens)
+                    INSERT INTO tokenholders (snapshot_timestamp, member_name, liquid_tokens)
                     VALUES (%s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         snapshot_timestamp = VALUES(snapshot_timestamp),
-                        tokens = VALUES(tokens);
+                        liquid_tokens = VALUES(liquid_tokens);
 
                     """,
                     (datetime.now(timezone.utc), h["account"], h["balance"]),
