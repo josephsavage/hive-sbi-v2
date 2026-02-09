@@ -102,6 +102,24 @@ def main():
     for member, amt in sorted(totals.items(), key=lambda x: x[0]):
         print(f"{member}: {amt}")
 
+     # --- NEW: write LP_tokens into tokenholders ---------------------------
+    if db2 is not None:
+        print("\nUpdating LP_tokens in tokenholders…")
+        
+        with db2.engine.begin() as conn:
+            conn.execute(text("UPDATE tokenholders SET LP_tokens = 0"))
+            for member_name, lp_amt in totals.items():
+                conn.execute(
+                    text("""
+                        UPDATE tokenholders
+                        SET LP_tokens = :lp
+                        WHERE member_name = :m
+                    """),
+                    {"lp": lp_amt, "m": member_name},
+                )
+        print("LP_tokens updated.")
+
+
 
 if __name__ == "__main__":
     main()
