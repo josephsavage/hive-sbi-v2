@@ -96,9 +96,9 @@ def main():
     
     for sym in cfg["LP_SYMBOL"]:
 
-    totals = aggregate_hsbidao_across_pools(cfg)
+        totals = aggregate_hsbidao_across_pools(cfg)
 
-    print("\nHSBIDAO exposure across all configured LP pools:\n")
+        print("\nHSBIDAO exposure across all configured LP pools:\n")
     for member, amt in sorted(totals.items(), key=lambda x: x[0]):
         print(f"{member}: {amt}")
 
