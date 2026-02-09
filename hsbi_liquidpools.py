@@ -13,11 +13,10 @@ def lp_token_symbol(pair: str) -> str:
 
 
 def get_lp_holders(lp_symbol: str):
-    lp_token = lp_token_symbol(lp_symbol)
     return he.find_all(
-        contract_name="tokens",
-        table_name="balances",
-        query={"symbol": lp_token},
+        contract_name="marketpools",
+        table_name="liquidityPositions",
+        query={"tokenPair": lp_symbol},
     )
 
 
@@ -62,7 +61,7 @@ def extract_hsbidao_amounts(lp_symbol: str):
 
     for row in holders:
         acct = row["account"]
-        lp_balance = Decimal(row["balance"])
+        lp_balance = Decimal(row["shares"])
 
         if lp_balance == 0:
             continue
