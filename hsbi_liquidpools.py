@@ -82,7 +82,7 @@ def aggregate_hsbidao_across_pools():
     """
     totals = defaultdict(Decimal)
 
-    for lp_symbol in Config.LP_SYMBOL:
+    for lp_symbol in cfg["LP_SYMBOL"]:
         pool_amounts = extract_hsbidao_amounts(lp_symbol)
 
         for member, amt in pool_amounts.items():
@@ -93,6 +93,7 @@ def aggregate_hsbidao_across_pools():
 
 def main():
     rt = get_runtime()
+    cfg = rt["cfg"]
 
     totals = aggregate_hsbidao_across_pools()
 
