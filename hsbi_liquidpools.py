@@ -94,6 +94,8 @@ def aggregate_hsbidao_across_pools(cfg):
 def main():
     rt = get_runtime()
     cfg = rt["cfg"]
+    print("Loaded LP_SYMBOL:", cfg.get("LP_SYMBOL"))
+    print("Config source:", cfg.source_path)
 
     totals = aggregate_hsbidao_across_pools(cfg)
 
