@@ -75,7 +75,7 @@ def extract_hsbidao_amounts(lp_symbol: str):
     return per_member
 
 
-def aggregate_hsbidao_across_pools():
+def aggregate_hsbidao_across_pools(cfg):
     """
     Iterates over all LP symbols in config.LP_SYMBOL
     and aggregates HSBIDAO exposure per member.
