@@ -95,7 +95,7 @@ def main():
     rt = get_runtime()
     cfg = rt["cfg"]
 
-    totals = aggregate_hsbidao_across_pools()
+    totals = aggregate_hsbidao_across_pools(cfg)
 
     print("\nHSBIDAO exposure across all configured LP pools:\n")
     for member, amt in sorted(totals.items(), key=lambda x: x[0]):
