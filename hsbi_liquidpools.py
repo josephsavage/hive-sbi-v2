@@ -95,15 +95,13 @@ def main():
     cfg = rt["cfg"]
     db2 = rt.get("db2")
     
-    for sym in cfg["LP_SYMBOL"]:
+    totals = aggregate_hsbidao_across_pools(cfg)
 
-        totals = aggregate_hsbidao_across_pools(cfg)
-
-        print("\nHSBIDAO exposure across all configured LP pools:\n")
+    print("\nHSBIDAO exposure across all configured LP pools:\n")
     for member, amt in sorted(totals.items(), key=lambda x: x[0]):
         print(f"{member}: {amt}")
 
-     # --- NEW: write LP_tokens into tokenholders ---------------------------
+    # --- NEW: write LP_tokens into tokenholders ---------------------------
     if db2 is not None:
         print("\nUpdating LP_tokens in tokenholders…")
         
@@ -116,7 +114,7 @@ def main():
             for member_name, lp_amt in totals.items():
                 conn.exec_driver_sql(
                     "UPDATE tokenholders SET LP_tokens = %s WHERE member_name = %s",
-                    {"lp": lp_amt, "m": member_name},
+                    (lp_amt, member_name),
                 )
         print("LP_tokens updated.")
 
