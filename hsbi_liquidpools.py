@@ -108,14 +108,12 @@ def main():
         print("\nUpdating LP_tokens in tokenholders…")
         
         with db2.engine.begin() as conn:
-            conn.execute(text("UPDATE tokenholders SET LP_tokens = 0"))
+            conn.exec_driver_sql(
+                "UPDATE tokenholders SET LP_tokens = 0",
+            )
             for member_name, lp_amt in totals.items():
-                conn.execute(
-                    text("""
-                        UPDATE tokenholders
-                        SET LP_tokens = :lp
-                        WHERE member_name = :m
-                    """),
+                conn.exec_driver_sql(
+                    "UPDATE tokenholders SET LP_tokens = :lp WHERE member_name = :m",
                     {"lp": lp_amt, "m": member_name},
                 )
         print("LP_tokens updated.")
