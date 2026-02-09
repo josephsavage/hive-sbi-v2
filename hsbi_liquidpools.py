@@ -1,31 +1,33 @@
-import time
-from sqlalchemy import text
-from datetime import datetime, timezone
-from hivesbi.settings import get_runtime, Config
-from hivesbi.storage import ConfigurationDB
-from hivesbi.utils import ensure_timezone_aware
-from hivesbi.issue import get_tokenholders, get_default_token_issuer
-from decimal import Decimal
 from collections import defaultdict
+from decimal import Decimal
+
+from nectarengine.api import Api
+
+from hivesbi.settings import Config, get_runtime
+
+he = Api()
+
 
 def lp_token_symbol(pair: str) -> str:
     return "LPS" + pair.replace(":", "_")
 
+
 def get_lp_holders(lp_symbol: str):
     lp_token = lp_token_symbol(lp_symbol)
-    return he.find(
-        contract="tokens",
-        table="balances",
+    return he.find_all(
+        contract_name="tokens",
+        table_name="balances",
         query={"symbol": lp_token},
-        limit=5000,
     )
+
 
 def get_pool_info(lp_symbol: str):
     return he.find_one(
-        contract="marketpools",
-        table="pools",
+        contract_name="marketpools",
+        table_name="pools",
         query={"tokenPair": lp_symbol},
     )
+
 
 def extract_hsbidao_amounts(lp_symbol: str):
     """
@@ -87,11 +89,10 @@ def aggregate_hsbidao_across_pools():
             totals[member] += amt
 
     return totals
-    
+
+
 def main():
     rt = get_runtime()
-    cfg = rt["cfg"]
-
 
     totals = aggregate_hsbidao_across_pools()
 
