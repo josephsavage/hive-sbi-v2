@@ -98,7 +98,8 @@ def main():
     print("Config source:", cfg.source_path)
     for sym in cfg["LP_SYMBOL"]:
         print("Checking pool:", sym, "→", get_pool_info(sym))
-    
+    print("LP token symbol:", lp_token_symbol("HSBIDAO:ECOBANK"))
+    print("Holders:", get_lp_holders("HSBIDAO:ECOBANK"))
 
     totals = aggregate_hsbidao_across_pools(cfg)
 
