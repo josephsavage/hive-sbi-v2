@@ -93,6 +93,7 @@ def aggregate_hsbidao_across_pools(cfg):
 def main():
     rt = get_runtime()
     cfg = rt["cfg"]
+    db2 = rt.get("db2")
     
     for sym in cfg["LP_SYMBOL"]:
 
