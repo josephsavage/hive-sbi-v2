@@ -106,9 +106,7 @@ def main():
     conf_setup = confStorage.get()
     share_cycle_min = conf_setup["share_cycle_min"]
 
-    if db2 is not None:
-        print("\nUpdating LP_tokens in tokenholders…")
-        
+    if db2 is not None:        
         with db2.engine.begin() as conn:
             # get max mana_pct from accounts table
             result = conn.exec_driver_sql(
@@ -131,7 +129,7 @@ def main():
         and (datetime.now(timezone.utc) - last_cycle).total_seconds()
         > 60 * share_cycle_min
     ):
-        
+        print("\nUpdating LP_tokens in tokenholders…")        
         totals = aggregate_hsbidao_across_pools(cfg)
 
         print("\nHSBIDAO exposure across all configured LP pools:\n")
