@@ -111,9 +111,11 @@ def main():
             conn.exec_driver_sql(
                 "UPDATE tokenholders SET LP_tokens = 0",
             )
+
+            # Step 2: upsert new balances
             for member_name, lp_amt in totals.items():
                 conn.exec_driver_sql(
-                    "UPDATE tokenholders SET LP_tokens = :lp WHERE member_name = :m",
+                    "UPDATE tokenholders SET LP_tokens = %s WHERE member_name = %s",
                     {"lp": lp_amt, "m": member_name},
                 )
         print("LP_tokens updated.")
