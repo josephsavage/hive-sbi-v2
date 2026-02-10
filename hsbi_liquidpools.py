@@ -109,6 +109,7 @@ def main():
     if db2 is not None:        
         with db2.engine.begin() as conn:
             # get max mana_pct from accounts table
+            
             result = conn.exec_driver_sql(
                 "SELECT MAX(mana_pct) AS max_mana_pct FROM accounts"
             ).fetchone()
@@ -133,24 +134,20 @@ def main():
         totals = aggregate_hsbidao_across_pools(cfg)
 
         print("\nHSBIDAO exposure across all configured LP pools:\n")
-        for member, amt in sorted(totals.items(), key=lambda x: x[0]):
-            print(f"{member}: {amt}")
+  
+        with db2.engine.begin() as conn:
+            conn.execute(text("UPDATE tokenholders SET LP_tokens = 0"))
 
-
-        
-            conn.exec_driver_sql(
-                "UPDATE tokenholders SET LP_tokens = 0",
-            )
-
-            # Step 2: upsert new balances
             for member_name, lp_amt in totals.items():
-                conn.exec_driver_sql(
-                    "UPDATE tokenholders SET LP_tokens = %s WHERE member_name = %s",
-                    (lp_amt, member_name),
+                conn.execute(
+                    text("""
+                        UPDATE tokenholders
+                        SET LP_tokens = :lp_amt
+                        WHERE member_name = :member_name
+                    """),
+                    {"lp_amt": lp_amt, "member_name": member_name},
                 )
-        print("LP_tokens updated.")
-
-
+                print("LP_tokens updated.")
 
 if __name__ == "__main__":
     main()
