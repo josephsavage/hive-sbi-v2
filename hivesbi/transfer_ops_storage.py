@@ -1,4 +1,4 @@
-# This Python file uses the following encoding: utf-8
+# hivesbi/transfer_ops_storage.py
 import logging
 from datetime import datetime, timezone, timedelta
 
