@@ -114,8 +114,9 @@ class MemoParser(object):
                                 )
                                 account_found = True
                             else:
-                                # Not a profile URL with /@username
-                                pass
+                                raise ValueError(
+                                    "URL path is not an account profile"
+                                )
                         else:
                             # Not a recognized frontend host
                             pass
@@ -231,7 +232,11 @@ class MemoParser(object):
                     else:
                         sponsors[account_name] = 1
                         amount_left -= 1
-        if n_words == 1 and len(sponsors) == 0:
+        if (
+            n_words == 1
+            and len(sponsors) == 0
+            and not words_memo[0].startswith(("http://", "https://"))
+        ):
             try:
                 account_name = (
                     words_memo[0]

@@ -1,0 +1,36 @@
+services:
+  mariadb:
+    image: mariadb:10.11.13
+    command:
+      - --character-set-server=latin1
+      - --collation-server=latin1_swedish_ci
+      - --sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+      - --max-allowed-packet=16777216
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    stdin_open: true
+    tty: true
+
+volumes:
+  mariadb-data:

@@ -1,0 +1,11 @@
+-c constraints-prod.txt
+
+dataset
+hive-nectar
+mysqlclient
+nectarengine
+
+mock
+parameterized
+pytest
+pytest-mock

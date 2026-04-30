@@ -1,0 +1,6 @@
+# Production package versions captured from the VPS on 2026-04-30.
+dataset==1.6.2
+hive-nectar==0.2.12
+mysqlclient==2.2.7
+nectarengine==0.2.2
+SQLAlchemy==1.4.54
