@@ -86,6 +86,19 @@ class TrxDB(object):
         data = dict(index=found_trx["index"], source=source, shares=shares)
         table.update(data, ["index", "source"])
 
+    def clear_delegation_accrual(self, source, account):
+        """Clear delegation accrual fields for the latest active delegation row."""
+        table = self.db[self.__tablename__]
+        found_trx = None
+        for trx in table.find(
+            source=source, account=account, status="Valid", share_type="Delegation"
+        ):
+            found_trx = trx
+        if found_trx is None:
+            return
+        data = dict(index=found_trx["index"], source=source, shares=0, vests=0)
+        table.update(data, ["index", "source"])
+
     def update_delegation_state(self, source, account, share_type_old, share_type_new):
         """Change share_age depending on timestamp"""
         table = self.db[self.__tablename__]

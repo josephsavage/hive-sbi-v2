@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 
 import dataset
 from nectar.instance import set_shared_blockchain_instance
@@ -11,6 +12,24 @@ from hivesbi.utils import ensure_timezone_aware
 
 def calculate_shares(delegation_shares, hp_share_ratio):
     return int(delegation_shares / hp_share_ratio)
+
+
+def calculate_virtual_tokens(delegated_hp):
+    return (Decimal(str(delegated_hp)) * Decimal("2")).quantize(
+        Decimal("0.001"), rounding=ROUND_HALF_UP
+    )
+
+
+def upsert_virtual_tokens(conn, member_name, virtual_tokens):
+    conn.exec_driver_sql(
+        """
+        INSERT INTO tokenholders (member_name, virtual_tokens)
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE
+            virtual_tokens = VALUES(virtual_tokens)
+        """,
+        (member_name, virtual_tokens),
+    )
 
 
 def run():
@@ -41,8 +60,8 @@ def run():
     last_cycle = ensure_timezone_aware(conf_setup["last_cycle"])
 
     share_cycle_min = conf_setup["share_cycle_min"]
-    hp_share_ratio = conf_setup["sp_share_ratio"]
     last_delegation_check = ensure_timezone_aware(conf_setup["last_delegation_check"])
+    previous_delegation_check = last_delegation_check
 
     if (
         (max_mana_pct is not None and max_mana_pct > max_mana_threshold)
@@ -60,6 +79,7 @@ def run():
 
         delegation = {}
         delegation_shares = {}
+        delegation_share_type = {}
         sum_hp = 0
         sum_hp_leased = 0
         sum_hp_shares = 0
@@ -88,18 +108,21 @@ def run():
         for d in sorted_delegation_list:
             if d["share_type"] == "Delegation":
                 delegation[d["account"]] = hv.vests_to_hp(float(d["vests"]))
+                delegation_share_type[d["account"]] = d["share_type"]
                 delegation_timestamp[d["account"]] = ensure_timezone_aware(
                     d["timestamp"]
                 )
                 delegation_shares[d["account"]] = d["shares"]
             elif d["share_type"] == "DelegationLeased":
                 delegation[d["account"]] = 0
+                delegation_share_type[d["account"]] = d["share_type"]
                 delegation_timestamp[d["account"]] = ensure_timezone_aware(
                     d["timestamp"]
                 )
                 delegation_shares[d["account"]] = d["shares"]
             elif d["share_type"] == "RemovedDelegation":
                 delegation[d["account"]] = 0
+                delegation_share_type[d["account"]] = d["share_type"]
                 delegation_timestamp[d["account"]] = ensure_timezone_aware(
                     d["timestamp"]
                 )
@@ -113,8 +136,8 @@ def run():
             if delegation_account[acc] == 0:
                 continue
             if (
-                last_delegation_check is not None
-                and delegation_timestamp[acc] <= last_delegation_check
+                previous_delegation_check is not None
+                and delegation_timestamp[acc] <= previous_delegation_check
             ):
                 continue
             if (
@@ -130,14 +153,40 @@ def run():
             leased = transferStorage.find(acc, account)
             if len(leased) == 0:
                 delegation_shares[acc] = delegation_account[acc]
-                shares = calculate_shares(delegation_account[acc], hp_share_ratio)
-                trxStorage.update_delegation_shares(account, acc, shares)
+                virtual_tokens = calculate_virtual_tokens(delegation_account[acc])
+                trxStorage.clear_delegation_accrual(account, acc)
+                with db2.engine.begin() as conn:
+                    upsert_virtual_tokens(conn, acc, virtual_tokens)
+                print(
+                    f"hsbi_check_delegation: set {acc} virtual_tokens to {virtual_tokens}"
+                )
                 continue
             delegation_leased[acc] = delegation_account[acc]
             trxStorage.update_delegation_state(
                 account, acc, "Delegation", "DelegationLeased"
             )
+            with db2.engine.begin() as conn:
+                upsert_virtual_tokens(conn, acc, Decimal("0.000"))
             print(f"hsbi_check_delegation: set delegation from {acc} to leased")
+
+        for acc, share_type in delegation_share_type.items():
+            if share_type not in ["RemovedDelegation", "DelegationLeased"]:
+                continue
+            if (
+                previous_delegation_check is not None
+                and delegation_timestamp[acc] <= previous_delegation_check
+            ):
+                continue
+            with db2.engine.begin() as conn:
+                upsert_virtual_tokens(conn, acc, Decimal("0.000"))
+            if (
+                last_delegation_check is not None
+                and last_delegation_check < delegation_timestamp[acc]
+            ):
+                last_delegation_check = delegation_timestamp[acc]
+            elif last_delegation_check is None:
+                last_delegation_check = delegation_timestamp[acc]
+            print(f"hsbi_check_delegation: cleared virtual_tokens for {acc}")
 
         dd = delegation
         for d in dd:
