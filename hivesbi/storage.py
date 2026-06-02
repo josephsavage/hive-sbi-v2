@@ -76,7 +76,13 @@ class TrxDB(object):
         return found_trx
 
     def update_delegation_shares(self, source, account, shares):
-        """Change share_age depending on timestamp"""
+        """Change share_age depending on timestamp.
+
+        NOTE: superseded and no longer called in production. Delegations now grant
+        virtual_tokens instead of delegation bonus_shares; hsbi_check_delegation
+        zeroes the trx accrual (shares AND vests) via clear_delegation_trx and
+        upserts tokenholders.virtual_tokens. Kept for reference / manual use only.
+        """
         table = self.db[self.__tablename__]
         found_trx = None
         for trx in table.find(
@@ -84,19 +90,6 @@ class TrxDB(object):
         ):
             found_trx = trx
         data = dict(index=found_trx["index"], source=source, shares=shares)
-        table.update(data, ["index", "source"])
-
-    def clear_delegation_accrual(self, source, account):
-        """Clear delegation accrual fields for the latest active delegation row."""
-        table = self.db[self.__tablename__]
-        found_trx = None
-        for trx in table.find(
-            source=source, account=account, status="Valid", share_type="Delegation"
-        ):
-            found_trx = trx
-        if found_trx is None:
-            return
-        data = dict(index=found_trx["index"], source=source, shares=0, vests=0)
         table.update(data, ["index", "source"])
 
     def update_delegation_state(self, source, account, share_type_old, share_type_new):

@@ -338,7 +338,7 @@ CREATE TABLE `token_issuance_log` (
   `recipient` varchar(100) NOT NULL,
   `units` decimal(16,3) NOT NULL,
   `issued_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `status` enum('SUCCESS','FAILURE') NOT NULL,
+  `status` enum('SUCCESS','FAILURE','PENDING') NOT NULL,
   `error_message` text DEFAULT NULL,
   `rationale` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`),

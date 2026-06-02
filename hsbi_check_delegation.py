@@ -32,6 +32,49 @@ def upsert_virtual_tokens(conn, member_name, virtual_tokens):
     )
 
 
+def clear_delegation_trx(conn, source, account):
+    """Zero shares AND vests on the latest valid Delegation trx row.
+
+    hsbi_update_member_db recomputes delegation bonus_shares from shares OR, when
+    shares is 0, from vests — so both must be zeroed for the delegation to stop
+    generating member accrual and be replaced by virtual_tokens.
+    """
+    row = conn.exec_driver_sql(
+        """
+        SELECT `index` FROM trx
+        WHERE source = %s AND account = %s
+          AND status = 'Valid' AND share_type = 'Delegation'
+        ORDER BY `index` DESC
+        LIMIT 1
+        """,
+        (source, account),
+    ).fetchone()
+    if row is None:
+        return
+    conn.exec_driver_sql(
+        "UPDATE trx SET shares = 0, vests = 0 WHERE `index` = %s AND source = %s",
+        (row[0], source),
+    )
+
+
+def apply_active_delegations(conn, source, active_virtual):
+    """Clear delegation accrual and set virtual_tokens for each delegator.
+
+    Both writes for a delegator happen in the caller's single transaction, so a
+    delegator never ends up with cleared accrual but unset virtual_tokens (or vice
+    versa).
+    """
+    for account, virtual_tokens in active_virtual:
+        clear_delegation_trx(conn, source, account)
+        upsert_virtual_tokens(conn, account, virtual_tokens)
+
+
+def clear_virtual_tokens(conn, accounts):
+    """Set virtual_tokens to 0 for removed/leased delegators."""
+    for account in accounts:
+        upsert_virtual_tokens(conn, account, Decimal("0.000"))
+
+
 def run():
     cfg = Config.load()
     databaseConnector = cfg["databaseConnector"]
@@ -130,6 +173,9 @@ def run():
 
         delegation_leased = {}
         delegation_shares = {}
+        # Collected token changes, applied together in one batched transaction.
+        active_virtual = []  # [(account, virtual_tokens)] -> clear accrual + set virtual
+        zero_virtual = []    # [account] -> set virtual_tokens = 0 (removed/leased)
         print("hsbi_check_delegation: update delegation")
         delegation_account = delegation
         for acc in delegation_account:
@@ -147,26 +193,21 @@ def run():
                 last_delegation_check = delegation_timestamp[acc]
             elif last_delegation_check is None:
                 last_delegation_check = delegation_timestamp[acc]
-            # if acc in delegation_shares and delegation_shares[acc] > 0:
-            #    continue
             print(f"hsbi_check_delegation: {acc}")
             leased = transferStorage.find(acc, account)
             if len(leased) == 0:
                 delegation_shares[acc] = delegation_account[acc]
                 virtual_tokens = calculate_virtual_tokens(delegation_account[acc])
-                trxStorage.clear_delegation_accrual(account, acc)
-                with db2.engine.begin() as conn:
-                    upsert_virtual_tokens(conn, acc, virtual_tokens)
+                active_virtual.append((acc, virtual_tokens))
                 print(
-                    f"hsbi_check_delegation: set {acc} virtual_tokens to {virtual_tokens}"
+                    f"hsbi_check_delegation: will set {acc} virtual_tokens to {virtual_tokens}"
                 )
                 continue
             delegation_leased[acc] = delegation_account[acc]
             trxStorage.update_delegation_state(
                 account, acc, "Delegation", "DelegationLeased"
             )
-            with db2.engine.begin() as conn:
-                upsert_virtual_tokens(conn, acc, Decimal("0.000"))
+            zero_virtual.append(acc)
             print(f"hsbi_check_delegation: set delegation from {acc} to leased")
 
         for acc, share_type in delegation_share_type.items():
@@ -177,8 +218,7 @@ def run():
                 and delegation_timestamp[acc] <= previous_delegation_check
             ):
                 continue
-            with db2.engine.begin() as conn:
-                upsert_virtual_tokens(conn, acc, Decimal("0.000"))
+            zero_virtual.append(acc)
             if (
                 last_delegation_check is not None
                 and last_delegation_check < delegation_timestamp[acc]
@@ -186,7 +226,13 @@ def run():
                 last_delegation_check = delegation_timestamp[acc]
             elif last_delegation_check is None:
                 last_delegation_check = delegation_timestamp[acc]
-            print(f"hsbi_check_delegation: cleared virtual_tokens for {acc}")
+            print(f"hsbi_check_delegation: will clear virtual_tokens for {acc}")
+
+        # Apply all delegation token changes atomically in one batched transaction.
+        if active_virtual or zero_virtual:
+            with db2.engine.begin() as conn:
+                apply_active_delegations(conn, account, active_virtual)
+                clear_virtual_tokens(conn, zero_virtual)
 
         dd = delegation
         for d in dd:
