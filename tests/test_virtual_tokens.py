@@ -77,8 +77,10 @@ class PureLogicTests(unittest.TestCase):
         self.assertEqual(second, Decimal("0.000"))
 
     def test_parse_engine_issue_custom_json(self):
+        ts = datetime.now(timezone.utc)
         row = {
             "trx_id": "abc123",
+            "timestamp": ts,
             "op": [
                 "custom_json",
                 {
@@ -98,7 +100,12 @@ class PureLogicTests(unittest.TestCase):
         }
         self.assertEqual(
             _parse_engine_issue(row),
-            {"trx_id": "abc123", "recipient": "josephsavage", "units": Decimal("12.345")},
+            {
+                "trx_id": "abc123",
+                "recipient": "josephsavage",
+                "units": Decimal("12.345"),
+                "timestamp": ts,
+            },
         )
 
     def test_parse_engine_issue_ignores_non_issue(self):
@@ -262,7 +269,7 @@ class ReconciliationTests(DBTestCase):
         self.assertEqual(status, "SUCCESS")
         self.assertEqual(Decimal(str(pik)), Decimal("0.000"))
 
-    def test_stale_unmatched_pending_marked_failure(self):
+    def test_stale_unmatched_pending_stays_pending_without_covered_scan(self):
         stale_ts = datetime.now(timezone.utc) - timedelta(hours=6)
         result = self.x(
             """
@@ -274,6 +281,29 @@ class ReconciliationTests(DBTestCase):
         )
         log_id = result.lastrowid
         reconcile_issuances(self.conn, [], now=datetime.now(timezone.utc))
+        status = self.x(
+            "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
+        ).fetchone()[0]
+        self.assertEqual(status, "PENDING")
+
+    def test_stale_unmatched_pending_marked_failure_when_scan_covers_row(self):
+        stale_ts = datetime.now(timezone.utc) - timedelta(hours=6)
+        result = self.x(
+            """
+            INSERT INTO token_issuance_log
+                (trx_id, recipient, units, status, error_message, rationale, issued_at)
+            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
+            """,
+            (T_MGMT, Decimal("5.000"), stale_ts),
+        )
+        log_id = result.lastrowid
+        reconcile_issuances(
+            self.conn,
+            [],
+            now=datetime.now(timezone.utc),
+            covered_since=stale_ts - timedelta(minutes=1),
+            scan_complete=True,
+        )
         status = self.x(
             "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
         ).fetchone()[0]
@@ -302,6 +332,51 @@ class ReconciliationTests(DBTestCase):
         self.assertEqual(row[0], "SUCCESS")
         # audit-only: never attributed to Management or any balance rationale
         self.assertEqual(row[1], "reconciled")
+
+    def test_same_recipient_units_matches_nearest_pending_timestamp(self):
+        older_ts = datetime.now(timezone.utc) - timedelta(minutes=20)
+        newer_ts = datetime.now(timezone.utc) - timedelta(minutes=1)
+        old_id = self.x(
+            """
+            INSERT INTO token_issuance_log
+                (trx_id, recipient, units, status, error_message, rationale, issued_at)
+            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'pik', %s)
+            """,
+            (T_MGMT, Decimal("5.000"), older_ts),
+        ).lastrowid
+        new_id = self.x(
+            """
+            INSERT INTO token_issuance_log
+                (trx_id, recipient, units, status, error_message, rationale, issued_at)
+            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
+            """,
+            (T_MGMT, Decimal("5.000"), newer_ts),
+        ).lastrowid
+
+        reconcile_issuances(
+            self.conn,
+            [{
+                "trx_id": "chain_nearest_1",
+                "recipient": T_MGMT,
+                "units": Decimal("5.000"),
+                "timestamp": newer_ts + timedelta(seconds=30),
+            }],
+            now=datetime.now(timezone.utc),
+        )
+
+        rows = self.x(
+            """
+            SELECT id, status, trx_id, rationale
+            FROM token_issuance_log
+            WHERE id IN (%s, %s)
+            ORDER BY id
+            """,
+            (old_id, new_id),
+        ).fetchall()
+        self.assertEqual(rows[0][1], "PENDING")
+        self.assertEqual(rows[1][1], "SUCCESS")
+        self.assertEqual(rows[1][2], "chain_nearest_1")
+        self.assertEqual(rows[1][3], "Management")
 
 
 if __name__ == "__main__":

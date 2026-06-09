@@ -35,6 +35,7 @@ RATIONALE_BALANCE_COLUMN = {
 RECONCILIATION_WINDOW = timedelta(hours=5)
 HISTORY_SCAN_LIMIT = 1000
 PENDING_TRX_PLACEHOLDER = "PENDING"
+MATCH_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def token_decimal(value):
@@ -180,10 +181,13 @@ def _parse_engine_issue(history_row, token_symbol="HSBIDAO"):
         "trx_id": str(trx_id),
         "recipient": recipient,
         "units": floor_token_amount(quantity),
+        "timestamp": ensure_timezone_aware(row.get("timestamp") or op.get("timestamp")),
     }
 
 
-def fetch_recent_chain_issuances(issuer, token_symbol="HSBIDAO", limit=HISTORY_SCAN_LIMIT):
+def fetch_recent_chain_issuance_scan(
+    issuer, token_symbol="HSBIDAO", limit=HISTORY_SCAN_LIMIT
+):
     cutoff = datetime.now(timezone.utc) - RECONCILIATION_WINDOW
     try:
         history = issuer.hive_account.history_reverse(only_ops=["custom_json"])
@@ -192,28 +196,109 @@ def fetch_recent_chain_issuances(issuer, token_symbol="HSBIDAO", limit=HISTORY_S
             history = issuer.hive_account.history_reverse()
         except Exception as exc:
             print(f"Unable to fetch issuer history for reconciliation: {exc}")
-            return []
+            return {"issuances": [], "covered_since": None, "complete": False}
     except Exception as exc:
         print(f"Unable to fetch issuer history for reconciliation: {exc}")
-        return []
+        return {"issuances": [], "covered_since": None, "complete": False}
 
     issuances = []
     scanned = 0
+    reached_cutoff = False
+    saw_timestamp = False
     for history_row in history:
         scanned += 1
         if scanned > limit:
             break
         row, op = _unwrap_history_op(history_row)
         timestamp = ensure_timezone_aware(row.get("timestamp") or op.get("timestamp"))
+        if timestamp is not None:
+            saw_timestamp = True
         if timestamp is not None and timestamp < cutoff:
+            reached_cutoff = True
             break
         issue = _parse_engine_issue(history_row, token_symbol=token_symbol)
         if issue is not None:
             issuances.append(issue)
-    return issuances
+
+    complete = reached_cutoff or scanned < limit
+    if reached_cutoff:
+        covered_since = cutoff
+    elif complete and saw_timestamp:
+        covered_since = datetime.min.replace(tzinfo=timezone.utc)
+    else:
+        covered_since = None
+    return {"issuances": issuances, "covered_since": covered_since, "complete": complete}
 
 
-def reconcile_issuances(conn, chain_issuances, now=None):
+def fetch_recent_chain_issuances(issuer, token_symbol="HSBIDAO", limit=HISTORY_SCAN_LIMIT):
+    """Backward-compatible helper returning only issuances from the scan."""
+    return fetch_recent_chain_issuance_scan(issuer, token_symbol, limit)["issuances"]
+
+
+def _chain_issue_matches_pending(chain_issue, pending_row):
+    if chain_issue["recipient"] != pending_row["recipient"]:
+        return False
+    if token_decimal(chain_issue["units"]) != pending_row["units"]:
+        return False
+
+    chain_timestamp = chain_issue.get("timestamp")
+    issued_at = pending_row.get("issued_at")
+    if chain_timestamp is None or issued_at is None:
+        return True
+    return issued_at - MATCH_CLOCK_SKEW <= chain_timestamp <= issued_at + RECONCILIATION_WINDOW
+
+
+def _match_pending_rows_to_chain(pending_rows, chain_issuances):
+    """Match on-chain issues to the closest compatible PENDING row.
+
+    Hive Engine issuance does not carry our rationale, and the current
+    nectarengine issue helper cannot add a memo. Timestamp proximity is the best
+    durable discriminator when a recipient receives the same amount for multiple
+    rationales.
+    """
+    matches = {}
+    used_log_ids = set()
+    used_trx_ids = set()
+
+    def chain_sort_key(chain_issue):
+        return chain_issue.get("timestamp") or datetime.max.replace(tzinfo=timezone.utc)
+
+    for chain_issue in sorted(chain_issuances, key=chain_sort_key):
+        candidates = [
+            row
+            for row in pending_rows
+            if row["id"] not in used_log_ids
+            and _chain_issue_matches_pending(chain_issue, row)
+        ]
+        if not candidates:
+            continue
+
+        chain_timestamp = chain_issue.get("timestamp")
+        if chain_timestamp is None:
+            timestamped_candidates = [row for row in candidates if row.get("issued_at")]
+            if len(timestamped_candidates) != 1:
+                continue
+            best = timestamped_candidates[0]
+        else:
+            best = min(
+                candidates,
+                key=lambda row: abs(chain_timestamp - row["issued_at"])
+                if row.get("issued_at") is not None
+                else RECONCILIATION_WINDOW,
+            )
+        matches[best["id"]] = chain_issue
+        used_log_ids.add(best["id"])
+        used_trx_ids.add(chain_issue["trx_id"])
+    return matches, used_trx_ids
+
+
+def reconcile_issuances(
+    conn,
+    chain_issuances,
+    now=None,
+    covered_since=None,
+    scan_complete=False,
+):
     """Resolve PENDING issuance rows against recent on-chain issuances.
 
     - A PENDING row that matches an on-chain issuance (same recipient + units) is
@@ -249,6 +334,18 @@ def reconcile_issuances(conn, chain_issuances, now=None):
         """
     ).fetchall()
 
+    pending = [
+        {
+            "id": row[0],
+            "recipient": row[1],
+            "units": token_decimal(row[2]),
+            "rationale": row[3],
+            "issued_at": ensure_timezone_aware(row[4]),
+        }
+        for row in pending_rows
+    ]
+    matches, matched_trx_ids = _match_pending_rows_to_chain(pending, unmatched_chain)
+
     for row in pending_rows:
         log_id, recipient, units, rationale, issued_at = (
             row[0],
@@ -257,16 +354,8 @@ def reconcile_issuances(conn, chain_issuances, now=None):
             row[3],
             row[4],
         )
-        match = next(
-            (
-                c
-                for c in unmatched_chain
-                if c["recipient"] == recipient and token_decimal(c["units"]) == units
-            ),
-            None,
-        )
+        match = matches.get(log_id)
         if match is not None:
-            unmatched_chain.remove(match)
             mark_issuance_success(conn, log_id, match["trx_id"])
             debit_balance(conn, rationale, recipient, units)
             print(
@@ -276,7 +365,13 @@ def reconcile_issuances(conn, chain_issuances, now=None):
             continue
 
         issued_at_aware = ensure_timezone_aware(issued_at)
-        if issued_at_aware is not None and issued_at_aware < stale_before:
+        scan_covers_row = (
+            scan_complete
+            and covered_since is not None
+            and issued_at_aware is not None
+            and covered_since <= issued_at_aware
+        )
+        if issued_at_aware is not None and issued_at_aware < stale_before and scan_covers_row:
             mark_issuance_failure(
                 conn,
                 log_id,
@@ -284,6 +379,9 @@ def reconcile_issuances(conn, chain_issuances, now=None):
             )
             print(f"Reconciled PENDING -> FAILURE: {recipient} {units} {rationale}")
 
+    unmatched_chain = [
+        c for c in unmatched_chain if c["trx_id"] not in matched_trx_ids
+    ]
     for chain_issue in unmatched_chain:
         conn.exec_driver_sql(
             """
@@ -306,9 +404,14 @@ def reconcile_issuances(conn, chain_issuances, now=None):
 
 
 def reconcile_recent_issuances(db2, issuer):
-    chain_issuances = fetch_recent_chain_issuances(issuer)
+    scan = fetch_recent_chain_issuance_scan(issuer)
     with db2.engine.begin() as conn:
-        reconcile_issuances(conn, chain_issuances)
+        reconcile_issuances(
+            conn,
+            scan["issuances"],
+            covered_since=scan["covered_since"],
+            scan_complete=scan["complete"],
+        )
 
 
 # ---------------------------------------------------------------------------
