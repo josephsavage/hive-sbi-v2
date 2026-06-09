@@ -11,6 +11,15 @@ from hivesbi.utils import ensure_timezone_aware
 
 
 def calculate_shares(delegation_shares, hp_share_ratio):
+    """Convert delegated HP into delegation bonus *shares* (HP / sp_share_ratio).
+
+    DEPRECATED (PR #138): delegations no longer grant voting-weight bonus shares.
+    On every delegation change or new delegation, hsbi_check_delegation now zeroes
+    the delegation trx accrual (clear_delegation_trx) and grants HSBIDAO
+    virtual_tokens instead (calculate_virtual_tokens), so this is no longer on the
+    production path. Retained intentionally for ad-hoc reporting / historical
+    recomputation of what a delegation's share grant would have been.
+    """
     return int(delegation_shares / hp_share_ratio)
 
 
@@ -84,7 +93,6 @@ def run():
     stor = rt["storages"]
     db = dataset.connect(databaseConnector)
     db2 = dataset.connect(databaseConnector2)
-    confStorage = ConfigurationDB(db2)
     confStorage: ConfigurationDB = stor["conf"]
     conf_setup = confStorage.get()
 

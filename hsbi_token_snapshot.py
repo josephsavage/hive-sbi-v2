@@ -25,13 +25,6 @@ PIK_RATIONALE = "pik"
 ABC_RATIONALE = "Pending Balance Conversion"
 RECONCILED_RATIONALE = "reconciled"
 
-# rationale -> tokenholders balance column that gets debited once an issuance of
-# that rationale is confirmed. Management issuance debits no balance.
-RATIONALE_BALANCE_COLUMN = {
-    PIK_RATIONALE: "pik",
-    ABC_RATIONALE: "abc_pik",
-}
-
 RECONCILIATION_WINDOW = timedelta(hours=5)
 HISTORY_SCAN_LIMIT = 1000
 PENDING_TRX_PLACEHOLDER = "PENDING"
@@ -60,14 +53,20 @@ def calculate_management_issue_amount(outstanding, management_issued):
 
 
 # ---------------------------------------------------------------------------
-# write-ahead issuance log helpers
+# write-ahead issuance log helpers (Management issuance only)
 # ---------------------------------------------------------------------------
-# Every broadcast is preceded by a committed PENDING row carrying its true
-# rationale. The PENDING row makes the issuance durable across a crash WITHOUT
-# consulting the chain for rationale: the Management cap counts PENDING+SUCCESS so
-# an unconfirmed issuance cannot be re-issued, and per-member balances are only
-# debited once the issuance is confirmed (here on success, or later by chain
-# reconciliation). status moves PENDING -> SUCCESS/FAILURE; rationale never changes.
+# Only the Management 10% issuance uses the write-ahead protocol, because it is
+# capped (a double issuance permanently over-mints) and has no per-member balance
+# to retry against. The Management broadcast is preceded by a committed PENDING row
+# carrying rationale='Management'; the cap counts PENDING+SUCCESS so a crash after
+# broadcast cannot re-issue, and chain reconciliation later resolves the row to
+# SUCCESS or FAILURE. status moves PENDING -> SUCCESS/FAILURE; rationale never
+# changes.
+#
+# Per-member pik / abc_pik issuance deliberately does NOT use this protocol — it is
+# immediate and self-healing (see issue_balance_tokens): a failed broadcast simply
+# leaves the balance to be retried next cycle, so a transient failure can never
+# permanently strand a member's dividends behind an unresolved PENDING row.
 
 
 def insert_pending_issuance(conn, recipient, units, rationale):
@@ -108,18 +107,19 @@ def record_pending_error(conn, log_id, error_message):
     )
 
 
-def debit_balance(conn, rationale, recipient, units):
-    """Subtract the exact issued amount from the member's source balance.
+def log_issuance(conn, trx_id, recipient, units, status, rationale, error_message=None):
+    """Append a terminal (SUCCESS/FAILURE) issuance row.
 
-    Subtracting (rather than zeroing) preserves any accrual added between selection
-    and confirmation. Management issuance maps to no column and debits nothing.
+    Used by the immediate pik / abc_pik path, which logs the outcome directly
+    rather than going through the Management write-ahead PENDING protocol.
     """
-    column = RATIONALE_BALANCE_COLUMN.get(rationale)
-    if column is None:
-        return
     conn.exec_driver_sql(
-        f"UPDATE tokenholders SET {column} = {column} - %s WHERE member_name = %s",
-        (units, recipient),
+        """
+        INSERT INTO token_issuance_log
+            (trx_id, recipient, units, status, error_message, rationale)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (trx_id, recipient, units, status, error_message, rationale),
     )
 
 
@@ -299,19 +299,27 @@ def reconcile_issuances(
     covered_since=None,
     scan_complete=False,
 ):
-    """Resolve PENDING issuance rows against recent on-chain issuances.
+    """Resolve Management write-ahead PENDING rows against recent on-chain issuances.
 
-    - A PENDING row that matches an on-chain issuance (same recipient + units) is
-      confirmed SUCCESS and its source balance is debited once.
-    - A PENDING row older than the reconciliation window with no on-chain match is
-      marked FAILURE so it stops counting toward the Management cap and the member
-      becomes eligible for a fresh attempt.
-    - An on-chain issuance with no matching log row is an out-of-band issuance; it
-      is recorded for audit with rationale='reconciled' and never participates in
-      cap math or balance debits.
+    Only the Management 10% issuance uses the write-ahead PENDING protocol, so this
+    routine is rationale-scoped to Management. Per-member pik / abc_pik issuance is
+    immediate and self-healing (see issue_balance_tokens) and never produces PENDING
+    rows, so it is never touched here.
+
+    - A Management PENDING row that matches an on-chain issuance (same recipient +
+      units, nearest timestamp) is confirmed SUCCESS. Management debits no balance.
+    - A Management PENDING row older than the reconciliation window with no on-chain
+      match — only when the scan provably covered its issued_at — is marked FAILURE
+      so it stops holding down the Management cap and can be re-attempted.
+    - An on-chain issuance with no log row, and not already explained by a confirmed
+      issuance (matched trx_id, or a SUCCESS row of the same recipient + units within
+      the window), is an out-of-band issuance recorded for audit with
+      rationale='reconciled'. It never participates in cap math.
 
     rationale is read from the existing PENDING row and is never inferred from the
-    chain or rewritten.
+    chain or rewritten. Confirmed pik / abc dividends are recognised by their logged
+    trx_id (and, defensively, recipient + units), so a same-amount member dividend to
+    josephsavage is never mistaken for a Management issuance.
     """
     now = now or datetime.now(timezone.utc)
     stale_before = now - RECONCILIATION_WINDOW
@@ -323,15 +331,29 @@ def reconcile_issuances(
             (PENDING_TRX_PLACEHOLDER,),
         ).fetchall()
     }
+    # Confirmed issuances within the window, keyed by (recipient, units). Used to
+    # suppress duplicate orphan audit rows for a pik / abc issuance whose on-chain
+    # trx_id was not captured in its log row.
+    explained = {
+        (r[0], token_decimal(r[1]))
+        for r in conn.exec_driver_sql(
+            """
+            SELECT recipient, units FROM token_issuance_log
+            WHERE status = 'SUCCESS' AND trx_id <> %s AND issued_at >= %s
+            """,
+            (PENDING_TRX_PLACEHOLDER, stale_before),
+        ).fetchall()
+    }
     unmatched_chain = [c for c in chain_issuances if c["trx_id"] not in logged_trx]
 
     pending_rows = conn.exec_driver_sql(
         """
         SELECT id, recipient, units, rationale, issued_at
         FROM token_issuance_log
-        WHERE status = 'PENDING'
+        WHERE status = 'PENDING' AND rationale = %s
         ORDER BY issued_at ASC
-        """
+        """,
+        (MANAGEMENT_RATIONALE,),
     ).fetchall()
 
     pending = [
@@ -357,7 +379,6 @@ def reconcile_issuances(
         match = matches.get(log_id)
         if match is not None:
             mark_issuance_success(conn, log_id, match["trx_id"])
-            debit_balance(conn, rationale, recipient, units)
             print(
                 f"Reconciled PENDING -> SUCCESS: {recipient} {units} "
                 f"{rationale} ({match['trx_id']})"
@@ -383,6 +404,10 @@ def reconcile_issuances(
         c for c in unmatched_chain if c["trx_id"] not in matched_trx_ids
     ]
     for chain_issue in unmatched_chain:
+        if (chain_issue["recipient"], token_decimal(chain_issue["units"])) in explained:
+            # Already explained by a confirmed pik / abc issuance whose trx_id was
+            # not captured in its log row — do not double-log it as out-of-band.
+            continue
         conn.exec_driver_sql(
             """
             INSERT INTO token_issuance_log
@@ -419,36 +444,27 @@ def reconcile_recent_issuances(db2, issuer):
 # ---------------------------------------------------------------------------
 
 
-def select_issuable_balances(conn, balance_column, rationale):
-    """Members with a positive balance and no in-flight PENDING row for this
-    rationale (so an unconfirmed issuance is never duplicated)."""
-    return conn.exec_driver_sql(
-        f"""
-        SELECT t.member_name, t.{balance_column} AS amount
-        FROM tokenholders t
-        WHERE t.{balance_column} > 0
-          AND NOT EXISTS (
-              SELECT 1 FROM token_issuance_log l
-              WHERE l.recipient = t.member_name
-                AND l.rationale = %s
-                AND l.status = 'PENDING'
-          )
-        """,
-        (rationale,),
-    ).fetchall()
-
-
 def issue_balance_tokens(db2, issuer, rationale, balance_column):
-    """Write-ahead issuance for per-member balances (pik / abc_pik).
+    """Immediate, self-healing issuance for per-member balances (pik / abc_pik).
 
-    Members with an in-flight PENDING row for this rationale are skipped so an
-    unconfirmed issuance is never duplicated; chain reconciliation resolves those
-    rows before the member becomes eligible again.
+    Each member with a positive balance is issued tokens; only on a confirmed
+    broadcast is the balance zeroed and a SUCCESS row logged. A failed broadcast
+    logs FAILURE and leaves the balance intact, so the member is simply retried on
+    the next cycle — a transient failure is temporary, never permanent.
+
+    This deliberately uses NO write-ahead PENDING guard: the guard exists for the
+    capped Management issuance (where a double issuance over-mints), but for a
+    per-member balance the safe failure mode is "retry next cycle", not "block the
+    member until reconciliation". See the write-ahead helper note above and
+    CHANGES.md.
     """
     with db2.engine.begin() as conn:
-        pending_rows = select_issuable_balances(conn, balance_column, rationale)
+        balance_rows = conn.exec_driver_sql(
+            f"SELECT member_name, {balance_column} FROM tokenholders "
+            f"WHERE {balance_column} > 0"
+        ).fetchall()
 
-    for i, row in enumerate(pending_rows):
+    for i, row in enumerate(balance_rows):
         member_name = row[0]
         amount = floor_token_amount(row[1])
         if amount < TOKEN_PRECISION:
@@ -457,11 +473,7 @@ def issue_balance_tokens(db2, issuer, rationale, balance_column):
             print(f"Sleeping for {BATCH_SLEEP_TIME} seconds...")
             time.sleep(BATCH_SLEEP_TIME)
 
-        # 1. write-ahead: commit the PENDING row before broadcasting
-        with db2.engine.begin() as conn:
-            log_id = insert_pending_issuance(conn, member_name, amount, rationale)
-
-        # 2. broadcast (the only step that cannot be rolled back)
+        # 1. broadcast (the only step that cannot be rolled back)
         print(f"Issuing {amount} HSBIDAO ({rationale}) to {member_name}")
         try:
             tx = issuer.issue(member_name, float(amount))
@@ -469,14 +481,33 @@ def issue_balance_tokens(db2, issuer, rationale, balance_column):
             print("Issued:", tx)
         except Exception as e:
             print(f"Failed to issue to {member_name}: {e}")
+            # Leave the balance intact for retry next cycle; just record the failure.
             with db2.engine.begin() as conn:
-                record_pending_error(conn, log_id, str(e))
+                log_issuance(
+                    conn,
+                    trx_id="N/A",
+                    recipient=member_name,
+                    units=amount,
+                    status="FAILURE",
+                    rationale=rationale,
+                    error_message=str(e),
+                )
             continue
 
-        # 3. confirm success and debit the issued amount in one transaction
+        # 2. zero the issued balance and log SUCCESS in one transaction
         with db2.engine.begin() as conn:
-            mark_issuance_success(conn, log_id, trx_id)
-            debit_balance(conn, rationale, member_name, amount)
+            conn.exec_driver_sql(
+                f"UPDATE tokenholders SET {balance_column} = 0 WHERE member_name = %s",
+                (member_name,),
+            )
+            log_issuance(
+                conn,
+                trx_id=trx_id,
+                recipient=member_name,
+                units=amount,
+                status="SUCCESS",
+                rationale=rationale,
+            )
 
 
 def issue_management_tokens(db2, issuer):

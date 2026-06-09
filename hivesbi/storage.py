@@ -76,12 +76,19 @@ class TrxDB(object):
         return found_trx
 
     def update_delegation_shares(self, source, account, shares):
-        """Change share_age depending on timestamp.
+        """Set the bonus *shares* on a delegator's latest valid Delegation trx row.
 
-        NOTE: superseded and no longer called in production. Delegations now grant
-        virtual_tokens instead of delegation bonus_shares; hsbi_check_delegation
-        zeroes the trx accrual (shares AND vests) via clear_delegation_trx and
-        upserts tokenholders.virtual_tokens. Kept for reference / manual use only.
+        DEPRECATED (PR #138): superseded and no longer called in production.
+        Delegations previously granted voting-weight bonus_shares, recomputed here
+        every cycle. They now grant HSBIDAO virtual_tokens instead:
+        hsbi_check_delegation zeroes the trx accrual (shares AND vests) via
+        clear_delegation_trx and upserts tokenholders.virtual_tokens
+        (calculate_virtual_tokens) on every delegation change or new delegation.
+
+        Retained intentionally — it may still be useful for ad-hoc reporting or
+        historical recomputation of delegation share grants — but it is no longer on
+        any production call path. Do not re-wire it into the cycle without revisiting
+        the virtual_tokens design.
         """
         table = self.db[self.__tablename__]
         found_trx = None

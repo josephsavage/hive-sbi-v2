@@ -101,9 +101,13 @@ Production runs these in order each cycle (see `sbirunner.sh`):
 
 1. `hsbi_store_ops_db.py` — pull new account operations into `sbi_steem_ops`
 2. `hsbi_transfer.py` — process incoming sponsorship transfers
-3. `hsbi_check_delegation.py` — reconcile delegations
+3. `hsbi_check_delegation.py` — reconcile delegations; on every delegation change or
+   new delegation, zero the delegation trx accrual and grant `tokenholders.virtual_tokens`
+   (2× delegated HP) instead of legacy voting-weight bonus shares
 4. `hsbi_liquidpools.py` — liquidity-pool handling
-5. `hsbi_token_snapshot.py` — snapshot Hive Engine tokenholders, process PIK issuances
+5. `hsbi_token_snapshot.py` — snapshot Hive Engine tokenholders; issue per-member PIK
+   and Pending-Balance-Conversion dividends (immediate, retried next cycle on failure);
+   reconcile prior on-chain issuances; issue the Management 10% (write-ahead, capped)
 6. `hsbi_claim_rewards.py` — claim HIVE/HBD/VESTS rewards for operator accounts
 7. `hsbi_update_member_db.py` — recompute member shares/balances
 8. `hsbi_store_member_hist.py` — append member history
