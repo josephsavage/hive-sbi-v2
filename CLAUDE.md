@@ -93,7 +93,18 @@ docker compose up -d mariadb
 
 There is no `pytest.ini`/`pyproject.toml` — pytest uses defaults and discovers
 `tests/`. Current coverage is `tests/test_memo.py` (memo-parsing cases, mocked
-`Account`/blockchain). Add tests alongside it.
+`Account`/blockchain) and `tests/test_virtual_tokens.py`. Add tests alongside it.
+
+DB-backed tests skip if MariaDB/config is unavailable. Check `docker compose ps` for MariaDB availability before running tests and bring containers up if they are not already running.
+
+# Always run review tests inside the app container, not host Python.
+Copy-Item config.example.json config.json   # first time only
+docker compose build app
+docker compose up -d mariadb
+docker compose run --rm app pytest -q
+
+# Targeted review run
+docker compose run --rm app pytest tests/test_memo.py tests/test_virtual_tokens.py -q
 
 ## The pipeline (sbirunner.sh)
 

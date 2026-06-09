@@ -45,6 +45,8 @@ docker compose run --rm app
 
 Run tests:
 
+***IMPORTANT***: (For code reviews, do not run `pytest` from the Windows/host Python environment. The host may not have `pytest`, `hive-nectar`, `dataset`, or `mysqlclient`. Use the Docker app container so dependency versions and the MariaDB service match the repo’s expected environment.)
+
 ```powershell
 docker compose run --rm app pytest
 ```
