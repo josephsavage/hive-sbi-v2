@@ -19,7 +19,7 @@ VERSION = "0.1.2"
 
 tests_require = ["mock >= 2.0.0", "pytest", "pytest-mock", "parameterized"]
 
-requires = ["hive-nectar", "dataset", "mysqlclient"]
+requires = ["hive-nectar", "dataset", "mysqlclient",'cryptography>=46.0.7','urllib3>=2.7.0','mako>=1.3.12']
 
 
 def write_version_py(filename):
