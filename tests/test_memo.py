@@ -1,9 +1,30 @@
+import re
 import unittest
+from unittest.mock import patch
 
-from steembi.memo_parser import MemoParser
+from hivesbi.memo_parser import MemoParser
+
+
+class FakeAccount:
+    def __init__(self, account_name, blockchain_instance=None):
+        valid_account = re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,14}[a-z0-9]", account_name)
+        if not valid_account or account_name == "cameronl.jull":
+            raise ValueError("invalid account")
+        self.name = account_name
 
 
 class Testcases(unittest.TestCase):
+    def setUp(self):
+        self.account_patch = patch("hivesbi.memo_parser.Account", FakeAccount)
+        self.shared_patch = patch(
+            "hivesbi.memo_parser.shared_blockchain_instance",
+            return_value=object(),
+        )
+        self.account_patch.start()
+        self.shared_patch.start()
+        self.addCleanup(self.account_patch.stop)
+        self.addCleanup(self.shared_patch.stop)
+
     def test_different_sponsor(self):
         memo = "@mliz35:@adewararilwan"
         shares = 1

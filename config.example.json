@@ -1,0 +1,53 @@
+{
+  "accounts": [],
+  "path": "",
+  "refund_issuance": "sbi-tokens",
+  "build_reporting": true,
+  "hive_blockchain": true,
+  "database": "sbi_ops.sqlite",
+  "database_transfer": "sbi_ops.sqlite",
+  "databaseConnector": "mysql://sbi:sbi@mariadb:3306/sbi_steem_ops",
+  "databaseConnector2": "mysql://sbi:sbi@mariadb:3306/sbi",
+  "databaseConnector3": "mysql://sbi:sbi@mariadb:3306/sbi",
+  "other_accounts": [
+    "minnowbooster",
+    "dlease"
+  ],
+  "trx_ignore_accounts": [
+    "minnowbooster",
+    "dlease",
+    "reward.app",
+    "smartsteem",
+    "randowhale",
+    "steemvoter",
+    "jerrybanfield",
+    "boomerang",
+    "postpromoter",
+    "appreciator",
+    "buildawhale",
+    "upme",
+    "smartmarket",
+    "minnowhelper",
+    "pushup",
+    "steembasicincome",
+    "sbi2",
+    "sbi3",
+    "sbi4",
+    "sbi5",
+    "sbi6",
+    "sbi7",
+    "sbi8",
+    "sbi9",
+    "sbi10",
+    "sbi-booster",
+    "sbi-tokens",
+    "spk-cc"
+  ],
+  "mgnt_shares": {},
+  "LP_SYMBOL": [
+    "HSBIDAO:ECOBANK",
+    "HSBIDAO:LBI",
+    "HSBIDAO:PIXYDUST",
+    "HSBIDAO:THREE"
+  ]
+}
