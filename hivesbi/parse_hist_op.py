@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from nectar.account import Account
 from nectar.amount import Amount
@@ -18,6 +18,52 @@ from hivesbi.memo_parser import MemoParser
 from hivesbi.settings import get_runtime
 
 log = logging.getLogger(__name__)
+
+PENDING_TRX_PLACEHOLDER = "PENDING"
+UNIT_CONVERSION_RATIONALE = "Unit Conversion"
+
+
+def _issue_trx_id(tx):
+    return tx.get("trx_id") or tx.get("transaction_id") or "N/A"
+
+
+def _insert_pending_token_issuance(
+    conn, recipient, units, rationale, source_trx_id=None
+):
+    result = conn.exec_driver_sql(
+        """
+        INSERT INTO token_issuance_log
+            (trx_id, recipient, units, issued_at, status, error_message, rationale, source_trx_id)
+        VALUES (%s, %s, %s, %s, 'PENDING', NULL, %s, %s)
+        """,
+        (
+            PENDING_TRX_PLACEHOLDER,
+            recipient,
+            units,
+            datetime.now(timezone.utc),
+            rationale,
+            source_trx_id,
+        ),
+    )
+    return result.lastrowid
+
+
+def _mark_token_issuance_success(conn, log_id, trx_id):
+    conn.exec_driver_sql(
+        """
+        UPDATE token_issuance_log
+        SET status = 'SUCCESS', trx_id = %s, error_message = NULL
+        WHERE id = %s
+        """,
+        (trx_id, log_id),
+    )
+
+
+def _record_token_issuance_error(conn, log_id, error_message):
+    conn.exec_driver_sql(
+        "UPDATE token_issuance_log SET error_message = %s WHERE id = %s",
+        (error_message, log_id),
+    )
 
 
 class ParseAccountHist(list):
@@ -715,61 +761,54 @@ class ParseAccountHist(list):
                 }
             )
             if db2 is not None:
-                with db2.engine.begin() as conn:
-
-                    # Issue default tokens to the sender if nominee is sbi-tokens
-                    if nominee == "sbi-tokens":
-                        token_recipient = sender
-                        print(
-                            f"[PointTransfer] Issuing default tokens: trx_id={trx_id} recipient={token_recipient} "
-                            f"units={transferable_units}"
+                # Issue default tokens to the sender if nominee is sbi-tokens.
+                if nominee == "sbi-tokens":
+                    token_recipient = sender
+                    with db2.engine.begin() as conn:
+                        log_id = _insert_pending_token_issuance(
+                            conn,
+                            token_recipient,
+                            transferable_units,
+                            UNIT_CONVERSION_RATIONALE,
+                            source_trx_id=trx_id,
                         )
-                        try:
-                            issue_default_tokens(token_recipient, transferable_units)
-                        except Exception as e:
-                            log.exception(
-                                "Failed to issue default tokens for %s (%s units)",
-                                token_recipient,
-                                transferable_units,
-                            )
-                            # Insert failure record into log table
-                            conn.exec_driver_sql(
-                                """
-                                INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
-                                VALUES (%s, %s, %s, %s, %s)
-                                """,
-                                (trx_id, token_recipient, transferable_units, "FAILURE", str(e)),
-                            )
-
-                        else:
-                            log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
-                            # Insert success record into log table
-                            conn.exec_driver_sql(
-                                """
-                                INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                                VALUES (%s, %s, %s, %s, NULL, %s)
-                                """,
-                                (trx_id, token_recipient, transferable_units, "SUCCESS", "Unit Conversion"),
-                            )
-
-
-                    # Refund any excess units if any
-                    if refunded_units > 0:
-                        print(
-                            f"[PointTransfer] Refunding excess units: trx_id={trx_id} refund_units={refunded_units}"
-                        )
-                        self._refund_excess_transfer(
-                            recipient=sender,
-                            refund_units=refunded_units,
-                            symbol=amount_obj.symbol,
-                            nominee=nominee,
-                            op=op,
-                        )
-
                     print(
-                        f"[PointTransfer] Completed HBD transfer: trx_id={trx_id} nominee={nominee} units={transferable_units}"
+                        f"[PointTransfer] Issuing default tokens: source_trx_id={trx_id} "
+                        f"recipient={token_recipient} units={transferable_units}"
                     )
-                    return True
+                    try:
+                        tx = issue_default_tokens(token_recipient, transferable_units)
+                        issue_trx_id = _issue_trx_id(tx)
+                    except Exception as e:
+                        log.exception(
+                            "Failed to issue default tokens for %s (%s units)",
+                            token_recipient,
+                            transferable_units,
+                        )
+                        with db2.engine.begin() as conn:
+                            _record_token_issuance_error(conn, log_id, str(e))
+                    else:
+                        log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
+                        with db2.engine.begin() as conn:
+                            _mark_token_issuance_success(conn, log_id, issue_trx_id)
+
+                # Refund any excess units if any
+                if refunded_units > 0:
+                    print(
+                        f"[PointTransfer] Refunding excess units: trx_id={trx_id} refund_units={refunded_units}"
+                    )
+                    self._refund_excess_transfer(
+                        recipient=sender,
+                        refund_units=refunded_units,
+                        symbol=amount_obj.symbol,
+                        nominee=nominee,
+                        op=op,
+                    )
+
+                print(
+                    f"[PointTransfer] Completed HBD transfer: trx_id={trx_id} nominee={nominee} units={transferable_units}"
+                )
+                return True
 
         # HIVE rshares transfer a.k.a Lovegun point transfer
         old_sender_rshares = sender_member["balance_rshares"]
