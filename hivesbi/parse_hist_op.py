@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 from nectar.account import Account
 from nectar.amount import Amount
@@ -13,57 +13,20 @@ from nectar.utils import (
     formatTimeString,
 )
 
+from hivesbi.issuance_log import (
+    has_issuance_for_source,
+    insert_pending_issuance as _insert_pending_token_issuance,
+    issue_trx_id as _issue_trx_id,
+    mark_issuance_success as _mark_token_issuance_success,
+    record_pending_error as _record_token_issuance_error,
+)
 from hivesbi.issue import TokenIssuer, issue_default_tokens
 from hivesbi.memo_parser import MemoParser
 from hivesbi.settings import get_runtime
 
 log = logging.getLogger(__name__)
 
-PENDING_TRX_PLACEHOLDER = "PENDING"
 UNIT_CONVERSION_RATIONALE = "Unit Conversion"
-
-
-def _issue_trx_id(tx):
-    return tx.get("trx_id") or tx.get("transaction_id") or "N/A"
-
-
-def _insert_pending_token_issuance(
-    conn, recipient, units, rationale, source_trx_id=None
-):
-    result = conn.exec_driver_sql(
-        """
-        INSERT INTO token_issuance_log
-            (trx_id, recipient, units, issued_at, status, error_message, rationale, source_trx_id)
-        VALUES (%s, %s, %s, %s, 'PENDING', NULL, %s, %s)
-        """,
-        (
-            PENDING_TRX_PLACEHOLDER,
-            recipient,
-            units,
-            datetime.now(timezone.utc),
-            rationale,
-            source_trx_id,
-        ),
-    )
-    return result.lastrowid
-
-
-def _mark_token_issuance_success(conn, log_id, trx_id):
-    conn.exec_driver_sql(
-        """
-        UPDATE token_issuance_log
-        SET status = 'SUCCESS', trx_id = %s, error_message = NULL
-        WHERE id = %s
-        """,
-        (trx_id, log_id),
-    )
-
-
-def _record_token_issuance_error(conn, log_id, error_message):
-    conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET error_message = %s WHERE id = %s",
-        (error_message, log_id),
-    )
 
 
 class ParseAccountHist(list):
@@ -764,33 +727,47 @@ class ParseAccountHist(list):
                 # Issue default tokens to the sender if nominee is sbi-tokens.
                 if nominee == "sbi-tokens":
                     token_recipient = sender
+                    # Guard + intent insert in one transaction: a reprocessed
+                    # transfer op (crash between broadcast and op bookkeeping)
+                    # must not mint the same source transaction twice.
                     with db2.engine.begin() as conn:
-                        log_id = _insert_pending_token_issuance(
-                            conn,
-                            token_recipient,
-                            transferable_units,
-                            UNIT_CONVERSION_RATIONALE,
-                            source_trx_id=trx_id,
+                        if has_issuance_for_source(
+                            conn, trx_id, UNIT_CONVERSION_RATIONALE
+                        ):
+                            log_id = None
+                        else:
+                            log_id = _insert_pending_token_issuance(
+                                conn,
+                                token_recipient,
+                                transferable_units,
+                                UNIT_CONVERSION_RATIONALE,
+                                source_trx_id=trx_id,
+                            )
+                    if log_id is None:
+                        print(
+                            "[PointTransfer] Skipping duplicate Unit Conversion "
+                            f"issuance: source_trx_id={trx_id}"
                         )
-                    print(
-                        f"[PointTransfer] Issuing default tokens: source_trx_id={trx_id} "
-                        f"recipient={token_recipient} units={transferable_units}"
-                    )
-                    try:
-                        tx = issue_default_tokens(token_recipient, transferable_units)
-                        issue_trx_id = _issue_trx_id(tx)
-                    except Exception as e:
-                        log.exception(
-                            "Failed to issue default tokens for %s (%s units)",
-                            token_recipient,
-                            transferable_units,
-                        )
-                        with db2.engine.begin() as conn:
-                            _record_token_issuance_error(conn, log_id, str(e))
                     else:
-                        log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
-                        with db2.engine.begin() as conn:
-                            _mark_token_issuance_success(conn, log_id, issue_trx_id)
+                        print(
+                            f"[PointTransfer] Issuing default tokens: source_trx_id={trx_id} "
+                            f"recipient={token_recipient} units={transferable_units}"
+                        )
+                        try:
+                            tx = issue_default_tokens(token_recipient, transferable_units)
+                            issue_trx_id = _issue_trx_id(tx)
+                        except Exception as e:
+                            log.exception(
+                                "Failed to issue default tokens for %s (%s units)",
+                                token_recipient,
+                                transferable_units,
+                            )
+                            with db2.engine.begin() as conn:
+                                _record_token_issuance_error(conn, log_id, str(e))
+                        else:
+                            log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
+                            with db2.engine.begin() as conn:
+                                _mark_token_issuance_success(conn, log_id, issue_trx_id)
 
                 # Refund any excess units if any
                 if refunded_units > 0:

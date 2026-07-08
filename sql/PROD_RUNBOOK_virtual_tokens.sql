@@ -21,6 +21,15 @@ USE `sbi`;
 -- PRE-CHECKS — run these first and read the output before changing anything.
 -- -----------------------------------------------------------------------------
 
+-- 0. Time zone sanity. Issuance intent timestamps (token_issuance_log.issued_at)
+--    are written by the app as UTC wall time and matched against chain (UTC)
+--    timestamps within a ±minutes window; issued_at is a TIMESTAMP column, so a
+--    non-UTC session/system time zone silently shifts every stored instant and
+--    reconciliation windows never match (rows would eventually be failed and
+--    re-issued while the tokens were actually minted).
+--    Expect: SYSTEM / SYSTEM / UTC (or explicit '+00:00' / 'UTC').
+SELECT @@global.time_zone, @@session.time_zone, @@system_time_zone;
+
 -- Expect: virtual_tokens absent; tokens = `liquid_tokens` + `LP_tokens`
 SELECT COLUMN_NAME, COLUMN_TYPE, GENERATION_EXPRESSION
 FROM INFORMATION_SCHEMA.COLUMNS
@@ -100,7 +109,7 @@ WHERE `tokens` <> (`liquid_tokens` + `LP_tokens` + `virtual_tokens`);
 
 -- After deploying the code, run hsbi_check_delegation.py once to refresh the
 -- derived Management virtual token allocation. Verify josephsavage equals 10% of
--- all other virtual_tokens.
+-- all other virtual_tokens (plus 2x his own delegated HP, if he delegates).
 SELECT
     mgmt.member_name,
     mgmt.virtual_tokens AS josephsavage_virtual_tokens,
@@ -112,3 +121,43 @@ CROSS JOIN (
     WHERE member_name <> 'josephsavage'
 ) AS others
 WHERE mgmt.member_name = 'josephsavage';
+
+-- -----------------------------------------------------------------------------
+-- LEGACY CLEANUP — rationale='reconciled' rows (PR #138 artifact)
+-- -----------------------------------------------------------------------------
+-- 'reconciled' was never a valid rationale (valid: pik, Pending Balance
+-- Conversion, Unit Conversion, Management). PR #138's reconciliation inserted
+-- these as duplicate rows for issuances whose real log row had trx_id='N/A';
+-- the current code updates the original row in place instead. Existing rows do
+-- not affect the Management cap (which sums rationale='Management' only), but
+-- they pollute the audit trail.
+--
+-- Review first: pair each 'reconciled' row with its likely original (same
+-- recipient + units, SUCCESS, uncaptured trx_id, within the match window).
+SELECT
+    r.id  AS reconciled_id,
+    r.trx_id,
+    r.recipient,
+    r.units,
+    r.issued_at,
+    s.id  AS original_id,
+    s.rationale AS original_rationale,
+    s.issued_at AS original_issued_at
+FROM token_issuance_log r
+LEFT JOIN token_issuance_log s
+       ON s.recipient = r.recipient
+      AND s.units = r.units
+      AND s.status = 'SUCCESS'
+      AND s.trx_id = 'N/A'
+      AND s.issued_at BETWEEN r.issued_at - INTERVAL 35 MINUTE
+                          AND r.issued_at + INTERVAL 35 MINUTE
+WHERE r.rationale = 'reconciled'
+ORDER BY r.issued_at;
+
+-- For each confidently paired row: move the chain trx_id onto the original row,
+-- then delete the duplicate (run per id after reviewing the SELECT above):
+--   UPDATE token_issuance_log SET trx_id = '<r.trx_id>' WHERE id = <original_id>;
+--   DELETE FROM token_issuance_log WHERE id = <reconciled_id>;
+--
+-- A 'reconciled' row with NO pair is the only record of a genuine out-of-band
+-- mint — investigate it before deleting anything.

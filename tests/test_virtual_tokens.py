@@ -24,6 +24,7 @@ from hsbi_check_delegation import (
     clear_delegation_trx,
     refresh_management_virtual_tokens,
 )
+from hivesbi.issuance_log import has_issuance_for_source
 from hivesbi.parse_hist_op import (
     UNIT_CONVERSION_RATIONALE,
     _insert_pending_token_issuance,
@@ -33,6 +34,7 @@ from hsbi_token_snapshot import (
     TOKEN_PRECISION,
     _parse_engine_issue,
     calculate_management_issue_amount,
+    fetch_recent_chain_issuance_scan,
     insert_pending_issuance,
     issue_balance_tokens,
     issue_management_tokens,
@@ -113,6 +115,21 @@ class FakeDB2:
         self.engine = _FakeEngine(conn)
 
 
+class _FakeHistoryAccount:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def history_reverse(self, only_ops=None):
+        return iter(self._rows)
+
+
+class FakeChainIssuer:
+    """Issuer stand-in exposing a canned account history for scan tests."""
+
+    def __init__(self, rows):
+        self.hive_account = _FakeHistoryAccount(rows)
+
+
 class PureLogicTests(unittest.TestCase):
     def test_virtual_tokens_are_decimal_hp_times_two(self):
         # No integer rounding: 0.001 HP delegated -> 0.002 virtual tokens.
@@ -182,6 +199,28 @@ class PureLogicTests(unittest.TestCase):
             "op": ["custom_json", {"json": json.dumps({"contractName": "market"})}],
         }
         self.assertIsNone(_parse_engine_issue(row))
+
+    def test_scan_coverage_extends_to_scan_time_for_quiet_issuer(self):
+        # An issuer with no recent on-chain activity must still prove coverage up
+        # to roughly the scan time: history_reverse starts at the account head,
+        # so a successful fetch shows no newer ops exist. Old PENDING intents can
+        # then be failed without waiting for fresh issuer activity.
+        old_ts = datetime.now(timezone.utc) - timedelta(hours=48)
+        rows = [{"trx_id": "old_op", "timestamp": old_ts, "op": ["custom_json", {}]}]
+        scan = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows))
+        self.assertTrue(scan["complete"])
+        self.assertGreater(
+            scan["covered_until"],
+            datetime.now(timezone.utc) - timedelta(minutes=10),
+        )
+
+    def test_scan_coverage_complete_for_empty_history(self):
+        scan = fetch_recent_chain_issuance_scan(FakeChainIssuer([]))
+        self.assertTrue(scan["complete"])
+        self.assertEqual(
+            scan["covered_since"], datetime.min.replace(tzinfo=timezone.utc)
+        )
+        self.assertIsNotNone(scan["covered_until"])
 
 
 @unittest.skipUnless(_DB_ENGINE is not None, _DB_SKIP_REASON)
@@ -338,6 +377,22 @@ class DelegationAccrualTests(DBTestCase):
         ).fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(Decimal(str(row[0])), Decimal("100.000"))
+
+    def test_refresh_management_preserves_own_delegation_virtual(self):
+        # If the management account itself delegates HP, its delegation-derived
+        # virtual tokens are preserved on top of the derived 10% allocation
+        # rather than being overwritten by the refresh.
+        self.x("UPDATE tokenholders SET virtual_tokens = 0")
+        self._insert_holder("zz_vt_other_d", virtual=Decimal("1000.000"))
+
+        refreshed = refresh_management_virtual_tokens(self.conn, Decimal("50.000"))
+
+        self.assertEqual(refreshed, Decimal("150.000"))
+        row = self.x(
+            "SELECT virtual_tokens FROM tokenholders WHERE member_name = %s",
+            (T_MGMT,),
+        ).fetchone()
+        self.assertEqual(Decimal(str(row[0])), Decimal("150.000"))
 
 
 class ImmediateBalanceIssuanceTests(DBTestCase):
@@ -501,7 +556,6 @@ class UnitConversionIssuanceTests(DBTestCase):
                     "timestamp": now,
                 }
             ],
-            now=now,
         )
 
         duplicate_count = self.x(
@@ -513,6 +567,39 @@ class UnitConversionIssuanceTests(DBTestCase):
         ).fetchone()[0]
         self.assertEqual(int(duplicate_count), 1)
         self.assertEqual(int(reconciled_count), 0)
+
+    def test_source_trx_guard_blocks_pending_and_success_not_failure(self):
+        # A reprocessed transfer op must not mint the same source transaction
+        # twice: PENDING (in flight) and SUCCESS both block, a proven FAILURE
+        # leaves the retry path open.
+        source_trx = "zz_vt_source_guard_1"
+        self.assertFalse(
+            has_issuance_for_source(self.conn, source_trx, UNIT_CONVERSION_RATIONALE)
+        )
+
+        log_id = _insert_pending_token_issuance(
+            self.conn,
+            T_PIK,
+            Decimal("1.000"),
+            UNIT_CONVERSION_RATIONALE,
+            source_trx_id=source_trx,
+        )
+        self.assertTrue(
+            has_issuance_for_source(self.conn, source_trx, UNIT_CONVERSION_RATIONALE)
+        )
+
+        _mark_token_issuance_success(self.conn, log_id, "chain_src_guard_1")
+        self.assertTrue(
+            has_issuance_for_source(self.conn, source_trx, UNIT_CONVERSION_RATIONALE)
+        )
+
+        self.x(
+            "UPDATE token_issuance_log SET status = 'FAILURE' WHERE id = %s",
+            (log_id,),
+        )
+        self.assertFalse(
+            has_issuance_for_source(self.conn, source_trx, UNIT_CONVERSION_RATIONALE)
+        )
 
 
 class SyncTokenholdersTests(DBTestCase):
@@ -591,7 +678,7 @@ class ReconciliationTests(DBTestCase):
                 "timestamp": now - timedelta(minutes=1),
             },
         ]
-        reconcile_issuances(self.conn, chain, now=now)
+        reconcile_issuances(self.conn, chain)
 
         row = self.x(
             "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (mgmt_id,)
@@ -627,7 +714,7 @@ class ReconciliationTests(DBTestCase):
                 "timestamp": now + timedelta(seconds=5),
             }
         ]
-        reconcile_issuances(self.conn, chain, now=now)
+        reconcile_issuances(self.conn, chain)
         updated = self.x(
             "SELECT COUNT(*) FROM token_issuance_log WHERE trx_id = %s AND rationale = 'pik'",
             ("chain_pik_uncaptured",),
@@ -649,7 +736,7 @@ class ReconciliationTests(DBTestCase):
             (T_MGMT, Decimal("5.000"), stale_ts),
         )
         log_id = result.lastrowid
-        reconcile_issuances(self.conn, [], now=datetime.now(timezone.utc))
+        reconcile_issuances(self.conn, [])
         status = self.x(
             "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
         ).fetchone()[0]
@@ -666,11 +753,12 @@ class ReconciliationTests(DBTestCase):
             (T_MGMT, Decimal("5.000"), stale_ts),
         )
         log_id = result.lastrowid
+        # Coverage must span the row's whole possible match window:
+        # [issued_at - MATCH_CLOCK_SKEW, issued_at + CHAIN_MATCH_WINDOW].
         reconcile_issuances(
             self.conn,
             [],
-            now=datetime.now(timezone.utc),
-            covered_since=stale_ts - timedelta(minutes=1),
+            covered_since=stale_ts - timedelta(minutes=6),
             covered_until=stale_ts + timedelta(minutes=31),
             scan_complete=True,
         )
@@ -681,7 +769,7 @@ class ReconciliationTests(DBTestCase):
 
     def test_recent_unmatched_pending_stays_pending(self):
         log_id = insert_pending_issuance(self.conn, T_MGMT, Decimal("5.000"), "Management")
-        reconcile_issuances(self.conn, [], now=datetime.now(timezone.utc))
+        reconcile_issuances(self.conn, [])
         status = self.x(
             "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
         ).fetchone()[0]
@@ -718,7 +806,6 @@ class ReconciliationTests(DBTestCase):
                     "timestamp": now + timedelta(seconds=10),
                 }
             ],
-            now=now,
         )
 
         row = self.x(
@@ -733,6 +820,8 @@ class ReconciliationTests(DBTestCase):
         self.assertEqual(Decimal(str(pik)), Decimal("0.000"))
 
     def test_reconciliation_uses_chain_timestamp_not_server_now(self):
+        # An intent hours in the past still matches: only the chain timestamp
+        # relative to the intent timestamp matters, never the server clock.
         intent_at = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
         log_id = insert_pending_issuance(
             self.conn, T_MGMT, Decimal("5.000"), "Management", issued_at=intent_at
@@ -748,7 +837,6 @@ class ReconciliationTests(DBTestCase):
                     "timestamp": intent_at + timedelta(minutes=10),
                 }
             ],
-            now=intent_at + timedelta(hours=8),
         )
 
         row = self.x(
@@ -790,7 +878,6 @@ class ReconciliationTests(DBTestCase):
                     "timestamp": newer_ts + timedelta(seconds=30),
                 }
             ],
-            now=datetime.now(timezone.utc),
         )
 
         rows = self.x(
@@ -807,7 +894,10 @@ class ReconciliationTests(DBTestCase):
         self.assertEqual(rows[1][2], "chain_nearest_1")
 
     def test_ambiguous_equal_timestamp_distance_stays_pending(self):
-        now = datetime.now(timezone.utc)
+        # issued_at is a second-precision TIMESTAMP column, so the tie must be
+        # constructed on whole seconds to survive the DB round-trip. Even with
+        # full scan coverage, neither contested row may be resolved or failed.
+        now = datetime.now(timezone.utc).replace(microsecond=0)
         first_id = self.x(
             """
             INSERT INTO token_issuance_log
@@ -835,7 +925,9 @@ class ReconciliationTests(DBTestCase):
                     "timestamp": now,
                 }
             ],
-            now=now,
+            covered_since=now - timedelta(hours=1),
+            covered_until=now + timedelta(hours=1),
+            scan_complete=True,
         )
 
         statuses = self.x(
@@ -848,6 +940,51 @@ class ReconciliationTests(DBTestCase):
             (first_id, second_id),
         ).fetchall()
         self.assertEqual([row[0] for row in statuses], ["PENDING", "PENDING"])
+
+    def test_contested_pending_not_failed_then_resolves_next_pass(self):
+        # Chain issue X matches intent A (nearest); sibling intent B of the same
+        # recipient+units is contested by X, so a covering scan must NOT fail B
+        # this pass — X may actually be B's broadcast. Once A's SUCCESS records
+        # X's trx_id, the next pass excludes X, proves absence, and fails B, so
+        # a contested row never blocks its member forever.
+        base = datetime.now(timezone.utc).replace(microsecond=0)
+        a_ts = base - timedelta(hours=2)
+        b_ts = a_ts + timedelta(minutes=2)
+        a_id = insert_pending_issuance(
+            self.conn, T_MGMT, Decimal("5.000"), "Management", issued_at=a_ts
+        )
+        b_id = insert_pending_issuance(
+            self.conn, T_MGMT, Decimal("5.000"), "Management", issued_at=b_ts
+        )
+        chain = [
+            {
+                "trx_id": "chain_contested_1",
+                "recipient": T_MGMT,
+                "units": Decimal("5.000"),
+                "timestamp": a_ts + timedelta(seconds=30),
+            }
+        ]
+        coverage = {
+            "covered_since": a_ts - timedelta(minutes=10),
+            "covered_until": base,
+            "scan_complete": True,
+        }
+
+        reconcile_issuances(self.conn, chain, **coverage)
+
+        rows = self.x(
+            "SELECT id, status FROM token_issuance_log WHERE id IN (%s, %s) ORDER BY id",
+            (a_id, b_id),
+        ).fetchall()
+        self.assertEqual(rows[0][1], "SUCCESS")
+        self.assertEqual(rows[1][1], "PENDING")  # contested, not FAILURE
+
+        reconcile_issuances(self.conn, chain, **coverage)
+
+        b_status = self.x(
+            "SELECT status FROM token_issuance_log WHERE id = %s", (b_id,)
+        ).fetchone()[0]
+        self.assertEqual(b_status, "FAILURE")
 
 
 if __name__ == "__main__":

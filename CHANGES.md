@@ -21,6 +21,43 @@
   **deprecated** (no longer on any production path) but retained, with docstrings, for
   ad-hoc reporting / historical recomputation.
 
+## Token issuance: reconciliation hardening (PR #139 review fixes)
+
+- **Contested rows are never failed.** A PENDING row with any in-window chain
+  candidate (tie-skipped, or attributed to a sibling row by timestamp proximity) is
+  left PENDING even when the scan covers its window — that issue may be its own
+  broadcast, so failing it could re-issue tokens already minted. Liveness is
+  preserved: once the sibling SUCCESS row records the chain `trx_id`, the next pass
+  excludes that issue and the contested row resolves normally.
+- **Scan coverage extends to scan time.** `history_reverse` starts at the account
+  head, so a successful fetch proves no ops newer than the newest scanned op exist;
+  `covered_until` is now the scan start minus the clock-skew margin instead of the
+  newest op timestamp. A quiet issuer (no recent on-chain activity) can therefore
+  still resolve stale PENDING rows, and an empty history counts as complete
+  coverage. The scan op budget scales with the lookback (capped at
+  `HISTORY_SCAN_HARD_LIMIT`) so an old stuck PENDING row cannot outgrow the scan.
+- **Unit Conversion is idempotent per source transaction.** Before inserting the
+  intent, the sbi-tokens path checks `source_trx_id` + rationale for an existing
+  PENDING/SUCCESS row (`has_issuance_for_source`; FAILURE still allows retry), so a
+  reprocessed transfer op can no longer double-mint.
+- **Write-ahead helpers moved to `hivesbi/issuance_log.py`**, shared by
+  `hivesbi/parse_hist_op.py` and `hsbi_token_snapshot.py` (which re-exports them);
+  the dead `now` parameter was removed from `reconcile_issuances`.
+- **Management virtual refresh preserves the management account's own delegation
+  grant**: `refresh_management_virtual_tokens` adds the derived 10% on top of any
+  delegation-derived virtual tokens josephsavage earned as an ordinary delegator,
+  instead of overwriting them.
+- Runbook: added a DB time-zone pre-check (`issued_at` is a TIMESTAMP matched
+  against UTC chain timestamps within ±minutes, so the session time zone must be
+  UTC) and a review/cleanup section for legacy `rationale='reconciled'` rows left
+  by PR #138.
+- Tests: fixed the stale-coverage test (coverage must span
+  `issued_at - MATCH_CLOCK_SKEW`) and the equal-distance ambiguity test
+  (second-precision `issued_at` requires whole-second timestamps); added coverage
+  for contested-row protection + next-pass resolution, quiet-issuer/empty-history
+  scan coverage, the source-transaction dedup guard, and Management own-delegation
+  preservation.
+
 ## Token issuance: write-ahead intents + chain reconciliation (PR #138 follow-up)
 
 - All HSBIDAO issuance paths now use a committed write-ahead intent row before

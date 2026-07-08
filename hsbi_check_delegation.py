@@ -93,8 +93,13 @@ def clear_virtual_tokens(conn, accounts):
         upsert_virtual_tokens(conn, account, Decimal("0.000"))
 
 
-def refresh_management_virtual_tokens(conn):
-    """Set Management virtual_tokens to 10% of all other virtual_tokens."""
+def refresh_management_virtual_tokens(conn, own_delegation_virtual=Decimal("0.000")):
+    """Set Management virtual_tokens to 10% of all other virtual_tokens.
+
+    `own_delegation_virtual` preserves any delegation-derived virtual tokens the
+    management account earned as an ordinary delegator (2x its delegated HP);
+    the derived 10% is added on top instead of overwriting that grant.
+    """
     non_management_virtual = conn.exec_driver_sql(
         """
         SELECT COALESCE(SUM(virtual_tokens), 0)
@@ -103,7 +108,9 @@ def refresh_management_virtual_tokens(conn):
         """,
         (MANAGEMENT_VIRTUAL_RECIPIENT,),
     ).scalar()
-    management_virtual = calculate_management_virtual_tokens(non_management_virtual)
+    management_virtual = calculate_management_virtual_tokens(
+        non_management_virtual
+    ) + Decimal(str(own_delegation_virtual))
     upsert_virtual_tokens(conn, MANAGEMENT_VIRTUAL_RECIPIENT, management_virtual)
     return management_virtual
 
@@ -260,13 +267,25 @@ def run():
                 last_delegation_check = delegation_timestamp[acc]
             print(f"hsbi_check_delegation: will clear virtual_tokens for {acc}")
 
+        # The management account may also be an ordinary delegator; its own
+        # delegation-derived virtual tokens (from the current trx delegation
+        # state) are preserved on top of the derived 10% allocation.
+        management_delegation_hp = delegation.get(MANAGEMENT_VIRTUAL_RECIPIENT, 0)
+        management_own_virtual = (
+            calculate_virtual_tokens(management_delegation_hp)
+            if management_delegation_hp
+            else Decimal("0.000")
+        )
+
         # Apply all delegation token changes atomically in one batched transaction,
         # then refresh the derived Management virtual token allocation.
         with db2.engine.begin() as conn:
             if active_virtual or zero_virtual:
                 apply_active_delegations(conn, account, active_virtual)
                 clear_virtual_tokens(conn, zero_virtual)
-            management_virtual = refresh_management_virtual_tokens(conn)
+            management_virtual = refresh_management_virtual_tokens(
+                conn, management_own_virtual
+            )
             print(
                 "hsbi_check_delegation: set "
                 f"{MANAGEMENT_VIRTUAL_RECIPIENT} virtual_tokens to {management_virtual}"

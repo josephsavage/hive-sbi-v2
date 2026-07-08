@@ -5,6 +5,18 @@ from datetime import datetime, timedelta, timezone
 from hivesbi.settings import get_runtime
 from hivesbi.storage import ConfigurationDB
 from hivesbi.utils import ensure_timezone_aware
+from hivesbi.issuance_log import (
+    PENDING_TRX_PLACEHOLDER,
+    UNCAPTURED_TRX_PLACEHOLDER,
+    complete_uncaptured_success,
+    insert_pending_issuance,
+    issue_trx_id,
+    log_issuance,
+    mark_issuance_failure,
+    mark_issuance_success,
+    record_pending_error,
+    utcnow,
+)
 from hivesbi.issue import (
     get_tokenholders,
     get_default_token_issuer,
@@ -26,8 +38,7 @@ ABC_RATIONALE = "Pending Balance Conversion"
 CHAIN_MATCH_WINDOW = timedelta(minutes=30)
 CHAIN_SCAN_LOOKBACK = timedelta(hours=5)
 HISTORY_SCAN_LIMIT = 1000
-PENDING_TRX_PLACEHOLDER = "PENDING"
-UNCAPTURED_TRX_PLACEHOLDER = "N/A"
+HISTORY_SCAN_HARD_LIMIT = 10000
 MATCH_CLOCK_SKEW = timedelta(minutes=5)
 
 
@@ -37,14 +48,6 @@ def token_decimal(value):
 
 def floor_token_amount(value):
     return token_decimal(value).quantize(TOKEN_PRECISION, rounding=ROUND_DOWN)
-
-
-def utcnow():
-    return datetime.now(timezone.utc)
-
-
-def issue_trx_id(tx):
-    return tx.get("trx_id") or tx.get("transaction_id") or UNCAPTURED_TRX_PLACEHOLDER
 
 
 def calculate_management_issue_amount(outstanding, management_issued):
@@ -61,93 +64,9 @@ def calculate_management_issue_amount(outstanding, management_issued):
 
 
 # ---------------------------------------------------------------------------
-# write-ahead issuance log helpers
-# ---------------------------------------------------------------------------
-# Every issuance path commits an intent row before broadcasting. The broadcast is
-# the only step that cannot be rolled back, so reconciliation completes the same
-# row from chain history if the process dies before SUCCESS is recorded. rationale
-# is durable and is never inferred from chain history.
-
-
-def insert_pending_issuance(
-    conn, recipient, units, rationale, source_trx_id=None, issued_at=None
-):
-    issued_at = issued_at or utcnow()
-    result = conn.exec_driver_sql(
-        """
-        INSERT INTO token_issuance_log
-            (trx_id, recipient, units, issued_at, status, error_message, rationale, source_trx_id)
-        VALUES (%s, %s, %s, %s, 'PENDING', NULL, %s, %s)
-        """,
-        (PENDING_TRX_PLACEHOLDER, recipient, units, issued_at, rationale, source_trx_id),
-    )
-    return result.lastrowid
-
-
-def mark_issuance_success(conn, log_id, trx_id):
-    conn.exec_driver_sql(
-        """
-        UPDATE token_issuance_log
-        SET status = 'SUCCESS', trx_id = %s, error_message = NULL
-        WHERE id = %s
-        """,
-        (trx_id, log_id),
-    )
-
-
-def complete_uncaptured_success(conn, log_id, trx_id):
-    conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET trx_id = %s, error_message = NULL WHERE id = %s",
-        (trx_id, log_id),
-    )
-
-
-def mark_issuance_failure(conn, log_id, error_message):
-    conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET status = 'FAILURE', error_message = %s WHERE id = %s",
-        (error_message, log_id),
-    )
-
-
-def record_pending_error(conn, log_id, error_message):
-    """Keep a row PENDING (so it still guards against re-issue) but note the error.
-
-    A broadcast that raised may still have reached the chain, so we do not assume
-    failure here — chain reconciliation resolves the row to SUCCESS or FAILURE.
-    """
-    conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET error_message = %s WHERE id = %s",
-        (error_message, log_id),
-    )
-
-
-def log_issuance(
-    conn,
-    trx_id,
-    recipient,
-    units,
-    status,
-    rationale,
-    error_message=None,
-    source_trx_id=None,
-    issued_at=None,
-):
-    """Append a terminal (SUCCESS/FAILURE) issuance row.
-
-    Retained for legacy tests and historical compatibility; new issuance paths
-    should use insert_pending_issuance followed by mark_issuance_success.
-    """
-    issued_at = issued_at or utcnow()
-    conn.exec_driver_sql(
-        """
-        INSERT INTO token_issuance_log
-            (trx_id, recipient, units, issued_at, status, error_message, rationale, source_trx_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (trx_id, recipient, units, issued_at, status, error_message, rationale, source_trx_id),
-    )
-
-
+# write-ahead issuance log helpers live in hivesbi.issuance_log (shared with
+# hivesbi.parse_hist_op for Unit Conversion); they are re-exported above for
+# callers and tests.
 # ---------------------------------------------------------------------------
 # chain-confirm reconciliation
 # ---------------------------------------------------------------------------
@@ -213,7 +132,8 @@ def _parse_engine_issue(history_row, token_symbol="HSBIDAO"):
 def fetch_recent_chain_issuance_scan(
     issuer, token_symbol="HSBIDAO", limit=HISTORY_SCAN_LIMIT, lookback=CHAIN_SCAN_LOOKBACK
 ):
-    cutoff = utcnow() - lookback
+    scan_started = utcnow()
+    cutoff = scan_started - lookback
     try:
         history = issuer.hive_account.history_reverse(only_ops=["custom_json"])
     except TypeError:
@@ -230,7 +150,6 @@ def fetch_recent_chain_issuance_scan(
     scanned = 0
     reached_cutoff = False
     saw_timestamp = False
-    covered_until = None
     for history_row in history:
         scanned += 1
         if scanned > limit:
@@ -239,8 +158,6 @@ def fetch_recent_chain_issuance_scan(
         timestamp = ensure_timezone_aware(row.get("timestamp") or op.get("timestamp"))
         if timestamp is not None:
             saw_timestamp = True
-            if covered_until is None or timestamp > covered_until:
-                covered_until = timestamp
         if timestamp is not None and timestamp < cutoff:
             reached_cutoff = True
             break
@@ -251,10 +168,15 @@ def fetch_recent_chain_issuance_scan(
     complete = reached_cutoff or scanned < limit
     if reached_cutoff:
         covered_since = cutoff
-    elif complete and saw_timestamp:
+    elif complete and (saw_timestamp or scanned == 0):
         covered_since = datetime.min.replace(tzinfo=timezone.utc)
     else:
         covered_since = None
+    # history_reverse starts at the account head, so a successful fetch covers
+    # everything up to the present: no op newer than the newest scanned op can
+    # exist. The skew margin absorbs API indexing lag and chain-vs-app clock
+    # drift, so an issuer with no recent activity can still prove absence.
+    covered_until = scan_started - MATCH_CLOCK_SKEW
     return {
         "issuances": issuances,
         "covered_since": covered_since,
@@ -414,7 +336,6 @@ def _complete_balance_issuance_effect(conn, pending_row):
 def reconcile_issuances(
     conn,
     chain_issuances,
-    now=None,
     covered_since=None,
     covered_until=None,
     scan_complete=False,
@@ -424,13 +345,14 @@ def reconcile_issuances(
     Reconciliation uses the blockchain timestamp as the authority. A PENDING row
     is confirmed only by a matching chain issue (recipient + units + chain
     timestamp near the intent timestamp). A PENDING row is failed only when the
-    chain scan provably covered its entire possible match window.
+    chain scan provably covered its entire possible match window AND no in-window
+    chain issue could plausibly be its broadcast (a contested row stays PENDING;
+    once the sibling SUCCESS row records the chain trx_id, the next pass excludes
+    that issue and the row resolves).
 
     rationale is read from the existing PENDING row and is never inferred from the
     chain or rewritten.
     """
-    now = now or utcnow()
-
     logged_trx = {
         r[0]
         for r in conn.exec_driver_sql(
@@ -461,6 +383,20 @@ def reconcile_issuances(
     ]
     matches, matched_trx_ids = _match_pending_rows_to_chain(pending, unmatched_chain)
 
+    # A pending row with any in-window chain candidate is contested: that issue
+    # may be its own broadcast (tie-skipped, or attributed to a sibling row by
+    # timestamp proximity), so absence is not proven and the row must not be
+    # failed this pass.
+    contested = {
+        row["id"]
+        for row in pending
+        if row["id"] not in matches
+        and any(
+            _chain_issue_matches_pending(chain_issue, row)
+            for chain_issue in unmatched_chain
+        )
+    }
+
     for pending_row in pending:
         log_id = pending_row["id"]
         recipient = pending_row["recipient"]
@@ -485,6 +421,11 @@ def reconcile_issuances(
             and covered_since <= issued_at_aware - MATCH_CLOCK_SKEW
             and covered_until >= issued_at_aware + CHAIN_MATCH_WINDOW
         )
+        if scan_covers_row and log_id in contested:
+            print(
+                f"Leaving contested PENDING unresolved: {recipient} {units} {rationale}"
+            )
+            continue
         if scan_covers_row:
             mark_issuance_failure(
                 conn,
@@ -536,7 +477,17 @@ def reconcile_recent_issuances(db2, issuer):
         if needed > lookback:
             lookback = needed
 
-    scan = fetch_recent_chain_issuance_scan(issuer, lookback=lookback)
+    # Scale the scan budget with the lookback: a fixed limit on a busy issuer
+    # (one custom_json per member issuance) would stop the scan before the
+    # cutoff, complete=False forever, and old PENDING rows could never resolve.
+    limit = HISTORY_SCAN_LIMIT
+    if lookback > CHAIN_SCAN_LOOKBACK:
+        limit = min(
+            int(HISTORY_SCAN_LIMIT * (lookback / CHAIN_SCAN_LOOKBACK)) + 1,
+            HISTORY_SCAN_HARD_LIMIT,
+        )
+
+    scan = fetch_recent_chain_issuance_scan(issuer, lookback=lookback, limit=limit)
     with db2.engine.begin() as conn:
         reconcile_issuances(
             conn,
