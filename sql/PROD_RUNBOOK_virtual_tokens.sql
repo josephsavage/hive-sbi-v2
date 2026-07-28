@@ -18,6 +18,17 @@
 USE `sbi`;
 
 -- -----------------------------------------------------------------------------
+-- PROD STATE MEASURED 2026-07-28 (re-run the pre-checks; do not trust this blind)
+--   step 1 virtual_tokens column ................. ALREADY APPLIED — skip
+--   step 2 tokens generated expression ........... ALREADY APPLIED — skip
+--   step 3 status enum includes 'PENDING' ........ ALREADY APPLIED — skip
+--   step 4 source_trx_id column + index .......... NOT APPLIED — run this
+-- i.e. prod is post-#138 / pre-#139. Step 4 is the only DDL required, and it must
+-- land BEFORE the code deploy (insert_pending_issuance writes source_trx_id on
+-- every issuance) and BEFORE the LEGACY CLEANUP backfill at the bottom.
+-- -----------------------------------------------------------------------------
+
+-- -----------------------------------------------------------------------------
 -- PRE-CHECKS — run these first and read the output before changing anything.
 -- -----------------------------------------------------------------------------
 
@@ -54,6 +65,18 @@ WHERE TABLE_SCHEMA = 'sbi'
 -- -----------------------------------------------------------------------------
 -- APPLY — run only the statements whose pre-check showed the OLD state.
 -- Each is safe to skip if the pre-check already shows the new state.
+--
+-- STOP THE PIPELINE FIRST:
+--     systemctl stop sbirunner
+-- sbirunner.service is Restart=always and loops continuously, and
+-- hsbi_token_snapshot writes token_issuance_log every cycle. DDL on that table
+-- takes a metadata lock the running job will block on, and the LEGACY CLEANUP
+-- below (UPDATE trx_id / DELETE) races a live reconciliation pass that is reading
+-- and updating the same rows. Restart only after the post-checks pass.
+--
+-- Note on ADD COLUMN: MariaDB applies it instantly only when the new column lands
+-- at the end of the row. Confirm `rationale` is currently the last column
+-- (ORDINAL_POSITION) — if it is not, `AFTER rationale` rebuilds the whole table.
 -- -----------------------------------------------------------------------------
 
 -- 1. Add the virtual_tokens column (positioned after LP_tokens for readability).
@@ -127,37 +150,111 @@ WHERE mgmt.member_name = 'josephsavage';
 -- -----------------------------------------------------------------------------
 -- 'reconciled' was never a valid rationale (valid: pik, Pending Balance
 -- Conversion, Unit Conversion, Management). PR #138's reconciliation inserted
--- these as duplicate rows for issuances whose real log row had trx_id='N/A';
--- the current code updates the original row in place instead. Existing rows do
--- not affect the Management cap (which sums rationale='Management' only), but
--- they pollute the audit trail.
+-- these as duplicate SUCCESS rows for chain issues it could not tie back to a log
+-- row; the current code updates the original row in place instead. They do NOT
+-- affect the Management cap (which sums rationale='Management' only), but any
+-- report summing SUCCESS units counts the same issuance twice.
 --
--- Review first: pair each 'reconciled' row with its likely original (same
--- recipient + units, SUCCESS, uncaptured trx_id, within the match window).
+-- WHY THESE ARE ALL 'Unit Conversion': that path logged the originating *transfer*
+-- hash in trx_id, never the Hive Engine issue hash, so its chain op never matched
+-- the trx_id check and fell through to the orphan branch on every pass. pik /
+-- Pending Balance Conversion / Management all log the real issue trx_id and were
+-- never affected.
+--
+-- NOTE ON TIMESTAMPS: PR #138's INSERT omitted issued_at, so it defaulted to
+-- current_timestamp() — the RECONCILIATION-PASS time, not the issuance time. Do
+-- not pair on a narrow window around it, and do not treat r.issued_at as when the
+-- tokens were minted. The original always precedes the duplicate.
+
+-- 1. Measure the overstatement (record this before changing anything).
+SELECT rationale, status, COUNT(*) AS row_count, SUM(units) AS units,
+       MIN(issued_at) AS first_seen, MAX(issued_at) AS last_seen
+FROM token_issuance_log
+GROUP BY rationale, status
+ORDER BY units DESC;
+
+-- 2. Backfill source_trx_id for legacy Unit Conversion rows. MUST run BEFORE
+--    step 4: those rows hold the originating transfer hash in trx_id, and step 4
+--    overwrites it with the issue hash. This also makes
+--    hivesbi.issuance_log.has_issuance_for_source effective for historic
+--    transfers, which otherwise match nothing (source_trx_id IS NULL).
+UPDATE token_issuance_log
+SET source_trx_id = trx_id
+WHERE rationale = 'Unit Conversion'
+  AND source_trx_id IS NULL;
+
+-- 3. Pair each 'reconciled' row with its original (same recipient + units, an
+--    earlier SUCCESS row under a real rationale). Review the output before acting.
 SELECT
-    r.id  AS reconciled_id,
-    r.trx_id,
+    r.id AS dup_id,
+    r.trx_id AS chain_trx,
     r.recipient,
     r.units,
-    r.issued_at,
-    s.id  AS original_id,
+    r.issued_at AS reconciled_at,
+    s.id AS original_id,
     s.rationale AS original_rationale,
-    s.issued_at AS original_issued_at
+    s.trx_id AS original_trx,
+    s.issued_at AS original_issued_at,
+    TIMESTAMPDIFF(MINUTE, s.issued_at, r.issued_at) AS gap_minutes
 FROM token_issuance_log r
 LEFT JOIN token_issuance_log s
-       ON s.recipient = r.recipient
-      AND s.units = r.units
-      AND s.status = 'SUCCESS'
-      AND s.trx_id = 'N/A'
-      AND s.issued_at BETWEEN r.issued_at - INTERVAL 35 MINUTE
-                          AND r.issued_at + INTERVAL 35 MINUTE
+       ON  s.id        <> r.id
+       AND s.recipient  = r.recipient
+       AND s.units      = r.units
+       AND s.status     = 'SUCCESS'
+       AND s.rationale <> 'reconciled'
+       AND s.issued_at <= r.issued_at
+       AND s.issued_at >= r.issued_at - INTERVAL 12 HOUR
 WHERE r.rationale = 'reconciled'
-ORDER BY r.issued_at;
+ORDER BY r.issued_at, gap_minutes;
 
--- For each confidently paired row: move the chain trx_id onto the original row,
--- then delete the duplicate (run per id after reviewing the SELECT above):
---   UPDATE token_issuance_log SET trx_id = '<r.trx_id>' WHERE id = <original_id>;
---   DELETE FROM token_issuance_log WHERE id = <reconciled_id>;
+-- 3b. Ambiguous rows: more than one candidate original. Resolve these by hand
+--     (take the nearest in time) before running the deletes.
+SELECT r.id AS dup_id, r.recipient, r.units, r.issued_at,
+       COUNT(s.id) AS candidate_originals
+FROM token_issuance_log r
+JOIN token_issuance_log s
+       ON  s.id        <> r.id
+       AND s.recipient  = r.recipient
+       AND s.units      = r.units
+       AND s.status     = 'SUCCESS'
+       AND s.rationale <> 'reconciled'
+       AND s.issued_at <= r.issued_at
+       AND s.issued_at >= r.issued_at - INTERVAL 12 HOUR
+WHERE r.rationale = 'reconciled'
+GROUP BY r.id, r.recipient, r.units, r.issued_at
+HAVING COUNT(s.id) > 1;
+
+-- 4. For each confirmed pair: move the real chain trx_id onto the original row,
+--    then delete the duplicate (run per id after reviewing step 3):
+--      UPDATE token_issuance_log SET trx_id = '<chain_trx>' WHERE id = <original_id>;
+--      DELETE FROM token_issuance_log WHERE id = <dup_id>;
 --
--- A 'reconciled' row with NO pair is the only record of a genuine out-of-band
--- mint — investigate it before deleting anything.
+-- A 'reconciled' row with no pair at 12h is NOT automatically a genuine
+-- out-of-band mint — widen to 48h first. Only a row that stays unpaired after
+-- that is worth investigating as a real unlogged issuance.
+
+-- 5. Verify: expect zero 'reconciled' rows, and SUCCESS units down by exactly the
+--    amount recorded in step 1.
+SELECT rationale, status, COUNT(*) AS row_count, SUM(units) AS units
+FROM token_issuance_log
+GROUP BY rationale, status
+ORDER BY units DESC;
+
+-- -----------------------------------------------------------------------------
+-- OTHER NON-CANONICAL RATIONALES — decide, do not delete blindly
+-- -----------------------------------------------------------------------------
+-- Two more values exist that are not in the valid set. Neither is a duplicate, so
+-- neither is covered by the cleanup above:
+--   rationale='FAILURE' — status FAILURE, a legacy path that wrote the status into
+--     the rationale column. Never summed (status is FAILURE), but it shows up as a
+--     bogus category in any report that GROUPs BY rationale. Safe to relabel.
+--   rationale='Reissue' — status SUCCESS, a one-off manual event. This is REAL
+--     issuance: relabel or document it, never delete it.
+SELECT rationale, status, COUNT(*) AS row_count, SUM(units) AS units,
+       MIN(issued_at) AS first_seen, MAX(issued_at) AS last_seen
+FROM token_issuance_log
+WHERE rationale NOT IN ('pik', 'Pending Balance Conversion', 'Unit Conversion',
+                        'Management')
+   OR rationale IS NULL
+GROUP BY rationale, status;

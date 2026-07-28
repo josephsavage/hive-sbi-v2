@@ -41,6 +41,7 @@ from hsbi_token_snapshot import (
     log_issuance,
     reconcile_issuances,
     sync_tokenholders,
+    warn_stuck_pending,
 )
 
 # --- sentinel names so DB tests never collide with real members ---------------
@@ -221,6 +222,26 @@ class PureLogicTests(unittest.TestCase):
             scan["covered_since"], datetime.min.replace(tzinfo=timezone.utc)
         )
         self.assertIsNotNone(scan["covered_until"])
+
+    def test_scan_incomplete_when_history_exceeds_limit(self):
+        # The failure HISTORY_SCAN_LIMIT guards against: a burst longer than the
+        # budget stops the walk before the cutoff, so absence is never proven, no
+        # PENDING row can be failed, and issue_balance_tokens skips those members
+        # every cycle. In the high-VP regime (cycle every ~15 min) a single window
+        # has held ~1600 issuances, which is why the limit is sized well above it.
+        recent = datetime.now(timezone.utc) - timedelta(minutes=1)
+        rows = [
+            {"trx_id": f"op_{i}", "timestamp": recent, "op": ["custom_json", {}]}
+            for i in range(5)
+        ]
+        truncated = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=3)
+        self.assertFalse(truncated["complete"])
+        self.assertIsNone(truncated["covered_since"])
+
+        # Same history, budget above the burst: coverage is proven.
+        sufficient = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=10)
+        self.assertTrue(sufficient["complete"])
+        self.assertIsNotNone(sufficient["covered_since"])
 
 
 @unittest.skipUnless(_DB_ENGINE is not None, _DB_SKIP_REASON)
@@ -724,6 +745,197 @@ class ReconciliationTests(DBTestCase):
             "SELECT COUNT(*) FROM token_issuance_log WHERE rationale = 'reconciled'"
         ).fetchone()[0]
         self.assertEqual(int(reconciled), 0)
+
+    def test_uncaptured_success_claims_chain_issue_before_pending_row(self):
+        # A SUCCESS row logged 'N/A' and a PENDING row share recipient and units,
+        # and both are in-window for the single chain issue. The chain issue belongs
+        # to the SUCCESS row (it is already on chain); handing it to the PENDING row
+        # would stamp that row with another issuance's trx_id and strand the 'N/A'
+        # row on its placeholder forever.
+        now = datetime.now(timezone.utc)
+        uncaptured = log_issuance(
+            self.conn,
+            "N/A",
+            T_PIK,
+            Decimal("4.000"),
+            "SUCCESS",
+            "pik",
+            issued_at=now - timedelta(minutes=10),
+        )
+        uncaptured_id = self.x(
+            "SELECT id FROM token_issuance_log WHERE trx_id = 'N/A' "
+            "AND recipient = %s AND units = %s",
+            (T_PIK, Decimal("4.000")),
+        ).fetchone()[0]
+        pending_id = insert_pending_issuance(
+            self.conn,
+            T_PIK,
+            Decimal("4.000"),
+            "Pending Balance Conversion",
+            issued_at=now - timedelta(minutes=9),
+        )
+        chain = [
+            {
+                "trx_id": "chain_uncaptured_wins",
+                "recipient": T_PIK,
+                "units": Decimal("4.000"),
+                "timestamp": now - timedelta(minutes=8),
+            }
+        ]
+        reconcile_issuances(self.conn, chain)
+
+        self.assertEqual(
+            self.x(
+                "SELECT trx_id FROM token_issuance_log WHERE id = %s", (uncaptured_id,)
+            ).fetchone()[0],
+            "chain_uncaptured_wins",
+        )
+        # The PENDING row must not have absorbed the same chain issue.
+        pending_row = self.x(
+            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (pending_id,)
+        ).fetchone()
+        self.assertEqual(pending_row[0], "PENDING")
+        self.assertEqual(pending_row[1], "PENDING")
+        # And no chain issue may ever be re-logged as a new row.
+        self.assertEqual(
+            int(
+                self.x(
+                    "SELECT COUNT(*) FROM token_issuance_log WHERE trx_id = %s",
+                    ("chain_uncaptured_wins",),
+                ).fetchone()[0]
+            ),
+            1,
+        )
+
+    def test_uncaptured_pass_leaves_pending_its_own_chain_issue(self):
+        # Mirror of the test above, and the regression guard for the reorder: with
+        # 'N/A' completion running first it must consume only the issue that is
+        # closest to its own row, never sweep the pool. Both rows share recipient
+        # and units and BOTH chain issues fall inside BOTH match windows, so the
+        # separation comes from ordering + proximity, not from disjoint windows.
+        base = datetime.now(timezone.utc) - timedelta(minutes=20)
+        log_issuance(
+            self.conn,
+            "N/A",
+            T_PIK,
+            Decimal("7.000"),
+            "SUCCESS",
+            "pik",
+            issued_at=base,
+        )
+        uncaptured_id = self.x(
+            "SELECT id FROM token_issuance_log WHERE trx_id = 'N/A' "
+            "AND recipient = %s AND units = %s",
+            (T_PIK, Decimal("7.000")),
+        ).fetchone()[0]
+        pending_id = insert_pending_issuance(
+            self.conn,
+            T_PIK,
+            Decimal("7.000"),
+            "Pending Balance Conversion",
+            issued_at=base + timedelta(minutes=3),
+        )
+        chain = [
+            {
+                "trx_id": "chain_for_uncaptured",
+                "recipient": T_PIK,
+                "units": Decimal("7.000"),
+                "timestamp": base + timedelta(minutes=1),
+            },
+            {
+                "trx_id": "chain_for_pending",
+                "recipient": T_PIK,
+                "units": Decimal("7.000"),
+                "timestamp": base + timedelta(minutes=4),
+            },
+        ]
+        reconcile_issuances(self.conn, chain)
+
+        self.assertEqual(
+            self.x(
+                "SELECT trx_id FROM token_issuance_log WHERE id = %s", (uncaptured_id,)
+            ).fetchone()[0],
+            "chain_for_uncaptured",
+        )
+        pending_row = self.x(
+            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (pending_id,)
+        ).fetchone()
+        self.assertEqual(pending_row[0], "SUCCESS")
+        self.assertEqual(pending_row[1], "chain_for_pending")
+        # Two issuances in, two rows out — neither chain op created a third.
+        self.assertEqual(
+            int(
+                self.x(
+                    "SELECT COUNT(*) FROM token_issuance_log "
+                    "WHERE recipient = %s AND units = %s",
+                    (T_PIK, Decimal("7.000")),
+                ).fetchone()[0]
+            ),
+            2,
+        )
+
+    def test_second_chain_issue_cannot_complete_the_same_row_twice(self):
+        # Two in-window chain issues, one uncaptured row. The first completes it;
+        # the second must fall through to the recognise-and-report branch, never
+        # inserting a row. This is the invariant PR #138 violated.
+        base = datetime.now(timezone.utc) - timedelta(minutes=20)
+        log_issuance(
+            self.conn,
+            "N/A",
+            T_PIK,
+            Decimal("8.000"),
+            "SUCCESS",
+            "pik",
+            issued_at=base,
+        )
+        chain = [
+            {
+                "trx_id": "chain_first",
+                "recipient": T_PIK,
+                "units": Decimal("8.000"),
+                "timestamp": base + timedelta(minutes=1),
+            },
+            {
+                "trx_id": "chain_second",
+                "recipient": T_PIK,
+                "units": Decimal("8.000"),
+                "timestamp": base + timedelta(minutes=2),
+            },
+        ]
+        reconcile_issuances(self.conn, chain)
+
+        rows = self.x(
+            "SELECT trx_id FROM token_issuance_log "
+            "WHERE recipient = %s AND units = %s",
+            (T_PIK, Decimal("8.000")),
+        ).fetchall()
+        self.assertEqual([r[0] for r in rows], ["chain_first"])
+
+    def test_warn_stuck_pending_flags_only_old_pending_rows(self):
+        # A stuck PENDING row blocks its (recipient, rationale) in
+        # issue_balance_tokens and produces no error of its own, so the alert is
+        # the only signal that a member has stopped being paid.
+        now = datetime.now(timezone.utc)
+        baseline = warn_stuck_pending(self.conn)
+
+        insert_pending_issuance(
+            self.conn, T_PIK, Decimal("1.000"), "pik", issued_at=now - timedelta(hours=7)
+        )
+        insert_pending_issuance(
+            self.conn, T_GUARD, Decimal("1.000"), "pik", issued_at=now - timedelta(hours=1)
+        )
+        log_issuance(
+            self.conn,
+            "chain_old_success",
+            T_HOLDER,
+            Decimal("1.000"),
+            "SUCCESS",
+            "pik",
+            issued_at=now - timedelta(hours=7),
+        )
+
+        # Only the old PENDING row qualifies: recent PENDING and old SUCCESS do not.
+        self.assertEqual(warn_stuck_pending(self.conn) - baseline, 1)
 
     def test_stale_unmatched_pending_stays_pending_without_covered_scan(self):
         stale_ts = datetime.now(timezone.utc) - timedelta(hours=6)

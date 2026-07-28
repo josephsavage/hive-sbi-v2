@@ -36,10 +36,39 @@ MANAGEMENT_RATIONALE = "Management"
 PIK_RATIONALE = "pik"
 ABC_RATIONALE = "Pending Balance Conversion"
 CHAIN_MATCH_WINDOW = timedelta(minutes=30)
-CHAIN_SCAN_LOOKBACK = timedelta(hours=5)
-HISTORY_SCAN_LIMIT = 1000
-HISTORY_SCAN_HARD_LIMIT = 10000
+# Floor only: reconcile_recent_issuances extends the lookback to cover the oldest
+# PENDING row. PENDING resolution is therefore self-correcting and does NOT depend
+# on this value — the audit-only passes do ('N/A' completion and the
+# unexplained-issuance warning), and those act on SUCCESS rows, which never extend
+# the lookback themselves.
+#
+# DO NOT LOWER. The hard minimum is one full cycle plus the match window:
+# share_cycle_min (144 min) + CHAIN_MATCH_WINDOW + MATCH_CLOCK_SKEW ~= 2.98h. Below
+# that, a SUCCESS row logged with UNCAPTURED_TRX_PLACEHOLDER in the previous cycle
+# falls outside the scan and keeps its placeholder forever. 6h leaves 5.42h after
+# the 35-minute margin = ~2.26 cycles, so every uncaptured row gets two full
+# reconciliation passes and a missed pass is not permanent coverage loss (5h gave
+# only 1.84 cycles — one pass plus a partial). The cost is paid in the high-VP
+# regime, where the cycle fires every ~15 min and the window is re-walked ~24x.
+CHAIN_SCAN_LOOKBACK = timedelta(hours=6)
+# The scan breaks at `reached_cutoff`, so these are a runaway guard, not a budget:
+# an ordinary cycle exits after a few hundred ops no matter how high they are set.
+# They only bind in the high-VP regime, where the cycle fires roughly every 15
+# minutes instead of every 144. Measured peak (2026-07-14) was 1597 issuances in a
+# 5h window at current membership; the scan window is 6h, so budget ~5x the peak
+# for membership growth. Note this counts EVERY custom_json on the issuer account,
+# including hsbi_liquidpools broadcasts that never reach token_issuance_log — the
+# measured figure is a floor. Below the real peak `complete` is always False, no
+# PENDING row can ever be failed, and issue_balance_tokens then skips that member
+# every cycle.
+HISTORY_SCAN_LIMIT = 10000
+HISTORY_SCAN_HARD_LIMIT = 50000
 MATCH_CLOCK_SKEW = timedelta(minutes=5)
+# A PENDING row older than two 144-minute cycles means reconciliation is not
+# converging. The row blocks its (recipient, rationale) in issue_balance_tokens and
+# the symptom is silent — a skipped member raises no error, it just stops being
+# paid — so it has to be announced.
+STUCK_PENDING_AGE = timedelta(hours=6)
 
 
 def token_decimal(value):
@@ -216,6 +245,10 @@ def _chain_issue_matches_logged_success(chain_issue, success_row):
     return issued_at - MATCH_CLOCK_SKEW <= chain_timestamp <= issued_at + CHAIN_MATCH_WINDOW
 
 
+def _chain_sort_key(chain_issue):
+    return chain_issue.get("timestamp") or datetime.max.replace(tzinfo=timezone.utc)
+
+
 def _match_pending_rows_to_chain(pending_rows, chain_issuances):
     """Match on-chain issues to the closest compatible PENDING row.
 
@@ -228,10 +261,7 @@ def _match_pending_rows_to_chain(pending_rows, chain_issuances):
     used_log_ids = set()
     used_trx_ids = set()
 
-    def chain_sort_key(chain_issue):
-        return chain_issue.get("timestamp") or datetime.max.replace(tzinfo=timezone.utc)
-
-    for chain_issue in sorted(chain_issuances, key=chain_sort_key):
+    for chain_issue in sorted(chain_issuances, key=_chain_sort_key):
         candidates = [
             row
             for row in pending_rows
@@ -362,6 +392,37 @@ def reconcile_issuances(
     }
     unmatched_chain = [c for c in chain_issuances if c["trx_id"] not in logged_trx]
 
+    # Pass 1 — adopt chain issues that provably belong to an existing SUCCESS row
+    # whose broadcast returned no trx_id (logged UNCAPTURED_TRX_PLACEHOLDER).
+    #
+    # This MUST run before pending matching. A chain issue left in the pool here
+    # can be handed to an unrelated PENDING row of the same recipient and amount,
+    # stamping that row with a trx_id belonging to a different issuance while the
+    # real uncaptured row keeps its placeholder forever.
+    completed_trx_ids = set()
+    completed_log_ids = set()
+    for chain_issue in sorted(unmatched_chain, key=_chain_sort_key):
+        uncaptured = _find_logged_success_for_chain_issue(
+            conn, chain_issue, trx_id=UNCAPTURED_TRX_PLACEHOLDER
+        )
+        # The UPDATE below clears the placeholder, so a completed row cannot be
+        # re-selected; completed_log_ids guards the same invariant explicitly.
+        if uncaptured is None or uncaptured["id"] in completed_log_ids:
+            continue
+        complete_uncaptured_success(conn, uncaptured["id"], chain_issue["trx_id"])
+        completed_log_ids.add(uncaptured["id"])
+        completed_trx_ids.add(chain_issue["trx_id"])
+        print(
+            "Completed logged issuance from chain: "
+            f"{chain_issue['trx_id']} {chain_issue['recipient']} "
+            f"{chain_issue['units']} {uncaptured['rationale']}"
+        )
+
+    unmatched_chain = [
+        c for c in unmatched_chain if c["trx_id"] not in completed_trx_ids
+    ]
+
+    # Pass 2 — resolve write-ahead PENDING rows against what is left.
     pending_rows = conn.exec_driver_sql(
         """
         SELECT id, recipient, units, rationale, issued_at
@@ -434,22 +495,13 @@ def reconcile_issuances(
             )
             print(f"Reconciled PENDING -> FAILURE: {recipient} {units} {rationale}")
 
+    # Pass 3 — anything still unclaimed is either already explained by a logged
+    # SUCCESS row (nothing to do) or has no origin in the log at all (report only;
+    # never insert, or the log double-counts the issuance — see CHANGES.md, #138).
     unmatched_chain = [
         c for c in unmatched_chain if c["trx_id"] not in matched_trx_ids
     ]
     for chain_issue in unmatched_chain:
-        uncaptured = _find_logged_success_for_chain_issue(
-            conn, chain_issue, trx_id=UNCAPTURED_TRX_PLACEHOLDER
-        )
-        if uncaptured is not None:
-            complete_uncaptured_success(conn, uncaptured["id"], chain_issue["trx_id"])
-            print(
-                "Completed logged issuance from chain: "
-                f"{chain_issue['trx_id']} {chain_issue['recipient']} "
-                f"{chain_issue['units']} {uncaptured['rationale']}"
-            )
-            continue
-
         explained = _find_logged_success_for_chain_issue(conn, chain_issue)
         if explained is not None:
             print(
@@ -463,6 +515,30 @@ def reconcile_issuances(
             "Unexplained on-chain issuance without token_issuance_log origin: "
             f"{chain_issue['trx_id']} {chain_issue['recipient']} {chain_issue['units']}"
         )
+
+
+def warn_stuck_pending(conn):
+    """Announce PENDING rows that reconciliation should already have resolved.
+
+    issue_balance_tokens skips any member holding a live PENDING row for the same
+    rationale, so an unresolvable row silently stops that member's dividends. The
+    usual cause is an incomplete chain scan (see HISTORY_SCAN_LIMIT).
+    """
+    rows = conn.exec_driver_sql(
+        """
+        SELECT id, recipient, units, rationale, issued_at, error_message
+        FROM token_issuance_log
+        WHERE status = 'PENDING' AND issued_at < %s
+        ORDER BY issued_at ASC
+        """,
+        (utcnow() - STUCK_PENDING_AGE,),
+    ).fetchall()
+    for row in rows:
+        print(
+            f"ALERT: stuck PENDING issuance id={row[0]} recipient={row[1]} "
+            f"units={row[2]} rationale={row[3]} issued_at={row[4]} error={row[5]}"
+        )
+    return len(rows)
 
 
 def reconcile_recent_issuances(db2, issuer):
@@ -488,6 +564,20 @@ def reconcile_recent_issuances(db2, issuer):
         )
 
     scan = fetch_recent_chain_issuance_scan(issuer, lookback=lookback, limit=limit)
+    if not scan["complete"]:
+        print(
+            "ALERT: chain issuance scan incomplete "
+            f"(lookback={lookback}, limit={limit}). No PENDING row can be failed "
+            "this pass, so affected members stay blocked in issue_balance_tokens. "
+            "Raise HISTORY_SCAN_LIMIT if this persists."
+        )
+    if limit >= HISTORY_SCAN_HARD_LIMIT:
+        print(
+            f"ALERT: chain scan lookback hit HISTORY_SCAN_HARD_LIMIT ({limit}); "
+            f"oldest PENDING issued_at={oldest_pending}. Reconciliation may never "
+            "converge — investigate before the next cycle."
+        )
+
     with db2.engine.begin() as conn:
         reconcile_issuances(
             conn,
@@ -496,6 +586,7 @@ def reconcile_recent_issuances(db2, issuer):
             covered_until=scan["covered_until"],
             scan_complete=scan["complete"],
         )
+        warn_stuck_pending(conn)
 
 
 # ---------------------------------------------------------------------------
