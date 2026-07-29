@@ -13,11 +13,20 @@ from nectar.utils import (
     formatTimeString,
 )
 
+from hivesbi.issuance_log import (
+    has_issuance_for_source,
+    insert_pending_issuance as _insert_pending_token_issuance,
+    issue_trx_id as _issue_trx_id,
+    mark_issuance_success as _mark_token_issuance_success,
+    record_pending_error as _record_token_issuance_error,
+)
 from hivesbi.issue import TokenIssuer, issue_default_tokens
 from hivesbi.memo_parser import MemoParser
 from hivesbi.settings import get_runtime
 
 log = logging.getLogger(__name__)
+
+UNIT_CONVERSION_RATIONALE = "Unit Conversion"
 
 
 class ParseAccountHist(list):
@@ -715,61 +724,68 @@ class ParseAccountHist(list):
                 }
             )
             if db2 is not None:
-                with db2.engine.begin() as conn:
-
-                    # Issue default tokens to the sender if nominee is sbi-tokens
-                    if nominee == "sbi-tokens":
-                        token_recipient = sender
+                # Issue default tokens to the sender if nominee is sbi-tokens.
+                if nominee == "sbi-tokens":
+                    token_recipient = sender
+                    # Guard + intent insert in one transaction: a reprocessed
+                    # transfer op (crash between broadcast and op bookkeeping)
+                    # must not mint the same source transaction twice.
+                    with db2.engine.begin() as conn:
+                        if has_issuance_for_source(
+                            conn, trx_id, UNIT_CONVERSION_RATIONALE
+                        ):
+                            log_id = None
+                        else:
+                            log_id = _insert_pending_token_issuance(
+                                conn,
+                                token_recipient,
+                                transferable_units,
+                                UNIT_CONVERSION_RATIONALE,
+                                source_trx_id=trx_id,
+                            )
+                    if log_id is None:
                         print(
-                            f"[PointTransfer] Issuing default tokens: trx_id={trx_id} recipient={token_recipient} "
-                            f"units={transferable_units}"
+                            "[PointTransfer] Skipping duplicate Unit Conversion "
+                            f"issuance: source_trx_id={trx_id}"
+                        )
+                    else:
+                        print(
+                            f"[PointTransfer] Issuing default tokens: source_trx_id={trx_id} "
+                            f"recipient={token_recipient} units={transferable_units}"
                         )
                         try:
-                            issue_default_tokens(token_recipient, transferable_units)
+                            tx = issue_default_tokens(token_recipient, transferable_units)
+                            issue_trx_id = _issue_trx_id(tx)
                         except Exception as e:
                             log.exception(
                                 "Failed to issue default tokens for %s (%s units)",
                                 token_recipient,
                                 transferable_units,
                             )
-                            # Insert failure record into log table
-                            conn.exec_driver_sql(
-                                """
-                                INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message)
-                                VALUES (%s, %s, %s, %s, %s)
-                                """,
-                                (trx_id, token_recipient, transferable_units, "FAILURE", str(e)),
-                            )
-
+                            with db2.engine.begin() as conn:
+                                _record_token_issuance_error(conn, log_id, str(e))
                         else:
                             log.info("Issued %d HSBI tokens to %s", transferable_units, sender)
-                            # Insert success record into log table
-                            conn.exec_driver_sql(
-                                """
-                                INSERT INTO token_issuance_log (trx_id, recipient, units, status, error_message, rationale)
-                                VALUES (%s, %s, %s, %s, NULL, %s)
-                                """,
-                                (trx_id, token_recipient, transferable_units, "SUCCESS", "Unit Conversion"),
-                            )
+                            with db2.engine.begin() as conn:
+                                _mark_token_issuance_success(conn, log_id, issue_trx_id)
 
-
-                    # Refund any excess units if any
-                    if refunded_units > 0:
-                        print(
-                            f"[PointTransfer] Refunding excess units: trx_id={trx_id} refund_units={refunded_units}"
-                        )
-                        self._refund_excess_transfer(
-                            recipient=sender,
-                            refund_units=refunded_units,
-                            symbol=amount_obj.symbol,
-                            nominee=nominee,
-                            op=op,
-                        )
-
+                # Refund any excess units if any
+                if refunded_units > 0:
                     print(
-                        f"[PointTransfer] Completed HBD transfer: trx_id={trx_id} nominee={nominee} units={transferable_units}"
+                        f"[PointTransfer] Refunding excess units: trx_id={trx_id} refund_units={refunded_units}"
                     )
-                    return True
+                    self._refund_excess_transfer(
+                        recipient=sender,
+                        refund_units=refunded_units,
+                        symbol=amount_obj.symbol,
+                        nominee=nominee,
+                        op=op,
+                    )
+
+                print(
+                    f"[PointTransfer] Completed HBD transfer: trx_id={trx_id} nominee={nominee} units={transferable_units}"
+                )
+                return True
 
         # HIVE rshares transfer a.k.a Lovegun point transfer
         old_sender_rshares = sender_member["balance_rshares"]

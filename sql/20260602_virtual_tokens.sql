@@ -44,6 +44,29 @@ BEGIN
         ALTER TABLE token_issuance_log
             MODIFY COLUMN status enum('SUCCESS','FAILURE','PENDING') NOT NULL;
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'token_issuance_log'
+          AND COLUMN_NAME = 'source_trx_id'
+    ) THEN
+        ALTER TABLE token_issuance_log
+            ADD COLUMN source_trx_id varchar(100) DEFAULT NULL
+            AFTER rationale;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'token_issuance_log'
+          AND INDEX_NAME = 'idx_source_trx_id'
+    ) THEN
+        ALTER TABLE token_issuance_log
+            ADD INDEX idx_source_trx_id (source_trx_id);
+    END IF;
 END;;
 
 CALL migrate_virtual_tokens();;

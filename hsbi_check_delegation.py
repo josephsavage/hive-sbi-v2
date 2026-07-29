@@ -9,6 +9,9 @@ from hivesbi.storage import ConfigurationDB, TrxDB
 from hivesbi.transfer_ops_storage import TransferTrx
 from hivesbi.utils import ensure_timezone_aware
 
+MANAGEMENT_VIRTUAL_RECIPIENT = "josephsavage"
+MANAGEMENT_VIRTUAL_RATE = Decimal("0.10")
+
 
 def calculate_shares(delegation_shares, hp_share_ratio):
     """Convert delegated HP into delegation bonus *shares* (HP / sp_share_ratio).
@@ -25,6 +28,12 @@ def calculate_shares(delegation_shares, hp_share_ratio):
 
 def calculate_virtual_tokens(delegated_hp):
     return (Decimal(str(delegated_hp)) * Decimal("2")).quantize(
+        Decimal("0.001"), rounding=ROUND_HALF_UP
+    )
+
+
+def calculate_management_virtual_tokens(non_management_virtual_tokens):
+    return (Decimal(str(non_management_virtual_tokens)) * MANAGEMENT_VIRTUAL_RATE).quantize(
         Decimal("0.001"), rounding=ROUND_HALF_UP
     )
 
@@ -82,6 +91,28 @@ def clear_virtual_tokens(conn, accounts):
     """Set virtual_tokens to 0 for removed/leased delegators."""
     for account in accounts:
         upsert_virtual_tokens(conn, account, Decimal("0.000"))
+
+
+def refresh_management_virtual_tokens(conn, own_delegation_virtual=Decimal("0.000")):
+    """Set Management virtual_tokens to 10% of all other virtual_tokens.
+
+    `own_delegation_virtual` preserves any delegation-derived virtual tokens the
+    management account earned as an ordinary delegator (2x its delegated HP);
+    the derived 10% is added on top instead of overwriting that grant.
+    """
+    non_management_virtual = conn.exec_driver_sql(
+        """
+        SELECT COALESCE(SUM(virtual_tokens), 0)
+        FROM tokenholders
+        WHERE member_name <> %s
+        """,
+        (MANAGEMENT_VIRTUAL_RECIPIENT,),
+    ).scalar()
+    management_virtual = calculate_management_virtual_tokens(
+        non_management_virtual
+    ) + Decimal(str(own_delegation_virtual))
+    upsert_virtual_tokens(conn, MANAGEMENT_VIRTUAL_RECIPIENT, management_virtual)
+    return management_virtual
 
 
 def run():
@@ -236,11 +267,29 @@ def run():
                 last_delegation_check = delegation_timestamp[acc]
             print(f"hsbi_check_delegation: will clear virtual_tokens for {acc}")
 
-        # Apply all delegation token changes atomically in one batched transaction.
-        if active_virtual or zero_virtual:
-            with db2.engine.begin() as conn:
+        # The management account may also be an ordinary delegator; its own
+        # delegation-derived virtual tokens (from the current trx delegation
+        # state) are preserved on top of the derived 10% allocation.
+        management_delegation_hp = delegation.get(MANAGEMENT_VIRTUAL_RECIPIENT, 0)
+        management_own_virtual = (
+            calculate_virtual_tokens(management_delegation_hp)
+            if management_delegation_hp
+            else Decimal("0.000")
+        )
+
+        # Apply all delegation token changes atomically in one batched transaction,
+        # then refresh the derived Management virtual token allocation.
+        with db2.engine.begin() as conn:
+            if active_virtual or zero_virtual:
                 apply_active_delegations(conn, account, active_virtual)
                 clear_virtual_tokens(conn, zero_virtual)
+            management_virtual = refresh_management_virtual_tokens(
+                conn, management_own_virtual
+            )
+            print(
+                "hsbi_check_delegation: set "
+                f"{MANAGEMENT_VIRTUAL_RECIPIENT} virtual_tokens to {management_virtual}"
+            )
 
         dd = delegation
         for d in dd:

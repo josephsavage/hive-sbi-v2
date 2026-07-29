@@ -21,32 +21,75 @@
   **deprecated** (no longer on any production path) but retained, with docstrings, for
   ad-hoc reporting / historical recomputation.
 
-## Token issuance: Management 10% + chain reconciliation (PR #138)
+## Token issuance: reconciliation hardening (PR #139 review fixes)
 
-- `hsbi_token_snapshot.py` now issues the **Management 10%** to `josephsavage` each
-  ~2.4 h snapshot cycle, replacing the prior irregular manual issuance. The cap targets
-  10% of *real* circulating supply (`SUM(tokens − virtual_tokens)`, excluding
-  `sbi-tokens`); `calculate_management_issue_amount` = `(0.10·outstanding − issued) / 0.90`,
-  where `issued` counts SUCCESS **and** PENDING. It is **write-ahead**: a committed
-  PENDING row counts toward the cap before the broadcast, so a crash after broadcast
-  cannot double-mint.
-- Chain-confirm reconciliation (`reconcile_issuances`) resolves Management PENDING rows
-  against the issuer's recent on-chain HSBIDAO issuances: matched → SUCCESS; genuinely
-  absent past the window (only when the scan provably covered the row) → FAILURE so the
-  cap frees up. Reconciliation is **rationale-scoped to Management** and recognises
-  confirmed pik/abc dividends by logged `trx_id` (and, defensively, recipient+units), so
-  a same-amount member dividend to `josephsavage` is never mistaken for a Management
-  issuance.
-- Per-member **pik / abc_pik issuance stays immediate and self-healing** (no write-ahead
-  PENDING guard): a confirmed broadcast zeroes the balance and logs SUCCESS; a failed
-  broadcast logs FAILURE and leaves the balance for retry next cycle. This deliberately
-  avoids a regression where a transient failure could strand a member's dividends behind
-  an unresolved PENDING row (see review finding A). `token_issuance_log.status` gained a
-  `PENDING` enum value for the Management path only.
-- Tests: `tests/test_virtual_tokens.py` covers delegation virtual_tokens + atomicity, the
-  immediate pik/abc success/failure paths, Management cap math + convergence + write-ahead,
-  `sync_tokenholders`, and rationale-scoped reconciliation (incl. that a confirmed pik
-  chain op is never attributed to Management).
+- **Contested rows are never failed.** A PENDING row with any in-window chain
+  candidate (tie-skipped, or attributed to a sibling row by timestamp proximity) is
+  left PENDING even when the scan covers its window — that issue may be its own
+  broadcast, so failing it could re-issue tokens already minted. Liveness is
+  preserved: once the sibling SUCCESS row records the chain `trx_id`, the next pass
+  excludes that issue and the contested row resolves normally.
+- **Scan coverage extends to scan time.** `history_reverse` starts at the account
+  head, so a successful fetch proves no ops newer than the newest scanned op exist;
+  `covered_until` is now the scan start minus the clock-skew margin instead of the
+  newest op timestamp. A quiet issuer (no recent on-chain activity) can therefore
+  still resolve stale PENDING rows, and an empty history counts as complete
+  coverage. The scan op budget scales with the lookback (capped at
+  `HISTORY_SCAN_HARD_LIMIT`) so an old stuck PENDING row cannot outgrow the scan.
+- **Unit Conversion is idempotent per source transaction.** Before inserting the
+  intent, the sbi-tokens path checks `source_trx_id` + rationale for an existing
+  PENDING/SUCCESS row (`has_issuance_for_source`; FAILURE still allows retry), so a
+  reprocessed transfer op can no longer double-mint.
+- **Write-ahead helpers moved to `hivesbi/issuance_log.py`**, shared by
+  `hivesbi/parse_hist_op.py` and `hsbi_token_snapshot.py` (which re-exports them);
+  the dead `now` parameter was removed from `reconcile_issuances`.
+- **Management virtual refresh preserves the management account's own delegation
+  grant**: `refresh_management_virtual_tokens` adds the derived 10% on top of any
+  delegation-derived virtual tokens josephsavage earned as an ordinary delegator,
+  instead of overwriting them.
+- Runbook: added a DB time-zone pre-check (`issued_at` is a TIMESTAMP matched
+  against UTC chain timestamps within ±minutes, so the session time zone must be
+  UTC) and a review/cleanup section for legacy `rationale='reconciled'` rows left
+  by PR #138.
+- Tests: fixed the stale-coverage test (coverage must span
+  `issued_at - MATCH_CLOCK_SKEW`) and the equal-distance ambiguity test
+  (second-precision `issued_at` requires whole-second timestamps); added coverage
+  for contested-row protection + next-pass resolution, quiet-issuer/empty-history
+  scan coverage, the source-transaction dedup guard, and Management own-delegation
+  preservation.
+
+## Token issuance: write-ahead intents + chain reconciliation (PR #138 follow-up)
+
+- All HSBIDAO issuance paths now use a committed write-ahead intent row before
+  broadcast: pik, Pending Balance Conversion, Management, and Unit Conversion insert
+  `token_issuance_log.trx_id = 'PENDING'` with durable recipient, units, rationale,
+  optional `source_trx_id`, and an app-written UTC `issued_at` intent timestamp. On a
+  successful broadcast the same row moves to `SUCCESS` with the actual Hive Engine
+  `tokens.issue` transaction id. On broadcast exception the row stays `PENDING` with
+  `error_message`, and member balances are preserved for reconciliation or retry.
+- `token_issuance_log.trx_id` now means the actual Hive Engine `tokens.issue`
+  transaction id. `token_issuance_log.source_trx_id` means the origin transaction id,
+  such as the HBD transfer that triggered Unit Conversion. Unit Conversion stores the
+  source transfer hash in `source_trx_id` and the returned Hive Engine issue hash in
+  `trx_id`; it no longer uses the source transfer hash as the issuance id.
+- Reconciliation (`reconcile_issuances`) only completes, fails, or reports existing
+  rows. It never inserts a new issuance row and never invents `rationale='reconciled'`.
+  Exact `trx_id` matches are already handled; unresolved `PENDING` rows match chain
+  issues by recipient, normalized units, and authoritative blockchain transaction
+  timestamp relative to the stored intent timestamp. Ambiguous equal-distance matches
+  remain unresolved.
+- Reconciliation split timing into chain matching and scan coverage. A PENDING row is
+  marked `FAILURE` only when the chain scan proves it covered the entire possible match
+  range; orphan chain issuances are printed for operator review only.
+- `hsbi_check_delegation.py` now refreshes the derived Management virtual token
+  allocation every pass: `josephsavage.virtual_tokens = ROUND(SUM(non-josephsavage
+  virtual_tokens) * 0.10, 3)`. The Management row is upserted and excluded from the
+  source sum to avoid compounding.
+- Tests: `tests/test_virtual_tokens.py` covers delegation virtual_tokens + atomicity,
+  Management virtual token refresh/upsert, write-ahead issuance success/failure and
+  duplicate-pending guards, Unit Conversion source-vs-issue transaction ids,
+  timestamp-based reconciliation, stale scan coverage, orphan reporting without insert,
+  and the `6fda...` source / `af4...` issue regression.
 
 ## Memo parsing (PR #138)
 
