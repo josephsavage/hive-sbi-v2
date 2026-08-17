@@ -1,7 +1,10 @@
 """Hive Engine token issuance helpers for HSBIDAO."""
 
+import time
+from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from nectar.account import Account
 from nectarengine.wallet import Wallet as EngineWallet
 
@@ -11,6 +14,34 @@ from hivesbi.storage import KeysDB
 DEFAULT_ISSUER_ACCOUNT = "hivesbi"
 DEFAULT_TOKEN_SYMBOL = "HSBIDAO"
 DEFAULT_KEY_TYPE = "active"
+
+# Hive rejects the 6th custom_json an account broadcasts inside one 3-second
+# block ("Account hivesbi already submitted 5 custom json operation(s) this
+# block"). Every Hive Engine issue/transfer is one custom_json from the same
+# issuer account, so the budget is per account per block — it cannot be
+# respected by any single loop. hsbi_token_snapshot alone drives three
+# independent broadcast loops (pik, Pending Balance Conversion, Management) and
+# hivesbi/parse_hist_op adds Unit Conversion, so the pacing lives here, at the
+# one place every broadcast passes through.
+#
+# One second between broadcast starts puts at most 3 ops in a block, leaving
+# headroom for whatever another process broadcasts from the same account.
+BROADCAST_MIN_INTERVAL = 1.0
+
+# Keyed by account name, measured from the START of the previous broadcast so
+# the network round trip counts toward the interval instead of being added on
+# top of it.
+_last_broadcast_started: dict[str, float] = {}
+
+
+def throttle_broadcast(account_name: str) -> None:
+    """Block until `account_name` may safely broadcast another custom_json."""
+    previous = _last_broadcast_started.get(account_name)
+    if previous is not None:
+        wait = BROADCAST_MIN_INTERVAL - (time.monotonic() - previous)
+        if wait > 0:
+            time.sleep(wait)
+    _last_broadcast_started[account_name] = time.monotonic()
 
 
 class TokenIssuer:
@@ -56,6 +87,7 @@ class TokenIssuer:
         """
         if amount <= 0:
             raise ValueError("Amount must be positive")
+        throttle_broadcast(self.account_name)
         return self.engine_wallet.issue(recipient, amount, self.token_symbol)
 
     def transfer(
@@ -92,6 +124,9 @@ class TokenIssuer:
         )
 
         if use_engine:
+            # Base-chain HIVE/HBD transfers are not custom_json and carry no
+            # per-block limit, so only the engine path is throttled.
+            throttle_broadcast(self.account_name)
             return self.engine_wallet.transfer(recipient, amount, symbol, memo=memo)
 
         memo_text = memo or ""
@@ -100,10 +135,21 @@ class TokenIssuer:
         )
 
 
-def get_default_token_issuer() -> "TokenIssuer":
-    """Return a cached `TokenIssuer` configured for default HSBIDAO issuance."""
+_default_issuer: Optional["TokenIssuer"] = None
 
-    return TokenIssuer()
+
+def get_default_token_issuer() -> "TokenIssuer":
+    """Return a cached `TokenIssuer` configured for default HSBIDAO issuance.
+
+    Cached because hivesbi/parse_hist_op calls this once per Unit Conversion:
+    rebuilding the issuer each time re-reads the active key, reconnects Hive and
+    refetches the account, and would reset any per-instance broadcast state.
+    """
+
+    global _default_issuer
+    if _default_issuer is None:
+        _default_issuer = TokenIssuer()
+    return _default_issuer
 
 
 def issue_default_tokens(recipient: str, amount: float) -> dict:
@@ -179,3 +225,77 @@ def get_tokenholders(symbol: str | None = None, limit: int = 1000, offset: int =
         offset += limit
 
     return holders
+
+
+def fetch_issues_to_recipient(
+    recipient: str,
+    start,
+    end,
+    symbol: str | None = None,
+    issuer_account: str | None = None,
+    limit: int = 1000,
+):
+    """Hive Engine `tokens_issue` ops received by one account in a time window.
+
+    Answers "did this specific issuance reach the chain?" in a single request,
+    where walking the issuer's own custom_json history costs tens of thousands of
+    ops. Because the query is scoped to one recipient, one symbol and a
+    35-minute window, its cost does not grow with how long a row has been stuck —
+    which is what makes an old PENDING row resolvable at all.
+
+    `start` and `end` are timezone-aware datetimes. Returns a list of dicts with
+    trx_id / recipient / quantity / timestamp, or None when the lookup could not
+    be trusted (transport error, or a response that is not the expected list).
+    None means "unknown" and callers must leave the row PENDING; an empty list
+    means "provably nothing was issued in this window".
+    """
+    token_symbol = (symbol or DEFAULT_TOKEN_SYMBOL).upper()
+    issuer_account = issuer_account or DEFAULT_ISSUER_ACCOUNT
+    api = Api()
+
+    params = {
+        "account": recipient,
+        "symbol": token_symbol,
+        "limit": limit,
+        "offset": 0,
+        "timestampStart": int(start.timestamp()),
+        "timestampEnd": int(end.timestamp()),
+    }
+    try:
+        response = httpx.get(
+            f"{api.history_url}accountHistory", params=params, timeout=30
+        )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+    except Exception as exc:
+        print(f"Hive Engine history lookup failed for {recipient}: {exc}")
+        return None
+
+    if not isinstance(payload, list):
+        return None
+
+    issues = []
+    for row in payload:
+        if not isinstance(row, dict):
+            return None
+        if row.get("operation") != "tokens_issue":
+            continue
+        if row.get("to") != recipient:
+            continue
+        if row.get("issuer") != issuer_account:
+            continue
+        trx_id = row.get("transactionId")
+        quantity = row.get("quantity")
+        timestamp = row.get("timestamp")
+        if not trx_id or quantity is None or timestamp is None:
+            return None
+        issues.append(
+            {
+                "trx_id": str(trx_id),
+                "recipient": recipient,
+                "quantity": quantity,
+                "timestamp": datetime.fromtimestamp(int(timestamp), timezone.utc),
+            }
+        )
+    return issues

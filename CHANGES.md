@@ -1,5 +1,51 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## Token issuance: block-limit stall
+
+Symptom: an account with regular Pending Balance Conversions stopped being paid.
+Its last attempt held `error_message = "Assert Exception:insert_info.first->second
+<= HIVE_CUSTOM_OP_BLOCK_LIMIT: Account hivesbi already submitted 5 custom json
+operation(s) this block."`, stayed PENDING for a week, and blocked every later
+conversion for that member (`issue_balance_tokens` skips a member holding a live
+PENDING row for the same rationale).
+
+- **A provably-rejected broadcast now fails its row immediately.** Hive asserts
+  away the 6th `custom_json` an account submits in one block, so that operation can
+  never appear on chain and there is nothing for reconciliation to discover.
+  `record_broadcast_error` fails the row on such errors and the next cycle simply
+  re-issues; balances are untouched, so the retry pays the full amount. Ambiguous
+  errors (timeouts, transport failures, anything unrecognized) still stay PENDING —
+  failing a row that did reach the chain would mint the tokens twice. The marker
+  list is `hivesbi.issuance_log.NEVER_REACHED_CHAIN_MARKERS`; the bar for adding to
+  it is that the node rejected the operation deterministically before inclusion.
+- **One unreachable PENDING row no longer blocks every other row.** A scan that ran
+  out of op budget before reaching its cutoff used to report
+  `covered_since=None`/`complete=False`, and `reconcile_issuances` gated *all*
+  failure-resolution on that scan-wide flag. Because the lookback is extended to
+  cover the oldest PENDING row, one row older than the scan could reach made every
+  later pass truncate — so nothing could ever resolve, for anyone, and the condition
+  reinforced itself as the row aged. A truncated scan now reports the span it
+  actually walked (`covered_since = oldest op inspected + one block`), coverage is
+  judged per row, and the `scan_complete` parameter is gone.
+- **The lookback extension is capped** at `MAX_CHAIN_SCAN_LOOKBACK` (7 days) so it
+  cannot grow until the scan stops finishing.
+- **Rows older than the scan's reach are resolved individually against Hive
+  Engine.** `resolve_pending_beyond_scan` asks the Hive Engine history API whether
+  one specific issuance exists, scoped to the recipient, the symbol and that row's
+  own 35-minute match window (`fetch_issues_to_recipient`). Cost is one small
+  request per stuck row regardless of its age, where the bulk scan's reach is
+  bounded by issuer op volume. Any uncertainty — untrusted response, unelapsed match
+  window, more than one candidate — leaves the row PENDING.
+- **Broadcast pacing moved to the issuer.** The 5-per-block budget belongs to the
+  issuer account across the whole process, not to any one loop, so the previous
+  "sleep 3s every 5 issuances" inside `issue_balance_tokens` could not enforce it —
+  the pik loop, the Pending Balance Conversion loop, Management and Unit Conversion
+  all broadcast from `hivesbi`. `hivesbi.issue.throttle_broadcast` now spaces every
+  Hive Engine broadcast by `BROADCAST_MIN_INTERVAL` (1s, so at most 3 ops per
+  block), measured from the start of the previous broadcast so a slow round trip
+  pays no extra tax. `get_default_token_issuer` is now genuinely cached, as its
+  docstring always claimed.
+
 ## Delegation rewards → HSBIDAO virtual_tokens (PR #138)
 
 - Delegations no longer grant voting-weight bonus *shares*. On every delegation

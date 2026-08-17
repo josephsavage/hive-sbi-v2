@@ -76,6 +76,45 @@ def record_pending_error(conn, log_id, error_message):
     )
 
 
+# Errors that prove the transaction was rejected during validation and therefore
+# can never appear in a block. For these the usual "it might still have landed"
+# caution does not apply, and holding the row PENDING is actively harmful: the row
+# blocks its (recipient, rationale) in issue_balance_tokens, so the member stops
+# being paid until reconciliation proves an absence that was certain all along.
+#
+# The bar for adding a marker here is that the node rejected the operation
+# deterministically before inclusion. Anything ambiguous — timeouts, transport
+# failures, dropped connections, unknown errors — must stay PENDING, because
+# failing a row that did reach the chain re-issues tokens that already exist.
+NEVER_REACHED_CHAIN_MARKERS = (
+    # Hive caps an account at 5 custom_json operations per block. The 6th is
+    # asserted away when the node applies it, so it is never included.
+    "HIVE_CUSTOM_OP_BLOCK_LIMIT",
+)
+
+
+def never_reached_chain(error_message):
+    """True when the broadcast error proves the operation was never included."""
+    if not error_message:
+        return False
+    text = str(error_message)
+    return any(marker in text for marker in NEVER_REACHED_CHAIN_MARKERS)
+
+
+def record_broadcast_error(conn, log_id, error_message):
+    """Record a raised broadcast against its write-ahead row.
+
+    Fails the row outright when the error proves the operation never reached the
+    chain, so the next cycle simply re-issues it; otherwise leaves it PENDING for
+    chain reconciliation to resolve. Returns the resulting status.
+    """
+    if never_reached_chain(error_message):
+        mark_issuance_failure(conn, log_id, error_message)
+        return "FAILURE"
+    record_pending_error(conn, log_id, error_message)
+    return "PENDING"
+
+
 def has_issuance_for_source(conn, source_trx_id, rationale):
     """True when the origin transaction already has a live issuance row.
 
