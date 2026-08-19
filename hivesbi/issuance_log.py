@@ -115,6 +115,37 @@ def record_broadcast_error(conn, log_id, error_message):
     return "PENDING"
 
 
+def fail_pending_with_proven_non_inclusion(conn):
+    """Fail every PENDING row whose recorded error already proves non-inclusion.
+
+    record_pending_error stores the raised broadcast error on the row, so a row
+    stuck from before record_broadcast_error existed still carries the proof of
+    its own rejection in `error_message`. Reading it costs one UPDATE and no
+    network, where discovering the same fact from chain history costs a scan
+    whose reach has to be stretched over the row's whole age.
+
+    This is the same decision record_broadcast_error makes at broadcast time,
+    made late: the marker list is the single bar for both, so adding a marker
+    also retroactively clears historical rows carrying that error.
+
+    Returns the number of rows failed.
+    """
+    if not NEVER_REACHED_CHAIN_MARKERS:
+        return 0
+
+    clause = " OR ".join("error_message LIKE %s" for _ in NEVER_REACHED_CHAIN_MARKERS)
+    params = tuple(f"%{marker}%" for marker in NEVER_REACHED_CHAIN_MARKERS)
+    result = conn.exec_driver_sql(
+        f"""
+        UPDATE token_issuance_log
+        SET status = 'FAILURE'
+        WHERE status = 'PENDING' AND ({clause})
+        """,
+        params,
+    )
+    return result.rowcount or 0
+
+
 def has_issuance_for_source(conn, source_trx_id, rationale):
     """True when the origin transaction already has a live issuance row.
 

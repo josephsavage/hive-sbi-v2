@@ -141,9 +141,11 @@ _default_issuer: Optional["TokenIssuer"] = None
 def get_default_token_issuer() -> "TokenIssuer":
     """Return a cached `TokenIssuer` configured for default HSBIDAO issuance.
 
-    Cached because hivesbi/parse_hist_op calls this once per Unit Conversion:
-    rebuilding the issuer each time re-reads the active key, reconnects Hive and
-    refetches the account, and would reset any per-instance broadcast state.
+    Cached because hivesbi/parse_hist_op calls this once per Unit Conversion,
+    and rebuilding the issuer each time re-reads the active key, reconnects Hive
+    and refetches the account. Note this is not what makes broadcast pacing work:
+    `_last_broadcast_started` is module state keyed by account name, so throttling
+    survives a rebuilt issuer either way.
     """
 
     global _default_issuer

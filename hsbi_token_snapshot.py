@@ -9,6 +9,7 @@ from hivesbi.issuance_log import (
     PENDING_TRX_PLACEHOLDER,
     UNCAPTURED_TRX_PLACEHOLDER,
     complete_uncaptured_success,
+    fail_pending_with_proven_non_inclusion,
     insert_pending_issuance,
     issue_trx_id,
     log_issuance,
@@ -40,12 +41,12 @@ MANAGEMENT_RATIONALE = "Management"
 PIK_RATIONALE = "pik"
 ABC_RATIONALE = "Pending Balance Conversion"
 CHAIN_MATCH_WINDOW = timedelta(minutes=30)
-# Floor only: reconcile_recent_issuances extends the lookback (up to
-# MAX_CHAIN_SCAN_LOOKBACK) to cover the oldest PENDING row, and rows past that
-# ceiling are resolved one at a time against Hive Engine. PENDING resolution is
-# therefore self-correcting and does NOT depend on this value — the audit-only
-# passes do ('N/A' completion and the unexplained-issuance warning), and those act
-# on SUCCESS rows, which never extend the lookback themselves.
+# Fixed: the scan window never grows. A PENDING row older than this is not
+# chased by widening the walk — it is resolved one at a time against Hive Engine
+# (resolve_pending_beyond_scan), which costs one small request instead of tens of
+# thousands of ops. PENDING resolution therefore does NOT depend on this value —
+# the audit-only passes do ('N/A' completion and the unexplained-issuance
+# warning), and those act on SUCCESS rows, which are only ever reachable here.
 #
 # DO NOT LOWER. The hard minimum is one full cycle plus the match window:
 # share_cycle_min (144 min) + CHAIN_MATCH_WINDOW + MATCH_CLOCK_SKEW ~= 2.98h. Below
@@ -67,17 +68,14 @@ CHAIN_SCAN_LOOKBACK = timedelta(hours=6)
 # truncated scan reports the span it did walk and rows inside it still resolve.
 # It only shrinks how far back one pass can reach.
 HISTORY_SCAN_LIMIT = 10000
-HISTORY_SCAN_HARD_LIMIT = 50000
 MATCH_CLOCK_SKEW = timedelta(minutes=5)
 # One Hive block. When the scan stops at its op budget it may have consumed only
 # part of a block, so proven coverage starts one block after the oldest op seen.
 SCAN_TRUNCATION_MARGIN = timedelta(seconds=3)
-# Ceiling on the lookback extension below. The extension exists so a PENDING row
-# from an earlier cycle stays inside the scan; letting it grow without bound made
-# the scan slower every cycle and eventually unable to finish at all. Rows older
-# than this are resolved individually against Hive Engine instead, which costs one
-# small request per row regardless of age (resolve_pending_beyond_scan).
-MAX_CHAIN_SCAN_LOOKBACK = timedelta(days=7)
+# Most per-row Hive Engine lookups one pass may spend. Rows are taken oldest
+# first, so a backlog drains deterministically over consecutive cycles instead of
+# turning one pass into an unbounded run of network calls.
+MAX_BEYOND_SCAN_LOOKUPS = 200
 # A PENDING row older than two 144-minute cycles means reconciliation is not
 # converging. The row blocks its (recipient, rationale) in issue_balance_tokens and
 # the symptom is silent — a skipped member raises no error, it just stops being
@@ -212,7 +210,9 @@ def fetch_recent_chain_issuance_scan(
         if issue is not None:
             issuances.append(issue)
 
-    complete = reached_cutoff or scanned < limit
+    # `scanned` is limit+1 only when the budget broke the loop; a history that
+    # ran out at exactly `limit` was walked in full and proves total coverage.
+    complete = reached_cutoff or scanned <= limit
     if reached_cutoff:
         covered_since = cutoff
     elif complete and (saw_timestamp or scanned == 0):
@@ -550,46 +550,67 @@ def reconcile_issuances(
         )
 
 
-def resolve_pending_beyond_scan(conn, covered_since, issuer_account=DEFAULT_ISSUER_ACCOUNT):
-    """Resolve PENDING rows the bulk chain scan could not reach back far enough for.
+def resolve_pending_beyond_scan(
+    db2, covered_since, issuer_account=DEFAULT_ISSUER_ACCOUNT
+):
+    """Resolve PENDING rows the bulk chain scan does not reach back far enough for.
 
     The bulk scan walks the issuer's whole custom_json stream, so its reach is
-    bounded by op volume — a row older than that reach can never be resolved by it,
-    and it blocks its (recipient, rationale) in issue_balance_tokens forever. This
-    asks Hive Engine directly whether that one issuance exists, scoped to the
-    recipient, the symbol and the row's own 35-minute match window, so the cost is
-    one small request per stuck row no matter how old it is.
+    bounded by op volume, and the window is deliberately fixed — a row older than
+    CHAIN_SCAN_LOOKBACK is never chased by widening that walk. This asks Hive
+    Engine directly whether that one issuance exists, scoped to the recipient, the
+    symbol and the row's own 35-minute match window, so the cost is one small
+    request per stuck row no matter how old it is.
+
+    Reaching this path at all means the row carries no proof of its own fate:
+    fail_pending_with_proven_non_inclusion has already failed everything whose
+    recorded error shows it never reached the chain, so what is left is a timeout,
+    a transport failure, or a process that died between the write-ahead insert and
+    either outcome write. Only the chain can settle those.
+
+    Lookups run outside any open transaction — each may block for the httpx
+    timeout, and holding a write transaction on token_issuance_log for that long
+    stalls every other reader of the table.
 
     Every uncertainty leaves the row PENDING: an untrusted lookup, an unelapsed
-    match window, or more than one candidate issue. Only a trusted, unambiguous
+    match window, an issue outside the row's own window, an uncaptured sibling
+    with a claim on it, or more than one candidate. Only a trusted, unambiguous
     answer moves the row.
     """
     if covered_since is None:
-        return
-    horizon = covered_since + MATCH_CLOCK_SKEW
+        # The scan proved no coverage at all (its own history fetch failed), so
+        # every PENDING row is beyond its reach. The per-row lookup does not
+        # depend on that scan, so it still settles them; returning here instead
+        # would let one failing API disable resolution for everyone.
+        horizon = utcnow()
+    else:
+        horizon = covered_since + MATCH_CLOCK_SKEW
     # The match window must also have fully elapsed, exactly as for the bulk scan.
     settled_before = utcnow() - MATCH_CLOCK_SKEW - CHAIN_MATCH_WINDOW
-    rows = conn.exec_driver_sql(
-        """
-        SELECT id, recipient, units, rationale, issued_at
-        FROM token_issuance_log
-        WHERE status = 'PENDING' AND issued_at < %s AND issued_at < %s
-        ORDER BY issued_at ASC
-        """,
-        (horizon, settled_before),
-    ).fetchall()
+
+    with db2.engine.begin() as conn:
+        rows = conn.exec_driver_sql(
+            """
+            SELECT id, recipient, units, rationale, issued_at
+            FROM token_issuance_log
+            WHERE status = 'PENDING' AND issued_at < LEAST(%s, %s)
+            ORDER BY issued_at ASC
+            LIMIT %s
+            """,
+            (horizon, settled_before, MAX_BEYOND_SCAN_LOOKUPS),
+        ).fetchall()
 
     for row in rows:
-        log_id, recipient, units, rationale = row[0], row[1], token_decimal(row[2]), row[3]
+        log_id, recipient, rationale = row[0], row[1], row[3]
+        units = token_decimal(row[2])
         issued_at = ensure_timezone_aware(row[4])
         if issued_at is None:
             continue
 
+        window_start = issued_at - MATCH_CLOCK_SKEW
+        window_end = issued_at + CHAIN_MATCH_WINDOW
         issues = fetch_issues_to_recipient(
-            recipient,
-            issued_at - MATCH_CLOCK_SKEW,
-            issued_at + CHAIN_MATCH_WINDOW,
-            issuer_account=issuer_account,
+            recipient, window_start, window_end, issuer_account=issuer_account
         )
         if issues is None:
             print(
@@ -598,77 +619,94 @@ def resolve_pending_beyond_scan(conn, covered_since, issuer_account=DEFAULT_ISSU
             )
             continue
 
-        # A SUCCESS row for the same recipient and amount whose broadcast returned
-        # no trx_id has an unidentified claim on one of these issues. Pass 1 of
-        # reconcile_issuances resolves that, but it only sees rows inside the scan,
-        # so here the claim cannot be told apart from ours — leave both alone.
-        uncaptured_sibling = conn.exec_driver_sql(
-            """
-            SELECT COUNT(*) FROM token_issuance_log
-            WHERE status = 'SUCCESS' AND recipient = %s AND units = %s
-              AND trx_id = %s AND issued_at BETWEEN %s AND %s
-            """,
-            (
-                recipient,
-                units,
-                UNCAPTURED_TRX_PLACEHOLDER,
-                issued_at - CHAIN_MATCH_WINDOW,
-                issued_at + CHAIN_MATCH_WINDOW,
-            ),
-        ).scalar()
-        if uncaptured_sibling:
-            print(
-                f"Uncaptured sibling issuance claims the same window for stuck "
-                f"PENDING id={log_id} {recipient} {units} {rationale}; leaving PENDING"
-            )
-            continue
+        with db2.engine.begin() as conn:
+            # A SUCCESS row for the same recipient and amount whose broadcast
+            # returned no trx_id has an unidentified claim on one of these issues.
+            # Pass 1 of reconcile_issuances resolves that, but it only sees rows
+            # inside the scan, so here the claim cannot be told apart from ours —
+            # leave both alone.
+            uncaptured_sibling = conn.exec_driver_sql(
+                """
+                SELECT COUNT(*) FROM token_issuance_log
+                WHERE status = 'SUCCESS' AND recipient = %s AND units = %s
+                  AND trx_id = %s AND issued_at BETWEEN %s AND %s
+                """,
+                (
+                    recipient,
+                    units,
+                    UNCAPTURED_TRX_PLACEHOLDER,
+                    issued_at - CHAIN_MATCH_WINDOW,
+                    issued_at + CHAIN_MATCH_WINDOW,
+                ),
+            ).scalar()
+            if uncaptured_sibling:
+                print(
+                    f"Uncaptured sibling issuance claims the same window for stuck "
+                    f"PENDING id={log_id} {recipient} {units} {rationale}; "
+                    "leaving PENDING"
+                )
+                continue
 
-        # Exclude issues already claimed by another log row, so a recipient who
-        # legitimately received the same amount twice resolves one row per issue.
-        logged_trx = {
-            r[0]
-            for r in conn.exec_driver_sql(
-                "SELECT trx_id FROM token_issuance_log WHERE recipient = %s "
-                "AND trx_id <> %s",
-                (recipient, PENDING_TRX_PLACEHOLDER),
-            ).fetchall()
-        }
-        candidates = [
-            issue
-            for issue in issues
-            if floor_token_amount(issue["quantity"]) == units
-            and issue["trx_id"] not in logged_trx
-        ]
-
-        if len(candidates) == 1:
-            pending_row = {
-                "id": log_id,
-                "recipient": recipient,
-                "units": units,
-                "rationale": rationale,
-                "issued_at": issued_at,
+            # Exclude issues already claimed by another log row, so a recipient who
+            # legitimately received the same amount twice resolves one row per issue.
+            logged_trx = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT trx_id FROM token_issuance_log WHERE recipient = %s "
+                    "AND trx_id <> %s",
+                    (recipient, PENDING_TRX_PLACEHOLDER),
+                ).fetchall()
             }
-            mark_issuance_success(conn, log_id, candidates[0]["trx_id"])
-            _complete_balance_issuance_effect(conn, pending_row)
-            print(
-                f"Resolved stuck PENDING -> SUCCESS from Hive Engine: {recipient} "
-                f"{units} {rationale} ({candidates[0]['trx_id']})"
-            )
-        elif not candidates:
-            mark_issuance_failure(
-                conn,
-                log_id,
-                "No matching Hive Engine issuance in match window",
-            )
-            print(
-                f"Resolved stuck PENDING -> FAILURE from Hive Engine: {recipient} "
-                f"{units} {rationale}"
-            )
-        else:
-            print(
-                f"Ambiguous Hive Engine match for stuck PENDING id={log_id} "
-                f"{recipient} {units} {rationale}; leaving PENDING"
-            )
+            # The window is re-checked locally rather than trusted to the remote
+            # timestampStart/timestampEnd: the history endpoint is chosen from a
+            # beacon at runtime, and a node that silently ignored those params
+            # would hand back the recipient's most recent issues instead. Matching
+            # one of those would mark this row SUCCESS and debit a balance against
+            # an issuance that was never made for it.
+            candidates = [
+                issue
+                for issue in issues
+                if floor_token_amount(issue["quantity"]) == units
+                and issue["trx_id"] not in logged_trx
+                and issue["timestamp"] is not None
+                and window_start <= issue["timestamp"] <= window_end
+            ]
+
+            if len(candidates) == 1:
+                pending_row = {
+                    "id": log_id,
+                    "recipient": recipient,
+                    "units": units,
+                    "rationale": rationale,
+                    "issued_at": issued_at,
+                }
+                mark_issuance_success(conn, log_id, candidates[0]["trx_id"])
+                _complete_balance_issuance_effect(conn, pending_row)
+                print(
+                    f"Resolved stuck PENDING -> SUCCESS from Hive Engine: {recipient} "
+                    f"{units} {rationale} ({candidates[0]['trx_id']})"
+                )
+            elif not candidates:
+                mark_issuance_failure(
+                    conn,
+                    log_id,
+                    "No matching Hive Engine issuance in match window",
+                )
+                print(
+                    f"Resolved stuck PENDING -> FAILURE from Hive Engine: {recipient} "
+                    f"{units} {rationale}"
+                )
+            else:
+                print(
+                    f"Ambiguous Hive Engine match for stuck PENDING id={log_id} "
+                    f"{recipient} {units} {rationale}; leaving PENDING"
+                )
+
+    if len(rows) == MAX_BEYOND_SCAN_LOOKUPS:
+        print(
+            f"Beyond-scan resolution hit its per-pass cap "
+            f"({MAX_BEYOND_SCAN_LOOKUPS}); remaining rows are taken next cycle."
+        )
 
 
 def warn_stuck_pending(conn):
@@ -696,37 +734,33 @@ def warn_stuck_pending(conn):
 
 
 def reconcile_recent_issuances(db2, issuer):
-    lookback = CHAIN_SCAN_LOOKBACK
+    # Free first: a row whose recorded broadcast error already proves the
+    # operation never reached the chain needs no chain evidence at all. This is
+    # one UPDATE and no network, and it clears the whole class of row that used
+    # to force the scan window open.
     with db2.engine.begin() as conn:
-        oldest_pending = conn.exec_driver_sql(
-            "SELECT MIN(issued_at) FROM token_issuance_log WHERE status = 'PENDING'"
-        ).scalar()
-    oldest_pending = ensure_timezone_aware(oldest_pending)
-    if oldest_pending is not None:
-        needed = utcnow() - oldest_pending + MATCH_CLOCK_SKEW + CHAIN_MATCH_WINDOW
-        # Clamped: an unresolvable row used to grow this every cycle until the
-        # scan could no longer finish. Anything past the ceiling is handled
-        # per-row by resolve_pending_beyond_scan.
-        lookback = min(max(lookback, needed), MAX_CHAIN_SCAN_LOOKBACK)
-
-    # Scale the scan budget with the lookback: a fixed limit on a busy issuer
-    # (one custom_json per member issuance) would stop the scan before the
-    # cutoff, complete=False forever, and old PENDING rows could never resolve.
-    limit = HISTORY_SCAN_LIMIT
-    if lookback > CHAIN_SCAN_LOOKBACK:
-        limit = min(
-            int(HISTORY_SCAN_LIMIT * (lookback / CHAIN_SCAN_LOOKBACK)) + 1,
-            HISTORY_SCAN_HARD_LIMIT,
+        swept = fail_pending_with_proven_non_inclusion(conn)
+    if swept:
+        print(
+            f"Failed {swept} PENDING issuance(s) whose recorded error proves the "
+            "broadcast never reached the chain; they re-issue next cycle."
         )
 
-    scan = fetch_recent_chain_issuance_scan(issuer, lookback=lookback, limit=limit)
+    # The window is fixed. It used to be widened to cover the oldest PENDING row,
+    # which pinned the op budget at its ceiling on every cycle for as long as one
+    # unresolvable row existed — tens of thousands of ops re-walked per pass to
+    # rediscover a single row's fate. Rows outside this window go to the per-row
+    # Hive Engine lookup below, which costs one small request each.
+    scan = fetch_recent_chain_issuance_scan(
+        issuer, lookback=CHAIN_SCAN_LOOKBACK, limit=HISTORY_SCAN_LIMIT
+    )
     if not scan["complete"]:
         print(
             "ALERT: chain issuance scan truncated at its op budget "
-            f"(lookback={lookback}, limit={limit}); coverage starts at "
-            f"{scan['covered_since']}. Rows inside that span still resolve; older "
-            "ones fall through to the per-row Hive Engine lookup. Raise "
-            "HISTORY_SCAN_LIMIT if this persists."
+            f"(lookback={CHAIN_SCAN_LOOKBACK}, limit={HISTORY_SCAN_LIMIT}); "
+            f"coverage starts at {scan['covered_since']}. Rows inside that span "
+            "still resolve; older ones fall through to the per-row Hive Engine "
+            "lookup. Raise HISTORY_SCAN_LIMIT if this persists."
         )
 
     with db2.engine.begin() as conn:
@@ -736,10 +770,13 @@ def reconcile_recent_issuances(db2, issuer):
             covered_since=scan["covered_since"],
             covered_until=scan["covered_until"],
         )
-        # Anything the scan could not reach back to is resolved individually.
-        resolve_pending_beyond_scan(
-            conn, scan["covered_since"], issuer_account=issuer.account_name
-        )
+
+    # Outside the transaction above: each lookup can block for the httpx timeout.
+    resolve_pending_beyond_scan(
+        db2, scan["covered_since"], issuer_account=issuer.account_name
+    )
+
+    with db2.engine.begin() as conn:
         warn_stuck_pending(conn)
 
 

@@ -27,15 +27,44 @@ PENDING row for the same rationale).
   reinforced itself as the row aged. A truncated scan now reports the span it
   actually walked (`covered_since = oldest op inspected + one block`), coverage is
   judged per row, and the `scan_complete` parameter is gone.
-- **The lookback extension is capped** at `MAX_CHAIN_SCAN_LOOKBACK` (7 days) so it
-  cannot grow until the scan stops finishing.
+- **A stuck row is failed from its own recorded error, for free.**
+  `record_pending_error` stores the raised broadcast error on the row, so a row
+  stranded before `record_broadcast_error` existed already carries the proof of its
+  own rejection. `fail_pending_with_proven_non_inclusion` applies the same marker
+  list to `error_message` in one UPDATE with no network at all, and runs first in
+  every reconciliation pass. It is the same decision `record_broadcast_error` makes
+  at broadcast time, made late — so adding a marker also retroactively clears
+  historical rows carrying that error.
+- **The scan window no longer grows.** It used to be widened to cover the oldest
+  PENDING row, which scaled the op budget with it and pinned it at its ceiling on
+  every cycle for as long as one unresolvable row existed — tens of thousands of
+  ops (`history_reverse` batches 1000 per call) re-walked each pass to rediscover
+  a single row's fate. The lookback is now fixed at `CHAIN_SCAN_LOOKBACK`, so an
+  ordinary cycle exits at `reached_cutoff` after a few hundred ops.
+  `HISTORY_SCAN_HARD_LIMIT` and the extension are gone.
 - **Rows older than the scan's reach are resolved individually against Hive
   Engine.** `resolve_pending_beyond_scan` asks the Hive Engine history API whether
   one specific issuance exists, scoped to the recipient, the symbol and that row's
   own 35-minute match window (`fetch_issues_to_recipient`). Cost is one small
   request per stuck row regardless of its age, where the bulk scan's reach is
-  bounded by issuer op volume. Any uncertainty — untrusted response, unelapsed match
-  window, more than one candidate — leaves the row PENDING.
+  bounded by issuer op volume. Reaching this path means the row carries no proof of
+  its own fate — the sweep above has already failed everything that does — so what
+  is left is a timeout, a transport failure, or a process that died between the
+  write-ahead insert and either outcome write.
+  - The row's window is re-checked **locally** rather than trusted to the remote
+    `timestampStart`/`timestampEnd`: the history endpoint is chosen from a beacon at
+    runtime, and a node that silently ignored those params would return the
+    recipient's most recent issues instead. Matching one of those would mark the row
+    SUCCESS and debit a balance against an issuance never made for it.
+  - Lookups run **outside** the reconciliation transaction (each can block for the
+    httpx timeout) and are capped at `MAX_BEYOND_SCAN_LOOKUPS` per pass, oldest
+    first, so a backlog drains over consecutive cycles.
+  - `covered_since=None` — the scan's own history fetch failed — now means "no row
+    is covered" rather than "resolve nothing": this path does not depend on that
+    scan, and skipping it would let one failing API disable resolution for everyone.
+  - Any uncertainty leaves the row PENDING: untrusted response, unelapsed match
+    window, an issue outside the row's window, an uncaptured sibling with a claim on
+    it, or more than one candidate.
 - **Broadcast pacing moved to the issuer.** The 5-per-block budget belongs to the
   issuer account across the whole process, not to any one loop, so the previous
   "sleep 3s every 5 issuances" inside `issue_balance_tokens` could not enforce it —

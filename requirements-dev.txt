@@ -2,6 +2,7 @@
 
 dataset
 hive-nectar
+httpx
 mysqlclient
 nectarengine
 

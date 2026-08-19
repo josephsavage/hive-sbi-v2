@@ -26,6 +26,7 @@ from hsbi_check_delegation import (
 )
 import hivesbi.issue as issue_module
 from hivesbi.issuance_log import (
+    fail_pending_with_proven_non_inclusion,
     has_issuance_for_source,
     never_reached_chain,
     record_broadcast_error,
@@ -1359,7 +1360,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         with patch(
             "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=[]
         ) as lookup:
-            resolve_pending_beyond_scan(self.conn, now - timedelta(days=14))
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
         self.assertEqual(lookup.call_count, 1)
         self.assertEqual(
             self.x(
@@ -1392,7 +1393,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             }
         ]
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_beyond_scan(self.conn, now - timedelta(days=14))
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
 
         row = self.x(
             "SELECT status, trx_id, rationale FROM token_issuance_log WHERE id = %s",
@@ -1438,7 +1439,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             }
         ]
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_beyond_scan(self.conn, now - timedelta(days=14))
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
         self.assertEqual(
             self.x(
                 "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
@@ -1458,7 +1459,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             self.BLOCK_LIMIT_ERROR,
         )
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None):
-            resolve_pending_beyond_scan(self.conn, now - timedelta(days=14))
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
         self.assertEqual(
             self.x(
                 "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
@@ -1478,7 +1479,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             self.BLOCK_LIMIT_ERROR,
         )
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            resolve_pending_beyond_scan(self.conn, now - timedelta(days=14))
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
         lookup.assert_not_called()
 
     def test_recent_pending_never_resolved_before_its_window_elapses(self):
@@ -1492,8 +1493,142 @@ class StuckPendingRecoveryTests(DBTestCase):
             self.BLOCK_LIMIT_ERROR,
         )
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            resolve_pending_beyond_scan(self.conn, now + timedelta(days=1))
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now + timedelta(days=1))
         lookup.assert_not_called()
+
+    def test_sweep_fails_stuck_rows_from_their_recorded_error_without_network(self):
+        # The cheap resolution: record_pending_error already stored the proof of
+        # non-inclusion on the row, so a row stuck from before record_broadcast_error
+        # existed can be failed by reading its own error_message. No chain scan, no
+        # Hive Engine request, no widened lookback.
+        now = datetime.now(timezone.utc)
+        stuck_id = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            now - timedelta(days=60),
+            self.BLOCK_LIMIT_ERROR,
+        )
+        with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
+            failed = fail_pending_with_proven_non_inclusion(self.conn)
+        lookup.assert_not_called()
+        self.assertEqual(failed, 1)
+
+        row = self.x(
+            "SELECT status, error_message FROM token_issuance_log WHERE id = %s",
+            (stuck_id,),
+        ).fetchone()
+        self.assertEqual(row[0], "FAILURE")
+        # The proof stays on the row as the diagnostic record of why it failed.
+        self.assertIn("HIVE_CUSTOM_OP_BLOCK_LIMIT", row[1])
+
+    def test_sweep_leaves_rows_that_carry_no_proof_of_their_fate(self):
+        # A timeout may have landed, and a row with no error at all died between
+        # the write-ahead insert and either outcome write. Neither proves anything,
+        # so both must wait for chain evidence.
+        now = datetime.now(timezone.utc)
+        ambiguous_id = self._pending(
+            T_HOLDER, Decimal("1.234"), "Pending Balance Conversion",
+            now - timedelta(days=60), "HTTPSConnectionPool: Read timed out",
+        )
+        silent_id = self._pending(
+            T_PIK, Decimal("2.500"), "pik", now - timedelta(days=60), None
+        )
+        self.assertEqual(fail_pending_with_proven_non_inclusion(self.conn), 0)
+
+        statuses = dict(
+            self.x(
+                "SELECT id, status FROM token_issuance_log WHERE id IN (%s, %s)",
+                (ambiguous_id, silent_id),
+            ).fetchall()
+        )
+        self.assertEqual(statuses[ambiguous_id], "PENDING")
+        self.assertEqual(statuses[silent_id], "PENDING")
+
+    def test_issue_outside_the_rows_window_is_not_a_candidate(self):
+        # Window scoping is re-checked locally instead of trusted to the remote
+        # timestampStart/timestampEnd. If a history node ignored those params it
+        # would return the recipient's most recent issues; matching one of them
+        # would debit a balance against an issuance never made for this row.
+        now = datetime.now(timezone.utc)
+        issued_at = now - timedelta(days=60)
+        self.x(
+            "INSERT INTO tokenholders (member_name, abc_pik) VALUES (%s, %s) "
+            "ON DUPLICATE KEY UPDATE abc_pik = VALUES(abc_pik)",
+            (T_HOLDER, Decimal("5.000")),
+        )
+        log_id = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            issued_at,
+            "Read timed out",
+        )
+        # Same recipient, same amount, unlogged trx — but issued days later.
+        unrelated = [
+            {
+                "trx_id": "he_recent_unrelated",
+                "recipient": T_HOLDER,
+                "quantity": "1.234",
+                "timestamp": issued_at + timedelta(days=3),
+            }
+        ]
+        with patch(
+            "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=unrelated
+        ):
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+
+        row = self.x(
+            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (log_id,)
+        ).fetchone()
+        self.assertEqual(row[0], "FAILURE")
+        self.assertNotEqual(row[1], "he_recent_unrelated")
+        # Balance untouched: nothing was proven to have been issued.
+        abc = self.x(
+            "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_HOLDER,)
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(abc)), Decimal("5.000"))
+
+    def test_rows_still_resolve_when_the_scan_proved_no_coverage(self):
+        # covered_since=None means the scan's own history fetch failed. The per-row
+        # lookup does not depend on that scan, so it must still settle rows —
+        # returning early here would let one failing API disable resolution for
+        # everyone, which is the shape of the bug this whole path exists to kill.
+        now = datetime.now(timezone.utc)
+        log_id = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            now - timedelta(days=2),
+            "Read timed out",
+        )
+        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=[]):
+            resolve_pending_beyond_scan(FakeDB2(self.conn), None)
+        self.assertEqual(
+            self.x(
+                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
+            ).fetchone()[0],
+            "FAILURE",
+        )
+
+    def test_per_pass_lookup_cap_defers_the_rest_to_the_next_cycle(self):
+        now = datetime.now(timezone.utc)
+        for i in range(4):
+            self._pending(
+                T_HOLDER,
+                Decimal("1.234"),
+                "Pending Balance Conversion",
+                now - timedelta(days=60 - i),
+                "Read timed out",
+            )
+        with patch("hsbi_token_snapshot.MAX_BEYOND_SCAN_LOOKUPS", 2):
+            with patch(
+                "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
+            ) as lookup:
+                resolve_pending_beyond_scan(
+                    FakeDB2(self.conn), now - timedelta(days=14)
+                )
+        self.assertEqual(lookup.call_count, 2)
 
 
 class BroadcastThrottleTests(unittest.TestCase):
