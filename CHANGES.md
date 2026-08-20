@@ -57,14 +57,15 @@ PENDING row for the same rationale).
     recipient's most recent issues instead. Matching one of those would mark the row
     SUCCESS and debit a balance against an issuance never made for it.
   - Lookups run **outside** the reconciliation transaction (each can block for the
-    httpx timeout) and are capped at `MAX_BEYOND_SCAN_LOOKUPS` per pass, oldest
+    httpx timeout) and are capped at `MAX_BEYOND_SCAN_LOOKUPS` rows **and**
+    `BEYOND_SCAN_TIME_BUDGET` of wall clock per pass, least-recently-attempted
     first, so a backlog drains over consecutive cycles.
   - `covered_since=None` — the scan's own history fetch failed — now means "no row
     is covered" rather than "resolve nothing": this path does not depend on that
     scan, and skipping it would let one failing API disable resolution for everyone.
-  - Any uncertainty leaves the row PENDING: untrusted response, unelapsed match
-    window, an issue outside the row's window, an uncaptured sibling with a claim on
-    it, or more than one candidate.
+  - Uncertainty leaves the row PENDING: untrusted response, unelapsed match
+    window, an issue outside the row's window, or an uncaptured sibling with a claim
+    on it. Multiple candidates are resolved by proximity, not deferred — see below.
 - **Broadcast pacing moved to the issuer.** The 5-per-block budget belongs to the
   issuer account across the whole process, not to any one loop, so the previous
   "sleep 3s every 5 issuances" inside `issue_balance_tokens` could not enforce it —
@@ -74,6 +75,100 @@ PENDING row for the same rationale).
   block), measured from the start of the previous broadcast so a slow round trip
   pays no extra tax. `get_default_token_issuer` is now genuinely cached, as its
   docstring always claimed.
+
+## Token issuance: code-review fixes on the above (PR #140)
+
+Four of these were paths to **double-minting HSBIDAO**: a PENDING row wrongly
+marked FAILURE is re-issued next cycle while the member's balance was never
+debited, and an on-chain mint cannot be undone.
+
+- **The PENDING sweep no longer matches by SQL `LIKE`.**
+  `fail_pending_with_proven_non_inclusion` interpolated each marker into
+  `error_message LIKE '%…%'`, where `_` is a single-character wildcard — so
+  `HIVE_CUSTOM_OP_BLOCK_LIMIT` also matched messages `never_reached_chain()`
+  rejects, and the two paths were not the "single bar" the docstring claimed. The
+  sweep now selects PENDING rows and applies `never_reached_chain` in Python, so
+  the predicate is literally shared, then updates by primary key. That also drops
+  an unindexed full-table UPDATE that took next-key locks across
+  `token_issuance_log` while the unified webserver read it.
+- **An exhausted history walk no longer claims coverage of all time.** When the
+  generator ended before reaching the cutoff, the scan reported
+  `covered_since = datetime.min` on the theory that a history which ended was
+  walked in full. But an exhausted iterator and one that stopped early are
+  indistinguishable from there, and `HISTORY_SCAN_LIMIT` is exactly 10× nectar's
+  1000-op `history_reverse` batch, so a batch-boundary stop landed in that branch
+  by construction — failing every settled PENDING row in a single pass. Coverage
+  now always ends at the oldest op actually inspected; older rows fall through to
+  the per-row lookup, which is what it exists for.
+- **The Hive Engine history lookup pages past the endpoint's silent clamp.**
+  `accountHistory` clamps `limit` to 500 — asking for 1000 returns exactly 500 rows
+  with no error and no truncation indicator (verified against both beacon
+  endpoints), so a cut-off response read as "nothing was issued". It now requests
+  the clamp and pages on `offset` until a short page proves the result set is
+  exhausted; a result needing more than `MAX_HISTORY_PAGES` reads as **unknown**
+  and leaves the row PENDING.
+- **Two rows sharing a window no longer deadlock as PENDING.** With more than one
+  candidate, `resolve_pending_beyond_scan` deferred. Deferring is correct in the
+  bulk matcher — a contested row resolves once its sibling records a trx_id — but
+  nothing else ever moves a beyond-scan row, so two rows for the same recipient and
+  amount with overlapping windows each saw both issues, each deferred, and stayed
+  PENDING forever: the "member silently stops being paid" symptom this path exists
+  to cure. It now takes the candidate nearest its own intent timestamp (the bulk
+  matcher's discriminator, shared via `_rank_by_proximity`), breaking exact ties by
+  trx_id. Every candidate carries the same units by construction, so a swapped
+  attribution costs trx_id accuracy in the audit trail, never tokens.
+
+And on availability and correctness of attribution:
+
+- **The uncaptured-sibling guard covers the sibling's own reach.** A sibling claims
+  any issue in `[its issued_at - MATCH_CLOCK_SKEW, its issued_at + CHAIN_MATCH_WINDOW]`,
+  so its claim overlaps ours whenever its `issued_at` is within
+  `CHAIN_MATCH_WINDOW + MATCH_CLOCK_SKEW`. Scoping to `CHAIN_MATCH_WINDOW` alone
+  left a 5-minute blind spot at each end in which a shared issue was handed to the
+  PENDING row, stamping it with the sibling's trx_id and debiting a balance for
+  tokens never issued against it.
+- **One pass is bounded in time, not just in rows.** `MAX_BEYOND_SCAN_LOOKUPS`
+  bounds requests; a history node that hangs rather than errors turned that into
+  cap × timeout (200 × 30s ≈ 100 minutes). `sbirunner.sh` is sequential, so that
+  came straight out of the voting window of every job downstream. There is now a
+  `BEYOND_SCAN_TIME_BUDGET` (5 min) checked between rows, and the per-request
+  timeout dropped from 30s to `HISTORY_REQUEST_TIMEOUT` (10s).
+- **Unresolvable rows rotate instead of starving the queue.** Selection was
+  oldest-first and capped, so 200 rows that could never be settled consumed every
+  lookup every cycle and row 201 never got one — the head-of-line blocking this
+  work removed elsewhere, at a threshold of 200 instead of 1. New column
+  `token_issuance_log.last_resolution_attempt` is stamped on **every** attempt,
+  including those that leave the row PENDING, and selection orders by it
+  (never-attempted first).
+- **A transient non-200 no longer costs a whole cycle.** The lookup re-implemented
+  `nectarengine.Api.get_history`'s plumbing but dropped its retry loop, so one 429
+  or 503 meant no progress for that row until the next cycle. It now retries
+  `HISTORY_RETRY_ATTEMPTS` times with backoff.
+- **`history_url` is resolved once per process.** `Api()` builds an RPC pool and
+  consults the beacon (~1.4s cold in the pinned container) and was constructed once
+  per stuck row for a value that never changes within a run.
+- **The token symbol travels with the issuer.** `reconcile_recent_issuances`
+  forwarded `issuer.account_name` but let the symbol default, so a non-HSBIDAO
+  issuer would have had its rows checked against HSBIDAO history, found nothing,
+  and failed every one of them.
+- Housekeeping: `warn_stuck_pending`'s docstring no longer blames an incomplete
+  chain scan (truncation stopped being a cause when coverage became per-row), and
+  the `BATCH_SLEEP_TIME` sleeps in `main()` are gone — they were the loop-granular
+  half of the pacing scheme `throttle_broadcast` replaced, adding 6s a cycle for
+  nothing. `BROADCAST_MIN_INTERVAL` stays at 1.0s, but now documents its latency
+  cost (~12.8 min/cycle at peak vs ~7.7 min under the old 0.6 s/issuance) rather
+  than only its block-budget headroom.
+
+**Schema change** — `token_issuance_log.last_resolution_attempt` plus
+`idx_status_attempt (status, last_resolution_attempt, issued_at)`. The index also
+gives the PENDING sweep and `warn_stuck_pending` something better than a full scan
+of a 159k-row table that grows every cycle. Prod DDL is **step 5 of
+`sql/PROD_RUNBOOK_virtual_tokens.sql`**, with its own pre-/post-checks; run it
+after step 4 so the new column lands at the end of the row and applies instantly.
+**It must be applied before deploying this code** — `resolve_pending_beyond_scan`
+orders by the new column, so every `status = 'PENDING'` query errors on the unknown
+column without it. Dev picks both up from `docker/mariadb/init/01-sbi-schema.sql`
+on a fresh volume (`docker compose down -v`).
 
 ## Delegation rewards → HSBIDAO virtual_tokens (PR #138)
 

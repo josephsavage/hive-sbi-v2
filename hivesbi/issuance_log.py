@@ -120,30 +120,66 @@ def fail_pending_with_proven_non_inclusion(conn):
 
     record_pending_error stores the raised broadcast error on the row, so a row
     stuck from before record_broadcast_error existed still carries the proof of
-    its own rejection in `error_message`. Reading it costs one UPDATE and no
-    network, where discovering the same fact from chain history costs a scan
-    whose reach has to be stretched over the row's whole age.
+    its own rejection in `error_message`. Reading it costs one read and a
+    keyed UPDATE and no network, where discovering the same fact from chain
+    history costs a scan whose reach has to be stretched over the row's whole age.
 
     This is the same decision record_broadcast_error makes at broadcast time,
     made late: the marker list is the single bar for both, so adding a marker
     also retroactively clears historical rows carrying that error.
+
+    The match is made in Python by never_reached_chain, not by SQL LIKE, so the
+    two paths are literally the same predicate. A LIKE pattern built from a
+    marker would also read `_` and `%` inside it as wildcards, matching messages
+    record_broadcast_error would have left PENDING — and failing a row whose
+    broadcast did reach the chain re-issues tokens that already exist.
+
+    Rows are then updated by primary key. The alternative — one UPDATE with the
+    predicate in its WHERE clause — has no index to use (`status` is not
+    indexed on its own) and so takes next-key locks across the whole table
+    while the unified webserver is reading it.
 
     Returns the number of rows failed.
     """
     if not NEVER_REACHED_CHAIN_MARKERS:
         return 0
 
-    clause = " OR ".join("error_message LIKE %s" for _ in NEVER_REACHED_CHAIN_MARKERS)
-    params = tuple(f"%{marker}%" for marker in NEVER_REACHED_CHAIN_MARKERS)
+    rows = conn.exec_driver_sql(
+        """
+        SELECT id, error_message FROM token_issuance_log
+        WHERE status = 'PENDING' AND error_message IS NOT NULL
+        """
+    ).fetchall()
+
+    doomed = [row[0] for row in rows if never_reached_chain(row[1])]
+    if not doomed:
+        return 0
+
+    placeholders = ", ".join(["%s"] * len(doomed))
     result = conn.exec_driver_sql(
         f"""
         UPDATE token_issuance_log
         SET status = 'FAILURE'
-        WHERE status = 'PENDING' AND ({clause})
+        WHERE id IN ({placeholders})
         """,
-        params,
+        tuple(doomed),
     )
-    return result.rowcount or 0
+    return result.rowcount or len(doomed)
+
+
+def record_resolution_attempt(conn, log_id, attempted_at=None):
+    """Stamp that beyond-scan resolution just spent a lookup on this row.
+
+    Selection orders by this column so rows rotate: without it, ordering purely
+    by issued_at re-tried the same oldest MAX_BEYOND_SCAN_LOOKUPS rows every
+    cycle, and any row behind a block of permanently unresolvable ones never got
+    a turn. Stamped on every attempt, including the ones that leave the row
+    PENDING — those are exactly the rows that would otherwise monopolise the queue.
+    """
+    conn.exec_driver_sql(
+        "UPDATE token_issuance_log SET last_resolution_attempt = %s WHERE id = %s",
+        (attempted_at or utcnow(), log_id),
+    )
 
 
 def has_issuance_for_source(conn, source_trx_id, rationale):

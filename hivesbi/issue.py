@@ -26,6 +26,15 @@ DEFAULT_KEY_TYPE = "active"
 #
 # One second between broadcast starts puts at most 3 ops in a block, leaving
 # headroom for whatever another process broadcasts from the same account.
+#
+# This is deliberately slower than the limit strictly requires, and the cost is
+# real: the scheme it replaced slept 3s every 5 issuances (0.6 s/issuance), so at
+# the measured peak (~766 issuances per 144-minute cycle) hsbi_token_snapshot now
+# spends ~12.8 min per cycle pacing instead of ~7.7 min, and sbirunner.sh is
+# sequential — every downstream job, hsbi_upvote_post_comment included, starts
+# that much later. 0.75 would still keep 4 ops/block. The extra margin is kept
+# because the ceiling is shared with processes this one cannot see, and losing a
+# broadcast to the block limit costs a stuck PENDING row and a skipped member.
 BROADCAST_MIN_INTERVAL = 1.0
 
 # Keyed by account name, measured from the START of the previous broadcast so
@@ -229,17 +238,72 @@ def get_tokenholders(symbol: str | None = None, limit: int = 1000, offset: int =
     return holders
 
 
+# The Hive Engine history endpoint silently clamps `limit` to 500: asking for
+# 1000 returns exactly 500 rows with no error and no truncation indicator, so a
+# cut-off response is indistinguishable from a short one. Request the clamp
+# itself and page on `offset`, so a short page is real proof there is no more.
+HISTORY_PAGE_LIMIT = 500
+# 35-minute window for one recipient and one symbol; needing more than this many
+# pages means the response cannot be trusted to be complete.
+MAX_HISTORY_PAGES = 20
+# Kept well under the old 30s: resolve_pending_beyond_scan runs these one after
+# another inside a strictly sequential pipeline, so a hung node must not be able
+# to hold the whole run for minutes at a time.
+HISTORY_REQUEST_TIMEOUT = 10.0
+HISTORY_RETRY_ATTEMPTS = 3
+HISTORY_RETRY_BACKOFF = 1.0
+
+_history_url_cache: Optional[str] = None
+
+
+def get_history_url() -> str:
+    """Return the Hive Engine history base URL, resolved once per process.
+
+    `Api()` builds an RPC pool and consults the beacon (measured at ~1.4s cold),
+    and the value never changes within a run — so constructing one per stuck row,
+    as this module used to, paid that cost MAX_BEYOND_SCAN_LOOKUPS times for a
+    constant.
+    """
+    global _history_url_cache
+    if _history_url_cache is None:
+        _history_url_cache = Api().history_url
+    return _history_url_cache
+
+
+def _get_history_page(history_url, params):
+    """One accountHistory request, retried on transport and non-200 responses.
+
+    nectarengine's own Api.get_history retries up to 10 times; a hand-rolled
+    request that gives up on the first 429 or 503 turns a momentarily rate-limited
+    node into "no progress at all this pass". Returns the decoded payload, or None
+    when the response could not be trusted.
+    """
+    for attempt in range(HISTORY_RETRY_ATTEMPTS):
+        try:
+            response = httpx.get(
+                f"{history_url}accountHistory",
+                params=params,
+                timeout=HISTORY_REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:
+            print(f"Hive Engine history request failed: {exc}")
+        if attempt < HISTORY_RETRY_ATTEMPTS - 1:
+            time.sleep(HISTORY_RETRY_BACKOFF * (attempt + 1))
+    return None
+
+
 def fetch_issues_to_recipient(
     recipient: str,
     start,
     end,
     symbol: str | None = None,
     issuer_account: str | None = None,
-    limit: int = 1000,
 ):
     """Hive Engine `tokens_issue` ops received by one account in a time window.
 
-    Answers "did this specific issuance reach the chain?" in a single request,
+    Answers "did this specific issuance reach the chain?" in one or two requests,
     where walking the issuer's own custom_json history costs tens of thousands of
     ops. Because the query is scoped to one recipient, one symbol and a
     35-minute window, its cost does not grow with how long a row has been stuck —
@@ -247,38 +311,42 @@ def fetch_issues_to_recipient(
 
     `start` and `end` are timezone-aware datetimes. Returns a list of dicts with
     trx_id / recipient / quantity / timestamp, or None when the lookup could not
-    be trusted (transport error, or a response that is not the expected list).
-    None means "unknown" and callers must leave the row PENDING; an empty list
-    means "provably nothing was issued in this window".
+    be trusted (transport error, an unexpected response shape, or a result set
+    too large to page through). None means "unknown" and callers must leave the
+    row PENDING; an empty list means "provably nothing was issued in this window".
     """
     token_symbol = (symbol or DEFAULT_TOKEN_SYMBOL).upper()
     issuer_account = issuer_account or DEFAULT_ISSUER_ACCOUNT
-    api = Api()
+    history_url = get_history_url()
 
-    params = {
-        "account": recipient,
-        "symbol": token_symbol,
-        "limit": limit,
-        "offset": 0,
-        "timestampStart": int(start.timestamp()),
-        "timestampEnd": int(end.timestamp()),
-    }
-    try:
-        response = httpx.get(
-            f"{api.history_url}accountHistory", params=params, timeout=30
+    rows = []
+    for page in range(MAX_HISTORY_PAGES):
+        payload = _get_history_page(
+            history_url,
+            {
+                "account": recipient,
+                "symbol": token_symbol,
+                "limit": HISTORY_PAGE_LIMIT,
+                "offset": page * HISTORY_PAGE_LIMIT,
+                "timestampStart": int(start.timestamp()),
+                "timestampEnd": int(end.timestamp()),
+            },
         )
-        if response.status_code != 200:
+        if not isinstance(payload, list):
             return None
-        payload = response.json()
-    except Exception as exc:
-        print(f"Hive Engine history lookup failed for {recipient}: {exc}")
-        return None
-
-    if not isinstance(payload, list):
+        rows.extend(payload)
+        # A short page is the only proof the result set is exhausted.
+        if len(payload) < HISTORY_PAGE_LIMIT:
+            break
+    else:
+        print(
+            f"Hive Engine history for {recipient} exceeded {MAX_HISTORY_PAGES} pages; "
+            "treating the lookup as unknown"
+        )
         return None
 
     issues = []
-    for row in payload:
+    for row in rows:
         if not isinstance(row, dict):
             return None
         if row.get("operation") != "tokens_issue":

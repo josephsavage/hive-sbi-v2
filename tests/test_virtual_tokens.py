@@ -13,6 +13,7 @@ it never invents rationale from chain history.
 
 import json
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import patch
@@ -244,13 +245,34 @@ class PureLogicTests(unittest.TestCase):
             datetime.now(timezone.utc) - timedelta(minutes=10),
         )
 
-    def test_scan_coverage_complete_for_empty_history(self):
+    def test_exhausted_history_never_claims_unbounded_coverage(self):
+        # A generator that simply ran out and one that stopped early are
+        # indistinguishable from here, so an empty walk proves nothing about the
+        # past. It used to report datetime.min — coverage of all time — which
+        # would fail every settled PENDING row in one pass; a wrongly failed row
+        # is re-issued next cycle and the tokens are minted twice on chain.
         scan = fetch_recent_chain_issuance_scan(FakeChainIssuer([]))
         self.assertTrue(scan["complete"])
-        self.assertEqual(
-            scan["covered_since"], datetime.min.replace(tzinfo=timezone.utc)
-        )
+        self.assertIsNone(scan["covered_since"])
         self.assertIsNotNone(scan["covered_until"])
+
+    def test_short_history_covers_only_what_it_walked(self):
+        # Same rule with ops present: the walk ends without reaching the cutoff,
+        # so coverage starts just past the oldest op actually inspected. Older
+        # rows fall through to the per-row Hive Engine lookup, which is what it
+        # exists for.
+        now = datetime.now(timezone.utc)
+        rows = [
+            {
+                "trx_id": f"op_{i}",
+                "timestamp": now - timedelta(minutes=i),
+                "op": ["custom_json", {}],
+            }
+            for i in range(3)
+        ]
+        scan = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=10)
+        self.assertTrue(scan["complete"])
+        self.assertGreater(scan["covered_since"], now - timedelta(minutes=2, seconds=1))
 
     def test_truncated_scan_reports_partial_coverage_not_none(self):
         # A scan that runs out of op budget before reaching its cutoff is still
@@ -274,11 +296,14 @@ class PureLogicTests(unittest.TestCase):
         self.assertGreater(truncated["covered_since"], now - timedelta(minutes=2, seconds=1))
         self.assertLess(truncated["covered_since"], now - timedelta(minutes=1))
 
-        # Same history, budget above the burst: coverage reaches the full cutoff.
+        # Same history, budget above the burst: no longer truncated, and coverage
+        # still reaches only as far back as the walk actually went.
         sufficient = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=10)
         self.assertTrue(sufficient["complete"])
         self.assertIsNotNone(sufficient["covered_since"])
-        self.assertLess(sufficient["covered_since"], now - timedelta(hours=5))
+        self.assertGreater(
+            sufficient["covered_since"], now - timedelta(minutes=4, seconds=1)
+        )
 
 
 @unittest.skipUnless(_DB_ENGINE is not None, _DB_SKIP_REASON)
@@ -1631,13 +1656,358 @@ class StuckPendingRecoveryTests(DBTestCase):
         self.assertEqual(lookup.call_count, 2)
 
 
+    def test_sweep_does_not_read_marker_underscores_as_sql_wildcards(self):
+        # The sweep used to build `error_message LIKE '%HIVE_CUSTOM_OP_BLOCK_LIMIT%'`,
+        # where every `_` matches any single character. This message is NOT the
+        # marker, so record_broadcast_error would have left it PENDING — but the
+        # wildcard pattern matched it. Failing a row whose broadcast did reach the
+        # chain re-issues tokens that already exist, minting HSBIDAO twice.
+        now = datetime.now(timezone.utc)
+        near_miss = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            now - timedelta(days=60),
+            "Assert Exception: HIVE-CUSTOM-OP-BLOCK-LIMIT was not the reason",
+        )
+        self.assertFalse(never_reached_chain(
+            "Assert Exception: HIVE-CUSTOM-OP-BLOCK-LIMIT was not the reason"
+        ))
+        self.assertEqual(fail_pending_with_proven_non_inclusion(self.conn), 0)
+        self.assertEqual(
+            self.x(
+                "SELECT status FROM token_issuance_log WHERE id = %s", (near_miss,)
+            ).fetchone()[0],
+            "PENDING",
+        )
+
+    def test_two_rows_sharing_a_window_resolve_instead_of_deadlocking(self):
+        # Both rows see both issues, so neither has a single candidate. Deferring
+        # on ambiguity — as the bulk matcher does — deadlocks them: nothing else
+        # ever moves a beyond-scan row, so each row would stay PENDING forever and
+        # both members would silently stop being paid, which is the exact symptom
+        # this path exists to cure.
+        now = datetime.now(timezone.utc)
+        issued_at = now - timedelta(days=60)
+        for column, value in (("pik", Decimal("5.000")), ("abc_pik", Decimal("5.000"))):
+            self.x(
+                f"INSERT INTO tokenholders (member_name, {column}) VALUES (%s, %s) "
+                f"ON DUPLICATE KEY UPDATE {column} = VALUES({column})",
+                (T_HOLDER, value),
+            )
+        a_id = self._pending(T_HOLDER, Decimal("1.234"), "pik", issued_at, "Read timed out")
+        b_id = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            issued_at + timedelta(minutes=2),
+            "Read timed out",
+        )
+        found = [
+            {
+                "trx_id": "he_share_a",
+                "recipient": T_HOLDER,
+                "quantity": "1.234",
+                "timestamp": issued_at + timedelta(seconds=30),
+            },
+            {
+                "trx_id": "he_share_b",
+                "recipient": T_HOLDER,
+                "quantity": "1.234",
+                "timestamp": issued_at + timedelta(minutes=2, seconds=30),
+            },
+        ]
+        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+
+        rows = dict(
+            self.x(
+                "SELECT id, trx_id FROM token_issuance_log WHERE id IN (%s, %s)",
+                (a_id, b_id),
+            ).fetchall()
+        )
+        statuses = dict(
+            self.x(
+                "SELECT id, status FROM token_issuance_log WHERE id IN (%s, %s)",
+                (a_id, b_id),
+            ).fetchall()
+        )
+        self.assertEqual(statuses[a_id], "SUCCESS")
+        self.assertEqual(statuses[b_id], "SUCCESS")
+        # Proximity assigns each row the issue nearest its own intent timestamp,
+        # and each issue is claimed exactly once.
+        self.assertEqual(rows[a_id], "he_share_a")
+        self.assertEqual(rows[b_id], "he_share_b")
+
+    def test_uncaptured_sibling_just_outside_our_window_still_blocks(self):
+        # The sibling's claim reaches [its issued_at - skew, its issued_at +
+        # window], so a sibling 33 minutes earlier still overlaps this row's
+        # window. Scoping the guard to CHAIN_MATCH_WINDOW alone missed it, handed
+        # the shared issue to this row, and debited a balance for tokens issued
+        # against the sibling instead.
+        now = datetime.now(timezone.utc)
+        issued_at = now - timedelta(days=60)
+        self.x(
+            "INSERT INTO tokenholders (member_name, abc_pik) VALUES (%s, %s) "
+            "ON DUPLICATE KEY UPDATE abc_pik = VALUES(abc_pik)",
+            (T_HOLDER, Decimal("5.000")),
+        )
+        self.x(
+            """
+            INSERT INTO token_issuance_log
+                (trx_id, recipient, units, status, rationale, issued_at)
+            VALUES ('N/A', %s, %s, 'SUCCESS', 'pik', %s)
+            """,
+            (T_HOLDER, Decimal("1.234"), issued_at - timedelta(minutes=33)),
+        )
+        log_id = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            issued_at,
+            "Read timed out",
+        )
+        found = [
+            {
+                "trx_id": "he_shared_with_sibling",
+                "recipient": T_HOLDER,
+                "quantity": "1.234",
+                "timestamp": issued_at + timedelta(seconds=10),
+            }
+        ]
+        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
+            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+
+        self.assertEqual(
+            self.x(
+                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
+            ).fetchone()[0],
+            "PENDING",
+        )
+        self.assertEqual(
+            self.x(
+                "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_HOLDER,)
+            ).fetchone()[0],
+            Decimal("5.000"),
+        )
+
+    def test_unresolvable_rows_rotate_so_newer_rows_get_a_turn(self):
+        # Ordering purely by issued_at meant the oldest MAX_BEYOND_SCAN_LOOKUPS
+        # rows consumed every lookup every cycle. If they can never be settled,
+        # row N+1 never gets one — the same head-of-line blocking this PR removed
+        # elsewhere, just at a threshold of 200 instead of 1.
+        now = datetime.now(timezone.utc)
+        old_id = self._pending(
+            T_PIK, Decimal("9.999"), "pik", now - timedelta(days=90), "Read timed out"
+        )
+        newer_id = self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            now - timedelta(days=60),
+            "Read timed out",
+        )
+        with patch("hsbi_token_snapshot.MAX_BEYOND_SCAN_LOOKUPS", 1):
+            with patch(
+                "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
+            ) as lookup:
+                resolve_pending_beyond_scan(
+                    FakeDB2(self.conn), now - timedelta(days=14)
+                )
+                # Pass 1 spends its single lookup on the oldest row.
+                self.assertEqual(lookup.call_count, 1)
+                self.assertEqual(lookup.call_args[0][0], T_PIK)
+
+                # That row is stamped, so pass 2 reaches the one behind it.
+                resolve_pending_beyond_scan(
+                    FakeDB2(self.conn), now - timedelta(days=14)
+                )
+                self.assertEqual(lookup.call_count, 2)
+                self.assertEqual(lookup.call_args[0][0], T_HOLDER)
+
+        stamps = dict(
+            self.x(
+                "SELECT id, last_resolution_attempt FROM token_issuance_log "
+                "WHERE id IN (%s, %s)",
+                (old_id, newer_id),
+            ).fetchall()
+        )
+        self.assertIsNotNone(stamps[old_id])
+        self.assertIsNotNone(stamps[newer_id])
+
+    def test_pass_stops_at_its_time_budget(self):
+        # The row cap bounds requests, not time. A history node that hangs rather
+        # than errors costs the full timeout per row, and sbirunner.sh is
+        # sequential, so an unbounded pass eats the voting window of every job
+        # downstream.
+        now = datetime.now(timezone.utc)
+        for i in range(3):
+            self._pending(
+                T_HOLDER,
+                Decimal(f"{i + 1}.000"),
+                "Pending Balance Conversion",
+                now - timedelta(days=60 + i),
+                "Read timed out",
+            )
+        # Clock jumps past the budget after the first row is attempted.
+        clock = iter([0.0, 0.0, 999.0])
+        with patch("hsbi_token_snapshot.time.monotonic", lambda: next(clock)):
+            with patch(
+                "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
+            ) as lookup:
+                resolve_pending_beyond_scan(
+                    FakeDB2(self.conn),
+                    now - timedelta(days=14),
+                    time_budget=timedelta(seconds=10),
+                )
+        self.assertEqual(lookup.call_count, 1)
+
+    def test_lookup_is_scoped_to_the_issuers_own_symbol(self):
+        # The account name was forwarded but the symbol was not, so a non-HSBIDAO
+        # issuer would have had its rows checked against HSBIDAO history, found
+        # nothing, and failed every one of them — re-issuing the full amount.
+        now = datetime.now(timezone.utc)
+        self._pending(
+            T_HOLDER,
+            Decimal("1.234"),
+            "Pending Balance Conversion",
+            now - timedelta(days=60),
+            "Read timed out",
+        )
+        with patch(
+            "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
+        ) as lookup:
+            resolve_pending_beyond_scan(
+                FakeDB2(self.conn),
+                now - timedelta(days=14),
+                issuer_account="zz_other_issuer",
+                token_symbol="OTHER",
+            )
+        self.assertEqual(lookup.call_args.kwargs["symbol"], "OTHER")
+        self.assertEqual(lookup.call_args.kwargs["issuer_account"], "zz_other_issuer")
+
+
+class EngineHistoryLookupTests(unittest.TestCase):
+    """fetch_issues_to_recipient answers "did this reach the chain?" — so a
+    truncated or transient response must read as unknown, never as absence."""
+
+    def _response(self, status_code=200, payload=None):
+        response = unittest.mock.Mock()
+        response.status_code = status_code
+        response.json.return_value = payload
+        return response
+
+    def _issue_row(self, trx_id):
+        return {
+            "operation": "tokens_issue",
+            "to": "zz_recipient",
+            "issuer": "hivesbi",
+            "transactionId": trx_id,
+            "quantity": "1.234",
+            "timestamp": 1700000000,
+        }
+
+    def _call(self):
+        start = datetime.now(timezone.utc) - timedelta(minutes=5)
+        end = datetime.now(timezone.utc)
+        return issue_module.fetch_issues_to_recipient("zz_recipient", start, end)
+
+    def setUp(self):
+        patcher = patch.object(
+            issue_module, "get_history_url", return_value="https://he.example/"
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_full_page_is_paged_through_not_treated_as_complete(self):
+        # The endpoint silently clamps `limit` to 500 — asking for 1000 returns
+        # exactly 500 rows with no error and no truncation indicator. A recipient
+        # with more than one page of symbol activity would have had the real
+        # issue fall past the cut, be marked FAILURE, and be re-issued.
+        page_size = issue_module.HISTORY_PAGE_LIMIT
+        first = [self._issue_row(f"trx_{i}") for i in range(page_size)]
+        second = [self._issue_row("trx_the_real_one")]
+        with patch.object(
+            issue_module.httpx,
+            "get",
+            side_effect=[self._response(payload=first), self._response(payload=second)],
+        ) as get:
+            issues = issue_module.fetch_issues_to_recipient(
+                "zz_recipient",
+                datetime.now(timezone.utc) - timedelta(minutes=5),
+                datetime.now(timezone.utc),
+            )
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["offset"], page_size)
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["limit"], page_size)
+        self.assertIn("trx_the_real_one", [i["trx_id"] for i in issues])
+
+    def test_unpageable_result_reads_as_unknown_not_absence(self):
+        page = [self._issue_row(f"trx_{i}") for i in range(issue_module.HISTORY_PAGE_LIMIT)]
+        with patch.object(
+            issue_module.httpx, "get", return_value=self._response(payload=page)
+        ):
+            self.assertIsNone(self._call())
+
+    def test_transient_non_200_is_retried_before_giving_up(self):
+        # nectarengine's own get_history retries up to 10 times; giving up on the
+        # first 429 or 503 turns a momentarily rate-limited node into no progress
+        # at all for the whole pass.
+        with patch.object(issue_module.time, "sleep"):
+            with patch.object(
+                issue_module.httpx,
+                "get",
+                side_effect=[
+                    self._response(status_code=503),
+                    self._response(payload=[self._issue_row("trx_after_retry")]),
+                ],
+            ) as get:
+                issues = self._call()
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual([i["trx_id"] for i in issues], ["trx_after_retry"])
+
+    def test_persistent_failure_reads_as_unknown(self):
+        with patch.object(issue_module.time, "sleep"):
+            with patch.object(
+                issue_module.httpx, "get", return_value=self._response(status_code=503)
+            ) as get:
+                self.assertIsNone(self._call())
+        self.assertEqual(get.call_count, issue_module.HISTORY_RETRY_ATTEMPTS)
+
+
+class HistoryUrlCacheTests(unittest.TestCase):
+    """Kept out of EngineHistoryLookupTests, which patches get_history_url itself."""
+
+    def test_history_url_is_resolved_once_per_process(self):
+        # Api() builds an RPC pool and consults the beacon (~1.4s cold); it used
+        # to be constructed once per stuck row for a value that never changes.
+        issue_module._history_url_cache = None
+        self.addCleanup(setattr, issue_module, "_history_url_cache", None)
+        with patch.object(issue_module, "Api") as api:
+            api.return_value.history_url = "https://he.example/"
+            self.assertEqual(issue_module.get_history_url(), "https://he.example/")
+            self.assertEqual(issue_module.get_history_url(), "https://he.example/")
+        self.assertEqual(api.call_count, 1)
+
+
 class BroadcastThrottleTests(unittest.TestCase):
     """The 5-custom_json-per-block budget belongs to the issuer account, not to
     any one loop, so pacing lives in hivesbi.issue and applies to every path."""
 
+    def _isolate_throttle_state(self, account):
+        """Keep fake-clock values out of module state after the test.
+
+        _last_broadcast_started is a module global, so a leftover stamp taken from
+        a mocked monotonic clock is compared against the real one by any later
+        caller — and on Linux, where time.monotonic() is boot-relative, that can
+        be a genuine multi-second sleep inside the test process.
+        """
+        issue_module._last_broadcast_started.pop(account, None)
+        self.addCleanup(issue_module._last_broadcast_started.pop, account, None)
+
     def test_consecutive_broadcasts_are_spaced_by_the_minimum_interval(self):
         account = "zz_throttle_acct"
-        issue_module._last_broadcast_started.pop(account, None)
+        self._isolate_throttle_state(account)
         sleeps = []
         # Each call reads the clock once to measure the gap (except the first,
         # which has nothing to measure against) and once to stamp the broadcast.
@@ -1652,7 +2022,7 @@ class BroadcastThrottleTests(unittest.TestCase):
 
     def test_first_broadcast_for_an_account_does_not_wait(self):
         account = "zz_throttle_fresh"
-        issue_module._last_broadcast_started.pop(account, None)
+        self._isolate_throttle_state(account)
         with patch.object(issue_module.time, "sleep") as slept:
             issue_module.throttle_broadcast(account)
         slept.assert_not_called()

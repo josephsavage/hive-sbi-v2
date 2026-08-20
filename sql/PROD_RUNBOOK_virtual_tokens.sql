@@ -13,6 +13,7 @@
 --      (metadata-only; VIRTUAL columns store no data)
 --   3. MODIFY token_issuance_log.status enum to add 'PENDING'
 --   4. ADD COLUMN token_issuance_log.source_trx_id + index
+--   5. ADD COLUMN token_issuance_log.last_resolution_attempt + idx_status_attempt
 -- =============================================================================
 
 USE `sbi`;
@@ -23,9 +24,14 @@ USE `sbi`;
 --   step 2 tokens generated expression ........... ALREADY APPLIED — skip
 --   step 3 status enum includes 'PENDING' ........ ALREADY APPLIED — skip
 --   step 4 source_trx_id column + index .......... NOT APPLIED — run this
--- i.e. prod is post-#138 / pre-#139. Step 4 is the only DDL required, and it must
--- land BEFORE the code deploy (insert_pending_issuance writes source_trx_id on
--- every issuance) and BEFORE the LEGACY CLEANUP backfill at the bottom.
+--   step 5 last_resolution_attempt + index ....... NOT APPLIED — run this (#140)
+-- i.e. prod is post-#138 / pre-#139. Steps 4 and 5 are the DDL required, and both
+-- must land BEFORE the code deploy — step 4 because insert_pending_issuance writes
+-- source_trx_id on every issuance, step 5 because resolve_pending_beyond_scan
+-- ORDERs BY last_resolution_attempt and every `status = 'PENDING'` query errors on
+-- the unknown column without it. Step 4 must also precede the LEGACY CLEANUP
+-- backfill at the bottom. Run step 5 after step 4 so the new column lands at the
+-- end of the row (see the ADD COLUMN note below).
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------
@@ -48,19 +54,29 @@ WHERE TABLE_SCHEMA = 'sbi'
   AND TABLE_NAME = 'tokenholders'
   AND COLUMN_NAME IN ('liquid_tokens', 'LP_tokens', 'virtual_tokens', 'tokens');
 
--- Expect: status present; source_trx_id may be absent before step 4.
-SELECT COLUMN_NAME, COLUMN_TYPE
+-- Expect: status present; source_trx_id absent before step 4,
+-- last_resolution_attempt absent before step 5.
+SELECT COLUMN_NAME, COLUMN_TYPE, ORDINAL_POSITION
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = 'sbi'
   AND TABLE_NAME = 'token_issuance_log'
-  AND COLUMN_NAME IN ('status', 'source_trx_id');
+  AND COLUMN_NAME IN ('status', 'source_trx_id', 'last_resolution_attempt');
 
--- Expect: idx_source_trx_id absent before step 4.
-SELECT INDEX_NAME, COLUMN_NAME
+-- Expect: idx_source_trx_id absent before step 4, idx_status_attempt absent
+-- before step 5.
+SELECT INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME
 FROM INFORMATION_SCHEMA.STATISTICS
 WHERE TABLE_SCHEMA = 'sbi'
   AND TABLE_NAME = 'token_issuance_log'
-  AND INDEX_NAME = 'idx_source_trx_id';
+  AND INDEX_NAME IN ('idx_source_trx_id', 'idx_status_attempt')
+ORDER BY INDEX_NAME, SEQ_IN_INDEX;
+
+-- Sizing for step 5. idx_status_attempt is built on the whole table, so read the
+-- row count before starting; ADD INDEX is INPLACE in InnoDB but not instant.
+-- (~159k rows when this was written, growing every cycle.)
+SELECT COUNT(*) AS token_issuance_log_rows,
+       SUM(status = 'PENDING') AS pending_rows
+FROM token_issuance_log;
 
 -- -----------------------------------------------------------------------------
 -- APPLY — run only the statements whose pre-check showed the OLD state.
@@ -99,6 +115,35 @@ ALTER TABLE `token_issuance_log`
 ALTER TABLE `token_issuance_log`
     ADD INDEX `idx_source_trx_id` (`source_trx_id`);
 
+-- 5. (PR #140) Fair queueing for beyond-scan PENDING resolution, and an index for
+--    the PENDING queries that currently scan the whole table.
+--
+--    WHY THE COLUMN: resolve_pending_beyond_scan spends at most
+--    MAX_BEYOND_SCAN_LOOKUPS Hive Engine lookups per pass. Selecting oldest-first
+--    meant a block of rows that can never be settled consumed every lookup every
+--    cycle, and the rows behind them never got one. The column records when a row
+--    last had a lookup spent on it — stamped on EVERY attempt, including the ones
+--    that leave the row PENDING — and selection orders by it, NULLs (never
+--    attempted) first, so the queue rotates and drains.
+--
+--    WHY THE INDEX: `status` is not indexed on its own, so
+--    fail_pending_with_proven_non_inclusion and warn_stuck_pending scan the whole
+--    table on every reconciliation pass while the unified webserver reads it.
+--
+--    Run this AFTER step 4: `AFTER source_trx_id` only applies instantly when the
+--    new column lands at the end of the row. Confirm source_trx_id is the last
+--    column (ORDINAL_POSITION in the pre-check) — if it is not, adjust the AFTER
+--    clause to name whatever is last, or MariaDB rebuilds the whole table.
+--
+--    Both statements are additive. Existing rows get last_resolution_attempt =
+--    NULL, which reads as "never attempted" and sorts first — correct: no row has
+--    been attempted under the new scheme.
+ALTER TABLE `token_issuance_log`
+    ADD COLUMN `last_resolution_attempt` timestamp NULL DEFAULT NULL AFTER `source_trx_id`;
+
+ALTER TABLE `token_issuance_log`
+    ADD INDEX `idx_status_attempt` (`status`, `last_resolution_attempt`, `issued_at`);
+
 -- -----------------------------------------------------------------------------
 -- POST-CHECKS — confirm the new state.
 -- -----------------------------------------------------------------------------
@@ -110,19 +155,35 @@ WHERE TABLE_SCHEMA = 'sbi'
   AND TABLE_NAME = 'tokenholders'
   AND COLUMN_NAME IN ('virtual_tokens', 'tokens');
 
--- Expect: status includes PENDING and source_trx_id is present.
-SELECT COLUMN_NAME, COLUMN_TYPE
+-- Expect: status includes PENDING, source_trx_id and last_resolution_attempt
+-- both present (last_resolution_attempt nullable, default NULL).
+SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = 'sbi'
   AND TABLE_NAME = 'token_issuance_log'
-  AND COLUMN_NAME IN ('status', 'source_trx_id');
+  AND COLUMN_NAME IN ('status', 'source_trx_id', 'last_resolution_attempt');
 
--- Expect: idx_source_trx_id present.
-SELECT INDEX_NAME, COLUMN_NAME
+-- Expect: idx_source_trx_id present; idx_status_attempt present with three parts
+-- in order status(1), last_resolution_attempt(2), issued_at(3).
+SELECT INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME
 FROM INFORMATION_SCHEMA.STATISTICS
 WHERE TABLE_SCHEMA = 'sbi'
   AND TABLE_NAME = 'token_issuance_log'
-  AND INDEX_NAME = 'idx_source_trx_id';
+  AND INDEX_NAME IN ('idx_source_trx_id', 'idx_status_attempt')
+ORDER BY INDEX_NAME, SEQ_IN_INDEX;
+
+-- Expect: the PENDING sweep now uses idx_status_attempt rather than ALL.
+EXPLAIN SELECT id, error_message FROM token_issuance_log
+WHERE status = 'PENDING' AND error_message IS NOT NULL;
+
+-- Expect: every row NULL immediately after step 5 (nothing attempted yet). After
+-- the first post-deploy cycle, rows that took a Hive Engine lookup carry a stamp.
+SELECT COUNT(*) AS pending_rows,
+       SUM(last_resolution_attempt IS NULL) AS never_attempted,
+       MIN(last_resolution_attempt) AS oldest_attempt,
+       MAX(last_resolution_attempt) AS newest_attempt
+FROM token_issuance_log
+WHERE status = 'PENDING';
 
 -- Sanity: tokens should equal liquid_tokens + LP_tokens for every row right after
 -- step 1/2 (virtual_tokens defaults to 0 until hsbi_check_delegation populates it).
