@@ -1,9 +1,9 @@
 """Write-ahead issuance log helpers for `token_issuance_log`.
 
 Every HSBIDAO issuance path commits an intent row before broadcasting. The
-broadcast is the only step that cannot be rolled back, so chain reconciliation
-(hsbi_token_snapshot.reconcile_issuances) completes the same row from chain
-history if the process dies before SUCCESS is recorded.
+broadcast is the only step that cannot be rolled back, so if the process dies
+before SUCCESS is recorded, hsbi_token_snapshot.resolve_pending_issuances asks
+Hive Engine whether that one issuance exists and completes the same row.
 
 rationale is the durable, never-rewritten reason an issuance happened (pik,
 Pending Balance Conversion, Unit Conversion, Management). It is always written
@@ -50,13 +50,6 @@ def mark_issuance_success(conn, log_id, trx_id):
     )
 
 
-def complete_uncaptured_success(conn, log_id, trx_id):
-    conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET trx_id = %s, error_message = NULL WHERE id = %s",
-        (trx_id, log_id),
-    )
-
-
 def mark_issuance_failure(conn, log_id, error_message):
     conn.exec_driver_sql(
         "UPDATE token_issuance_log SET status = 'FAILURE', error_message = %s WHERE id = %s",
@@ -68,7 +61,7 @@ def record_pending_error(conn, log_id, error_message):
     """Keep a row PENDING (so it still guards against re-issue) but note the error.
 
     A broadcast that raised may still have reached the chain, so we do not assume
-    failure here — chain reconciliation resolves the row to SUCCESS or FAILURE.
+    failure here — resolve_pending_issuances settles the row from Hive Engine.
     """
     conn.exec_driver_sql(
         "UPDATE token_issuance_log SET error_message = %s WHERE id = %s",
@@ -106,7 +99,7 @@ def record_broadcast_error(conn, log_id, error_message):
 
     Fails the row outright when the error proves the operation never reached the
     chain, so the next cycle simply re-issues it; otherwise leaves it PENDING for
-    chain reconciliation to resolve. Returns the resulting status.
+    resolve_pending_issuances to settle. Returns the resulting status.
     """
     if never_reached_chain(error_message):
         mark_issuance_failure(conn, log_id, error_message)
@@ -168,10 +161,10 @@ def fail_pending_with_proven_non_inclusion(conn):
 
 
 def record_resolution_attempt(conn, log_id, attempted_at=None):
-    """Stamp that beyond-scan resolution just spent a lookup on this row.
+    """Stamp that resolution just spent a Hive Engine lookup on this row.
 
     Selection orders by this column so rows rotate: without it, ordering purely
-    by issued_at re-tried the same oldest MAX_BEYOND_SCAN_LOOKUPS rows every
+    by issued_at re-tried the same oldest MAX_RESOLUTION_LOOKUPS rows every
     cycle, and any row behind a block of permanently unresolvable ones never got
     a turn. Stamped on every attempt, including the ones that leave the row
     PENDING — those are exactly the rows that would otherwise monopolise the queue.

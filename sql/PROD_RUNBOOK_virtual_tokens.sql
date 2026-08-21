@@ -27,7 +27,7 @@ USE `sbi`;
 --   step 5 last_resolution_attempt + index ....... NOT APPLIED — run this (#140)
 -- i.e. prod is post-#138 / pre-#139. Steps 4 and 5 are the DDL required, and both
 -- must land BEFORE the code deploy — step 4 because insert_pending_issuance writes
--- source_trx_id on every issuance, step 5 because resolve_pending_beyond_scan
+-- source_trx_id on every issuance, step 5 because resolve_pending_issuances
 -- ORDERs BY last_resolution_attempt and every `status = 'PENDING'` query errors on
 -- the unknown column without it. Step 4 must also precede the LEGACY CLEANUP
 -- backfill at the bottom. Run step 5 after step 4 so the new column lands at the
@@ -118,8 +118,8 @@ ALTER TABLE `token_issuance_log`
 -- 5. (PR #140) Fair queueing for beyond-scan PENDING resolution, and an index for
 --    the PENDING queries that currently scan the whole table.
 --
---    WHY THE COLUMN: resolve_pending_beyond_scan spends at most
---    MAX_BEYOND_SCAN_LOOKUPS Hive Engine lookups per pass. Selecting oldest-first
+--    WHY THE COLUMN: resolve_pending_issuances spends at most
+--    MAX_RESOLUTION_LOOKUPS Hive Engine lookups per pass. Selecting oldest-first
 --    meant a block of rows that can never be settled consumed every lookup every
 --    cycle, and the rows behind them never got one. The column records when a row
 --    last had a lookup spent on it — stamped on EVERY attempt, including the ones

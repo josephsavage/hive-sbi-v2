@@ -1,5 +1,118 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## Token issuance: reduced to the remit (PR #140)
+
+The two commits above fixed the stall, then grew a chain-reconciliation engine
+around it. This one removes everything in that engine that does not change a
+token outcome. Net: `hsbi_token_snapshot.py` 1096 -> 612 lines, the test file
+2032 -> 1352, and the cost of a reconciliation pass drops from an unconditional
+walk of up to 10,000 issuer ops every cycle to zero requests when nothing is
+stuck.
+
+**The remit, written down so the next change can be checked against it.** Four
+paths issue HSBIDAO, and each already retries safely on its own. What none of
+them survives is an issuance that reached the chain while the record that would
+stop it being repeated did not get written:
+
+| Path | Ledger of record | Only economically meaningful failure |
+| --- | --- | --- |
+| pik | `tokenholders.pik` | issued, not debited -> reissued next cycle -> **double mint** |
+| Pending Balance Conversion | `tokenholders.abc_pik` | same -> **double mint** |
+| Management | `SUM(units)` in this log | issued, not logged -> cap undercounts -> **management overpaid** |
+| Unit Conversion | `source_trx_id` guard | same source op processed twice (already guarded) |
+
+For pik and Pending Balance Conversion the log row is *not* the ledger — the
+balance column is. The balance is debited only in the same transaction that
+records SUCCESS, so a broadcast that fails leaves it intact and next cycle simply
+reissues. The log row exists purely to carry enough information to perform that
+debit later if the process died between broadcast and debit.
+
+So the only question this code needs to answer, one row at a time, is **"did
+recipient R receive exactly U HSBIDAO from us in [T - skew, T + window]?"**
+`fetch_issues_to_recipient` answers it in one small request.
+
+### Removed
+
+- **The bulk chain scan and everything it needed.** `fetch_recent_chain_issuance_scan`,
+  `fetch_recent_chain_issuances`, `_parse_engine_issue`, `_unwrap_history_op`,
+  `reconcile_issuances`, `_match_pending_rows_to_chain`, `_find_logged_success_for_chain_issue`,
+  `_chain_issue_matches_pending`, `_chain_issue_matches_logged_success`,
+  `_chain_sort_key`, `_rank_by_proximity`, `_proximity_is_tied`, and the constants
+  `CHAIN_SCAN_LOOKBACK`, `HISTORY_SCAN_LIMIT`, `SCAN_TRUNCATION_MARGIN`.
+
+  It walked the issuer's whole `custom_json` stream and matched it against the log
+  in bulk. That is the operation that caused #138 (every Unit Conversion
+  duplicated under a bogus `reconciled` rationale), and every subsequent release
+  has spent its review budget on the machinery built to make bulk matching safe:
+  coverage windows, issue-first matching, proximity ranking, tie-breaks,
+  contested rows. None of it changes a token outcome. Chain transactions carry no
+  rationale, so which trx_id lands on which log row is audit metadata; every
+  candidate carries the same units by construction, so a swapped attribution
+  costs audit precision and never tokens.
+
+  Worse, the bulk matcher *manufactured* the ambiguity it then managed: matching
+  issue-first across all rows can hand a chain issue to the wrong PENDING row,
+  and because SUCCESS triggers `_complete_balance_issuance_effect`, that debits
+  the wrong member's balance. The per-row question cannot produce that error at
+  all — it is scoped to one row by construction.
+
+- **`N/A` placeholder completion.** `complete_uncaptured_success` and the Pass-1
+  loop that fed it. nectar's `TransactionBuilder.broadcast` sets
+  `ret["trx_id"] = sign_ret.id` whenever the RPC reply lacks one, and
+  `Wallet.issue` returns that dict unchanged, so `UNCAPTURED_TRX_PLACEHOLDER` is
+  unreachable on new rows. The one guard kept for it (a legacy `N/A` sibling with
+  a claim on the same issue) is kept because it prevents a double debit on rows
+  written before that was true, and is now labelled as legacy-only.
+
+- **The unexplained-issuance report.** An on-chain issuance with no log row is
+  self-correcting for Management: `sync_tokenholders` refreshes `outstanding`
+  from chain, so unlogged supply raises the 10% base and management receives its
+  share automatically. Reporting it changed nothing.
+
+- **The truncation alert** and the `complete` / `covered_since` / `covered_until`
+  coverage protocol. With no bulk walk there is nothing to truncate.
+
+### Kept, and why
+
+- `throttle_broadcast` — removes the *cause* of the stall (the 5-custom_json
+  per-block limit). Worth more than every resolver downstream.
+- `never_reached_chain` / `record_broadcast_error` / `fail_pending_with_proven_non_inclusion`
+  — classify the common failure at broadcast time and retroactively, at zero
+  network cost. These alone fix the reported production bug.
+- `resolve_pending_issuances` (was `resolve_pending_beyond_scan`) — the per-row
+  lookup, with its row cap, time budget and `last_resolution_attempt` rotation.
+- The write-ahead insert, debit-in-the-same-transaction-as-SUCCESS,
+  `has_issuance_for_source`, and the Management cap counting SUCCESS + PENDING.
+
+### Changed
+
+- **Unit Conversion is excluded from resolution** (`RESOLVABLE_RATIONALES`). It
+  has no balance to debit and nothing ever retries it — the source transfer op is
+  not reprocessed — so every possible verdict is an economic no-op, while a wrong
+  SUCCESS would permanently deny a member the units they converted. Previously
+  those rows consumed the 200-lookup budget and competed with pik/abc rows that
+  do matter. A stuck Unit Conversion row is an operator matter; `warn_stuck_pending`
+  announces it.
+- **`fetch_issues_to_recipient` re-checks `symbol` locally.** It was passed as a
+  query param and trusted, while the time window next to it was deliberately
+  re-checked against exactly the same risk — the history endpoint comes from a
+  beacon at runtime. A node that ignored `symbol` would return the recipient's
+  other Hive Engine tokens; one carrying the same numeric quantity would mark the
+  row SUCCESS and debit a balance for HSBIDAO never received.
+- **Multiple candidates pick by `(nearest, trx_id)`**, a total order, replacing
+  proximity ranking plus a separate tie-break. The old tie-break re-sorted *every*
+  candidate by trx_id rather than just the tied ones, so with three candidates and
+  a tie between the closest two it could select the furthest.
+- `MAX_BEYOND_SCAN_LOOKUPS` -> `MAX_RESOLUTION_LOOKUPS`,
+  `BEYOND_SCAN_TIME_BUDGET` -> `RESOLUTION_TIME_BUDGET`.
+
+### Schema
+
+Unchanged from the previous commit — `last_resolution_attempt` and
+`idx_status_attempt` are still required, and step 5 of
+`sql/PROD_RUNBOOK_virtual_tokens.sql` is still the prod DDL. It must still be
+applied **before** the code deploy.
+
 ## Token issuance: block-limit stall
 
 Symptom: an account with regular Pending Balance Conversions stopped being paid.

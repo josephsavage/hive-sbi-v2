@@ -1,5 +1,5 @@
 """Tests for delegation virtual_tokens, write-ahead token issuance intents,
-Management 10% issuance, and chain-confirm reconciliation.
+Management 10% issuance, and resolution of unconfirmed issuances.
 
 The pure-logic tests run anywhere. The DB-level tests connect to the local docker
 MariaDB (the `sbi` database via config.json `databaseConnector2`) and run inside a
@@ -7,11 +7,11 @@ transaction that is rolled back, so they leave no residue. They skip automatical
 when the database is unreachable (e.g. running on the host without the container).
 
 Design note: every token issuance path creates a durable PENDING intent before
-broadcast. Reconciliation uses chain timestamps to complete or fail those intents;
-it never invents rationale from chain history.
+broadcast. Resolution asks Hive Engine, one row at a time, whether that row's own
+issuance exists, and completes or fails the row from the answer. It never invents
+a rationale from chain history and never inserts a row from chain data.
 """
 
-import json
 import unittest
 import unittest.mock
 from datetime import datetime, timedelta, timezone
@@ -38,16 +38,14 @@ from hivesbi.parse_hist_op import (
     _mark_token_issuance_success,
 )
 from hsbi_token_snapshot import (
+    RESOLVABLE_RATIONALES,
     TOKEN_PRECISION,
-    _parse_engine_issue,
     calculate_management_issue_amount,
-    fetch_recent_chain_issuance_scan,
     insert_pending_issuance,
     issue_balance_tokens,
     issue_management_tokens,
     log_issuance,
-    reconcile_issuances,
-    resolve_pending_beyond_scan,
+    resolve_pending_issuances,
     sync_tokenholders,
     warn_stuck_pending,
 )
@@ -125,22 +123,6 @@ class FakeDB2:
         self.engine = _FakeEngine(conn)
 
 
-class _FakeHistoryAccount:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def history_reverse(self, only_ops=None):
-        return iter(self._rows)
-
-
-class FakeChainIssuer:
-    """Issuer stand-in exposing a canned account history for scan tests."""
-
-    def __init__(self, rows, account_name="hivesbi"):
-        self.hive_account = _FakeHistoryAccount(rows)
-        self.account_name = account_name
-
-
 class PureLogicTests(unittest.TestCase):
     def test_virtual_tokens_are_decimal_hp_times_two(self):
         # No integer rounding: 0.001 HP delegated -> 0.002 virtual tokens.
@@ -172,38 +154,6 @@ class PureLogicTests(unittest.TestCase):
         second = calculate_management_issue_amount(outstanding + first, first)
         self.assertEqual(second, Decimal("0.000"))
 
-    def test_parse_engine_issue_custom_json(self):
-        ts = datetime.now(timezone.utc)
-        row = {
-            "trx_id": "abc123",
-            "timestamp": ts,
-            "op": [
-                "custom_json",
-                {
-                    "json": json.dumps(
-                        {
-                            "contractName": "tokens",
-                            "contractAction": "issue",
-                            "contractPayload": {
-                                "symbol": "HSBIDAO",
-                                "to": "josephsavage",
-                                "quantity": "12.3456",
-                            },
-                        }
-                    )
-                },
-            ],
-        }
-        self.assertEqual(
-            _parse_engine_issue(row),
-            {
-                "trx_id": "abc123",
-                "recipient": "josephsavage",
-                "units": Decimal("12.345"),
-                "timestamp": ts,
-            },
-        )
-
     def test_block_limit_error_is_recognized_as_never_broadcast(self):
         self.assertTrue(
             never_reached_chain(
@@ -223,87 +173,6 @@ class PureLogicTests(unittest.TestCase):
             None,
         ):
             self.assertFalse(never_reached_chain(message), message)
-
-    def test_parse_engine_issue_ignores_non_issue(self):
-        row = {
-            "trx_id": "x",
-            "op": ["custom_json", {"json": json.dumps({"contractName": "market"})}],
-        }
-        self.assertIsNone(_parse_engine_issue(row))
-
-    def test_scan_coverage_extends_to_scan_time_for_quiet_issuer(self):
-        # An issuer with no recent on-chain activity must still prove coverage up
-        # to roughly the scan time: history_reverse starts at the account head,
-        # so a successful fetch shows no newer ops exist. Old PENDING intents can
-        # then be failed without waiting for fresh issuer activity.
-        old_ts = datetime.now(timezone.utc) - timedelta(hours=48)
-        rows = [{"trx_id": "old_op", "timestamp": old_ts, "op": ["custom_json", {}]}]
-        scan = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows))
-        self.assertTrue(scan["complete"])
-        self.assertGreater(
-            scan["covered_until"],
-            datetime.now(timezone.utc) - timedelta(minutes=10),
-        )
-
-    def test_exhausted_history_never_claims_unbounded_coverage(self):
-        # A generator that simply ran out and one that stopped early are
-        # indistinguishable from here, so an empty walk proves nothing about the
-        # past. It used to report datetime.min — coverage of all time — which
-        # would fail every settled PENDING row in one pass; a wrongly failed row
-        # is re-issued next cycle and the tokens are minted twice on chain.
-        scan = fetch_recent_chain_issuance_scan(FakeChainIssuer([]))
-        self.assertTrue(scan["complete"])
-        self.assertIsNone(scan["covered_since"])
-        self.assertIsNotNone(scan["covered_until"])
-
-    def test_short_history_covers_only_what_it_walked(self):
-        # Same rule with ops present: the walk ends without reaching the cutoff,
-        # so coverage starts just past the oldest op actually inspected. Older
-        # rows fall through to the per-row Hive Engine lookup, which is what it
-        # exists for.
-        now = datetime.now(timezone.utc)
-        rows = [
-            {
-                "trx_id": f"op_{i}",
-                "timestamp": now - timedelta(minutes=i),
-                "op": ["custom_json", {}],
-            }
-            for i in range(3)
-        ]
-        scan = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=10)
-        self.assertTrue(scan["complete"])
-        self.assertGreater(scan["covered_since"], now - timedelta(minutes=2, seconds=1))
-
-    def test_truncated_scan_reports_partial_coverage_not_none(self):
-        # A scan that runs out of op budget before reaching its cutoff is still
-        # authoritative for the span it walked. Reporting covered_since=None here
-        # instead is what let one out-of-reach PENDING row block every other row
-        # from resolving, so partial coverage must be reported honestly.
-        now = datetime.now(timezone.utc)
-        rows = [
-            {
-                "trx_id": f"op_{i}",
-                "timestamp": now - timedelta(minutes=i),
-                "op": ["custom_json", {}],
-            }
-            for i in range(5)
-        ]
-        truncated = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=3)
-        self.assertFalse(truncated["complete"])
-        # Walked ops at now-0, now-1, now-2 minutes; coverage starts just past the
-        # oldest one inspected.
-        self.assertIsNotNone(truncated["covered_since"])
-        self.assertGreater(truncated["covered_since"], now - timedelta(minutes=2, seconds=1))
-        self.assertLess(truncated["covered_since"], now - timedelta(minutes=1))
-
-        # Same history, budget above the burst: no longer truncated, and coverage
-        # still reaches only as far back as the walk actually went.
-        sufficient = fetch_recent_chain_issuance_scan(FakeChainIssuer(rows), limit=10)
-        self.assertTrue(sufficient["complete"])
-        self.assertIsNotNone(sufficient["covered_since"])
-        self.assertGreater(
-            sufficient["covered_since"], now - timedelta(minutes=4, seconds=1)
-        )
 
 
 @unittest.skipUnless(_DB_ENGINE is not None, _DB_SKIP_REASON)
@@ -616,40 +485,43 @@ class UnitConversionIssuanceTests(DBTestCase):
         self.assertEqual(row[2], source_trx)
         self.assertEqual(row[3], UNIT_CONVERSION_RATIONALE)
 
-    def test_unit_conversion_issue_trx_does_not_reconcile_duplicate(self):
-        source_trx = "6fda651869153df5fefb8080c1cc985ee155261b"
-        issue_trx = "af4cedd8f982efd512e890912b067a6403e891b7"
+    def test_unit_conversion_pending_is_never_resolved_from_chain(self):
+        # PR #138 matched the whole log against chain history and inserted a
+        # duplicate row per Unit Conversion under rationale 'reconciled'. Nothing
+        # reads chain data into this table any more, and Unit Conversion is
+        # excluded from resolution outright: it has no balance to debit and
+        # nothing retries it, so every verdict would be an economic no-op while a
+        # wrong SUCCESS would permanently deny the member their converted units.
+        self.assertNotIn(UNIT_CONVERSION_RATIONALE, RESOLVABLE_RATIONALES)
         now = datetime.now(timezone.utc)
         log_id = _insert_pending_token_issuance(
             self.conn,
             T_PIK,
             Decimal("10.000"),
             UNIT_CONVERSION_RATIONALE,
-            source_trx_id=source_trx,
+            source_trx_id="6fda651869153df5fefb8080c1cc985ee155261b",
         )
-        _mark_token_issuance_success(self.conn, log_id, issue_trx)
-
-        reconcile_issuances(
-            self.conn,
-            [
-                {
-                    "trx_id": issue_trx,
-                    "recipient": T_PIK,
-                    "units": Decimal("10.000"),
-                    "timestamp": now,
-                }
-            ],
+        self.x(
+            "UPDATE token_issuance_log SET issued_at = %s WHERE id = %s",
+            (now - timedelta(days=60), log_id),
         )
+        with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
+            resolve_pending_issuances(FakeDB2(self.conn))
+        lookup.assert_not_called()
 
-        duplicate_count = self.x(
-            "SELECT COUNT(*) FROM token_issuance_log WHERE trx_id = %s",
-            (issue_trx,),
-        ).fetchone()[0]
-        reconciled_count = self.x(
-            "SELECT COUNT(*) FROM token_issuance_log WHERE rationale = 'reconciled'"
-        ).fetchone()[0]
-        self.assertEqual(int(duplicate_count), 1)
-        self.assertEqual(int(reconciled_count), 0)
+        row = self.x(
+            "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
+        ).fetchone()
+        self.assertEqual(row[0], "PENDING")
+        self.assertEqual(
+            int(
+                self.x(
+                    "SELECT COUNT(*) FROM token_issuance_log "
+                    "WHERE rationale = 'reconciled'"
+                ).fetchone()[0]
+            ),
+            0,
+        )
 
     def test_source_trx_guard_blocks_pending_and_success_not_failure(self):
         # A reprocessed transfer op must not mint the same source transaction
@@ -700,278 +572,10 @@ class SyncTokenholdersTests(DBTestCase):
         self.assertEqual(Decimal(str(liquid)), Decimal("42.000"))
 
 
-class ReconciliationTests(DBTestCase):
-    def test_pending_management_confirmed_keeps_rationale(self):
-        now = datetime.now(timezone.utc)
-        log_id = insert_pending_issuance(
-            self.conn, T_MGMT, Decimal("12.345"), "Management", issued_at=now
-        )
-        reconcile_issuances(
-            self.conn,
-            [
-                {
-                    "trx_id": "chain_mgmt_1",
-                    "recipient": T_MGMT,
-                    "units": Decimal("12.345"),
-                    "timestamp": now + timedelta(seconds=30),
-                }
-            ],
-        )
-        row = self.x(
-            "SELECT status, trx_id, rationale FROM token_issuance_log WHERE id = %s",
-            (log_id,),
-        ).fetchone()
-        self.assertEqual(row[0], "SUCCESS")
-        self.assertEqual(row[1], "chain_mgmt_1")
-        self.assertEqual(row[2], "Management")  # rationale never rewritten
-
-    def test_confirmed_pik_chain_issue_not_attributed_to_management(self):
-        # josephsavage receives BOTH a pik dividend and a Management issuance of the
-        # same amount in one cycle. The pik issuance is already logged SUCCESS with
-        # its real trx_id, so it is excluded; the Management PENDING must match the
-        # *Management* chain op, never the pik one.
-        now = datetime.now(timezone.utc)
-        log_issuance(
-            self.conn,
-            "chain_pik_real",
-            T_MGMT,
-            Decimal("5.000"),
-            "SUCCESS",
-            "pik",
-            issued_at=now - timedelta(minutes=2),
-        )
-        mgmt_id = insert_pending_issuance(
-            self.conn,
-            T_MGMT,
-            Decimal("5.000"),
-            "Management",
-            issued_at=now - timedelta(minutes=1),
-        )
-        chain = [
-            {
-                "trx_id": "chain_pik_real",
-                "recipient": T_MGMT,
-                "units": Decimal("5.000"),
-                "timestamp": now - timedelta(minutes=2),
-            },
-            {
-                "trx_id": "chain_mgmt_real",
-                "recipient": T_MGMT,
-                "units": Decimal("5.000"),
-                "timestamp": now - timedelta(minutes=1),
-            },
-        ]
-        reconcile_issuances(self.conn, chain)
-
-        row = self.x(
-            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (mgmt_id,)
-        ).fetchone()
-        self.assertEqual(row[0], "SUCCESS")
-        self.assertEqual(row[1], "chain_mgmt_real")
-        # Neither chain op should be re-logged as an out-of-band 'reconciled' row.
-        orphans = self.x(
-            "SELECT COUNT(*) FROM token_issuance_log "
-            "WHERE rationale = 'reconciled' AND recipient = %s",
-            (T_MGMT,),
-        ).fetchone()[0]
-        self.assertEqual(int(orphans), 0)
-
-    def test_uncaptured_pik_chain_issue_updates_existing_log(self):
-        # A pik issuance whose on-chain trx_id was not captured (logged 'N/A') must
-        # not be double-logged as an out-of-band 'reconciled' issuance.
-        now = datetime.now(timezone.utc)
-        log_issuance(
-            self.conn,
-            "N/A",
-            T_PIK,
-            Decimal("3.000"),
-            "SUCCESS",
-            "pik",
-            issued_at=now,
-        )
-        chain = [
-            {
-                "trx_id": "chain_pik_uncaptured",
-                "recipient": T_PIK,
-                "units": Decimal("3.000"),
-                "timestamp": now + timedelta(seconds=5),
-            }
-        ]
-        reconcile_issuances(self.conn, chain)
-        updated = self.x(
-            "SELECT COUNT(*) FROM token_issuance_log WHERE trx_id = %s AND rationale = 'pik'",
-            ("chain_pik_uncaptured",),
-        ).fetchone()[0]
-        self.assertEqual(int(updated), 1)
-        reconciled = self.x(
-            "SELECT COUNT(*) FROM token_issuance_log WHERE rationale = 'reconciled'"
-        ).fetchone()[0]
-        self.assertEqual(int(reconciled), 0)
-
-    def test_uncaptured_success_claims_chain_issue_before_pending_row(self):
-        # A SUCCESS row logged 'N/A' and a PENDING row share recipient and units,
-        # and both are in-window for the single chain issue. The chain issue belongs
-        # to the SUCCESS row (it is already on chain); handing it to the PENDING row
-        # would stamp that row with another issuance's trx_id and strand the 'N/A'
-        # row on its placeholder forever.
-        now = datetime.now(timezone.utc)
-        uncaptured = log_issuance(
-            self.conn,
-            "N/A",
-            T_PIK,
-            Decimal("4.000"),
-            "SUCCESS",
-            "pik",
-            issued_at=now - timedelta(minutes=10),
-        )
-        uncaptured_id = self.x(
-            "SELECT id FROM token_issuance_log WHERE trx_id = 'N/A' "
-            "AND recipient = %s AND units = %s",
-            (T_PIK, Decimal("4.000")),
-        ).fetchone()[0]
-        pending_id = insert_pending_issuance(
-            self.conn,
-            T_PIK,
-            Decimal("4.000"),
-            "Pending Balance Conversion",
-            issued_at=now - timedelta(minutes=9),
-        )
-        chain = [
-            {
-                "trx_id": "chain_uncaptured_wins",
-                "recipient": T_PIK,
-                "units": Decimal("4.000"),
-                "timestamp": now - timedelta(minutes=8),
-            }
-        ]
-        reconcile_issuances(self.conn, chain)
-
-        self.assertEqual(
-            self.x(
-                "SELECT trx_id FROM token_issuance_log WHERE id = %s", (uncaptured_id,)
-            ).fetchone()[0],
-            "chain_uncaptured_wins",
-        )
-        # The PENDING row must not have absorbed the same chain issue.
-        pending_row = self.x(
-            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (pending_id,)
-        ).fetchone()
-        self.assertEqual(pending_row[0], "PENDING")
-        self.assertEqual(pending_row[1], "PENDING")
-        # And no chain issue may ever be re-logged as a new row.
-        self.assertEqual(
-            int(
-                self.x(
-                    "SELECT COUNT(*) FROM token_issuance_log WHERE trx_id = %s",
-                    ("chain_uncaptured_wins",),
-                ).fetchone()[0]
-            ),
-            1,
-        )
-
-    def test_uncaptured_pass_leaves_pending_its_own_chain_issue(self):
-        # Mirror of the test above, and the regression guard for the reorder: with
-        # 'N/A' completion running first it must consume only the issue that is
-        # closest to its own row, never sweep the pool. Both rows share recipient
-        # and units and BOTH chain issues fall inside BOTH match windows, so the
-        # separation comes from ordering + proximity, not from disjoint windows.
-        base = datetime.now(timezone.utc) - timedelta(minutes=20)
-        log_issuance(
-            self.conn,
-            "N/A",
-            T_PIK,
-            Decimal("7.000"),
-            "SUCCESS",
-            "pik",
-            issued_at=base,
-        )
-        uncaptured_id = self.x(
-            "SELECT id FROM token_issuance_log WHERE trx_id = 'N/A' "
-            "AND recipient = %s AND units = %s",
-            (T_PIK, Decimal("7.000")),
-        ).fetchone()[0]
-        pending_id = insert_pending_issuance(
-            self.conn,
-            T_PIK,
-            Decimal("7.000"),
-            "Pending Balance Conversion",
-            issued_at=base + timedelta(minutes=3),
-        )
-        chain = [
-            {
-                "trx_id": "chain_for_uncaptured",
-                "recipient": T_PIK,
-                "units": Decimal("7.000"),
-                "timestamp": base + timedelta(minutes=1),
-            },
-            {
-                "trx_id": "chain_for_pending",
-                "recipient": T_PIK,
-                "units": Decimal("7.000"),
-                "timestamp": base + timedelta(minutes=4),
-            },
-        ]
-        reconcile_issuances(self.conn, chain)
-
-        self.assertEqual(
-            self.x(
-                "SELECT trx_id FROM token_issuance_log WHERE id = %s", (uncaptured_id,)
-            ).fetchone()[0],
-            "chain_for_uncaptured",
-        )
-        pending_row = self.x(
-            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (pending_id,)
-        ).fetchone()
-        self.assertEqual(pending_row[0], "SUCCESS")
-        self.assertEqual(pending_row[1], "chain_for_pending")
-        # Two issuances in, two rows out — neither chain op created a third.
-        self.assertEqual(
-            int(
-                self.x(
-                    "SELECT COUNT(*) FROM token_issuance_log "
-                    "WHERE recipient = %s AND units = %s",
-                    (T_PIK, Decimal("7.000")),
-                ).fetchone()[0]
-            ),
-            2,
-        )
-
-    def test_second_chain_issue_cannot_complete_the_same_row_twice(self):
-        # Two in-window chain issues, one uncaptured row. The first completes it;
-        # the second must fall through to the recognise-and-report branch, never
-        # inserting a row. This is the invariant PR #138 violated.
-        base = datetime.now(timezone.utc) - timedelta(minutes=20)
-        log_issuance(
-            self.conn,
-            "N/A",
-            T_PIK,
-            Decimal("8.000"),
-            "SUCCESS",
-            "pik",
-            issued_at=base,
-        )
-        chain = [
-            {
-                "trx_id": "chain_first",
-                "recipient": T_PIK,
-                "units": Decimal("8.000"),
-                "timestamp": base + timedelta(minutes=1),
-            },
-            {
-                "trx_id": "chain_second",
-                "recipient": T_PIK,
-                "units": Decimal("8.000"),
-                "timestamp": base + timedelta(minutes=2),
-            },
-        ]
-        reconcile_issuances(self.conn, chain)
-
-        rows = self.x(
-            "SELECT trx_id FROM token_issuance_log "
-            "WHERE recipient = %s AND units = %s",
-            (T_PIK, Decimal("8.000")),
-        ).fetchall()
-        self.assertEqual([r[0] for r in rows], ["chain_first"])
+class WarnStuckPendingTests(DBTestCase):
+    """A row that resolution could not settle has to be announced: it blocks
+    its (recipient, rationale) in issue_balance_tokens and the symptom is
+    silent — a skipped member raises no error, they just stop being paid."""
 
     def test_warn_stuck_pending_flags_only_old_pending_rows(self):
         # A stuck PENDING row blocks its (recipient, rationale) in
@@ -999,264 +603,6 @@ class ReconciliationTests(DBTestCase):
         # Only the old PENDING row qualifies: recent PENDING and old SUCCESS do not.
         self.assertEqual(warn_stuck_pending(self.conn) - baseline, 1)
 
-    def test_stale_unmatched_pending_stays_pending_without_covered_scan(self):
-        stale_ts = datetime.now(timezone.utc) - timedelta(hours=6)
-        result = self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, error_message, rationale, issued_at)
-            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
-            """,
-            (T_MGMT, Decimal("5.000"), stale_ts),
-        )
-        log_id = result.lastrowid
-        reconcile_issuances(self.conn, [])
-        status = self.x(
-            "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-        ).fetchone()[0]
-        self.assertEqual(status, "PENDING")
-
-    def test_stale_unmatched_pending_marked_failure_when_scan_covers_row(self):
-        stale_ts = datetime.now(timezone.utc) - timedelta(hours=6)
-        result = self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, error_message, rationale, issued_at)
-            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
-            """,
-            (T_MGMT, Decimal("5.000"), stale_ts),
-        )
-        log_id = result.lastrowid
-        # Coverage must span the row's whole possible match window:
-        # [issued_at - MATCH_CLOCK_SKEW, issued_at + CHAIN_MATCH_WINDOW].
-        reconcile_issuances(
-            self.conn,
-            [],
-            covered_since=stale_ts - timedelta(minutes=6),
-            covered_until=stale_ts + timedelta(minutes=31),
-        )
-        status = self.x(
-            "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-        ).fetchone()[0]
-        self.assertEqual(status, "FAILURE")
-
-    def test_recent_unmatched_pending_stays_pending(self):
-        log_id = insert_pending_issuance(self.conn, T_MGMT, Decimal("5.000"), "Management")
-        reconcile_issuances(self.conn, [])
-        status = self.x(
-            "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-        ).fetchone()[0]
-        self.assertEqual(status, "PENDING")
-
-    def test_orphan_chain_issue_reported_not_inserted(self):
-        orphan = {
-            "trx_id": "chain_orphan_1",
-            "recipient": "zz_vt_orphan",
-            "units": Decimal("1.000"),
-            "timestamp": datetime.now(timezone.utc),
-        }
-        reconcile_issuances(self.conn, [orphan])
-        count = self.x(
-            "SELECT COUNT(*) FROM token_issuance_log WHERE trx_id = %s",
-            ("chain_orphan_1",),
-        ).fetchone()[0]
-        self.assertEqual(int(count), 0)
-
-    def test_reconciliation_completes_pik_pending_and_debits_balance(self):
-        now = datetime.now(timezone.utc)
-        self._insert_holder(T_PIK, pik=Decimal("5.000"))
-        log_id = insert_pending_issuance(
-            self.conn, T_PIK, Decimal("5.000"), "pik", issued_at=now
-        )
-
-        reconcile_issuances(
-            self.conn,
-            [
-                {
-                    "trx_id": "chain_pik_reconciled",
-                    "recipient": T_PIK,
-                    "units": Decimal("5.000"),
-                    "timestamp": now + timedelta(seconds=10),
-                }
-            ],
-        )
-
-        row = self.x(
-            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s",
-            (log_id,),
-        ).fetchone()
-        pik = self.x(
-            "SELECT pik FROM tokenholders WHERE member_name = %s", (T_PIK,)
-        ).fetchone()[0]
-        self.assertEqual(row[0], "SUCCESS")
-        self.assertEqual(row[1], "chain_pik_reconciled")
-        self.assertEqual(Decimal(str(pik)), Decimal("0.000"))
-
-    def test_reconciliation_uses_chain_timestamp_not_server_now(self):
-        # An intent hours in the past still matches: only the chain timestamp
-        # relative to the intent timestamp matters, never the server clock.
-        intent_at = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
-        log_id = insert_pending_issuance(
-            self.conn, T_MGMT, Decimal("5.000"), "Management", issued_at=intent_at
-        )
-
-        reconcile_issuances(
-            self.conn,
-            [
-                {
-                    "trx_id": "chain_timestamp_authority",
-                    "recipient": T_MGMT,
-                    "units": Decimal("5.000"),
-                    "timestamp": intent_at + timedelta(minutes=10),
-                }
-            ],
-        )
-
-        row = self.x(
-            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s",
-            (log_id,),
-        ).fetchone()
-        self.assertEqual(row[0], "SUCCESS")
-        self.assertEqual(row[1], "chain_timestamp_authority")
-
-    def test_nearest_timestamp_match_among_management_pending(self):
-        # Two Management PENDING rows of the same amount; the chain op confirms the
-        # one nearest in time, the other stays PENDING.
-        older_ts = datetime.now(timezone.utc) - timedelta(minutes=20)
-        newer_ts = datetime.now(timezone.utc) - timedelta(minutes=1)
-        old_id = self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, error_message, rationale, issued_at)
-            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
-            """,
-            (T_MGMT, Decimal("5.000"), older_ts),
-        ).lastrowid
-        new_id = self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, error_message, rationale, issued_at)
-            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
-            """,
-            (T_MGMT, Decimal("5.000"), newer_ts),
-        ).lastrowid
-
-        reconcile_issuances(
-            self.conn,
-            [
-                {
-                    "trx_id": "chain_nearest_1",
-                    "recipient": T_MGMT,
-                    "units": Decimal("5.000"),
-                    "timestamp": newer_ts + timedelta(seconds=30),
-                }
-            ],
-        )
-
-        rows = self.x(
-            """
-            SELECT id, status, trx_id
-            FROM token_issuance_log
-            WHERE id IN (%s, %s)
-            ORDER BY id
-            """,
-            (old_id, new_id),
-        ).fetchall()
-        self.assertEqual(rows[0][1], "PENDING")
-        self.assertEqual(rows[1][1], "SUCCESS")
-        self.assertEqual(rows[1][2], "chain_nearest_1")
-
-    def test_ambiguous_equal_timestamp_distance_stays_pending(self):
-        # issued_at is a second-precision TIMESTAMP column, so the tie must be
-        # constructed on whole seconds to survive the DB round-trip. Even with
-        # full scan coverage, neither contested row may be resolved or failed.
-        now = datetime.now(timezone.utc).replace(microsecond=0)
-        first_id = self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, error_message, rationale, issued_at)
-            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
-            """,
-            (T_MGMT, Decimal("5.000"), now - timedelta(minutes=1)),
-        ).lastrowid
-        second_id = self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, error_message, rationale, issued_at)
-            VALUES ('PENDING', %s, %s, 'PENDING', NULL, 'Management', %s)
-            """,
-            (T_MGMT, Decimal("5.000"), now + timedelta(minutes=1)),
-        ).lastrowid
-
-        reconcile_issuances(
-            self.conn,
-            [
-                {
-                    "trx_id": "chain_ambiguous_1",
-                    "recipient": T_MGMT,
-                    "units": Decimal("5.000"),
-                    "timestamp": now,
-                }
-            ],
-            covered_since=now - timedelta(hours=1),
-            covered_until=now + timedelta(hours=1),
-        )
-
-        statuses = self.x(
-            """
-            SELECT status
-            FROM token_issuance_log
-            WHERE id IN (%s, %s)
-            ORDER BY id
-            """,
-            (first_id, second_id),
-        ).fetchall()
-        self.assertEqual([row[0] for row in statuses], ["PENDING", "PENDING"])
-
-    def test_contested_pending_not_failed_then_resolves_next_pass(self):
-        # Chain issue X matches intent A (nearest); sibling intent B of the same
-        # recipient+units is contested by X, so a covering scan must NOT fail B
-        # this pass — X may actually be B's broadcast. Once A's SUCCESS records
-        # X's trx_id, the next pass excludes X, proves absence, and fails B, so
-        # a contested row never blocks its member forever.
-        base = datetime.now(timezone.utc).replace(microsecond=0)
-        a_ts = base - timedelta(hours=2)
-        b_ts = a_ts + timedelta(minutes=2)
-        a_id = insert_pending_issuance(
-            self.conn, T_MGMT, Decimal("5.000"), "Management", issued_at=a_ts
-        )
-        b_id = insert_pending_issuance(
-            self.conn, T_MGMT, Decimal("5.000"), "Management", issued_at=b_ts
-        )
-        chain = [
-            {
-                "trx_id": "chain_contested_1",
-                "recipient": T_MGMT,
-                "units": Decimal("5.000"),
-                "timestamp": a_ts + timedelta(seconds=30),
-            }
-        ]
-        coverage = {
-            "covered_since": a_ts - timedelta(minutes=10),
-            "covered_until": base,
-        }
-
-        reconcile_issuances(self.conn, chain, **coverage)
-
-        rows = self.x(
-            "SELECT id, status FROM token_issuance_log WHERE id IN (%s, %s) ORDER BY id",
-            (a_id, b_id),
-        ).fetchall()
-        self.assertEqual(rows[0][1], "SUCCESS")
-        self.assertEqual(rows[1][1], "PENDING")  # contested, not FAILURE
-
-        reconcile_issuances(self.conn, chain, **coverage)
-
-        b_status = self.x(
-            "SELECT status FROM token_issuance_log WHERE id = %s", (b_id,)
-        ).fetchone()[0]
-        self.assertEqual(b_status, "FAILURE")
-
 
 class StuckPendingRecoveryTests(DBTestCase):
     """The block-limit stall: a broadcast rejected with
@@ -1274,7 +620,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         # The direct fix for the reported stall. The 6th custom_json in a block is
         # asserted away during validation, so it can never appear on chain — there
         # is nothing for reconciliation to discover. Failing the row here lets the
-        # next cycle re-issue instead of blocking the member until a chain scan
+        # next cycle re-issue instead of blocking the member until a chain lookup
         # proves an absence that was certain at broadcast time.
         self.x(
             "INSERT INTO tokenholders (member_name, abc_pik) VALUES (%s, %s) "
@@ -1335,45 +681,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             (recipient, units, error, rationale, issued_at),
         ).lastrowid
 
-    def test_out_of_reach_pending_row_does_not_block_reachable_rows(self):
-        # The reported production failure. An ancient PENDING row nobody can
-        # resolve used to make the whole scan "incomplete", which withheld
-        # failure-resolution from EVERY row — so a member whose conversion failed
-        # on the block limit stayed blocked indefinitely, and its error_message
-        # never changed. Coverage is per-row now: the ancient row is simply out of
-        # coverage, and the reachable one still resolves.
-        now = datetime.now(timezone.utc)
-        stalled_at = now - timedelta(days=7)
-        ancient_id = self._pending(
-            T_PIK, Decimal("9.999"), "pik", now - timedelta(days=60), "ancient orphan"
-        )
-        stalled_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            stalled_at,
-            self.BLOCK_LIMIT_ERROR,
-        )
-
-        # Coverage of a scan truncated at its op budget: it reached back 14 days,
-        # not the 60 the ancient row would need.
-        reconcile_issuances(
-            self.conn,
-            [],
-            covered_since=now - timedelta(days=14),
-            covered_until=now - timedelta(minutes=5),
-        )
-
-        rows = dict(
-            self.x(
-                "SELECT id, status FROM token_issuance_log WHERE id IN (%s, %s)",
-                (ancient_id, stalled_id),
-            ).fetchall()
-        )
-        self.assertEqual(rows[stalled_id], "FAILURE")  # unblocked, retries next cycle
-        self.assertEqual(rows[ancient_id], "PENDING")  # out of coverage, untouched
-
-    def test_beyond_scan_row_fails_when_hive_engine_shows_no_issue(self):
+    def test_row_fails_when_hive_engine_shows_no_issue(self):
         now = datetime.now(timezone.utc)
         log_id = self._pending(
             T_HOLDER,
@@ -1385,7 +693,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         with patch(
             "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=[]
         ) as lookup:
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
         self.assertEqual(lookup.call_count, 1)
         self.assertEqual(
             self.x(
@@ -1394,7 +702,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             "FAILURE",
         )
 
-    def test_beyond_scan_row_succeeds_and_debits_balance_on_chain_match(self):
+    def test_row_succeeds_and_debits_balance_on_chain_match(self):
         now = datetime.now(timezone.utc)
         issued_at = now - timedelta(days=60)
         self.x(
@@ -1418,7 +726,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             }
         ]
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
 
         row = self.x(
             "SELECT status, trx_id, rationale FROM token_issuance_log WHERE id = %s",
@@ -1432,6 +740,41 @@ class StuckPendingRecoveryTests(DBTestCase):
             "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_HOLDER,)
         ).fetchone()[0]
         self.assertEqual(Decimal(str(abc)), Decimal("3.766"))
+
+    def test_management_row_resolves_without_touching_any_balance(self):
+        # Management has no accrual column — the log row is its ledger, and the
+        # 10% cap counts SUCCESS + PENDING. Left PENDING the cap still holds, but
+        # settling it is what keeps the audit trail honest; settling it must not
+        # debit pik or abc_pik, which belong to the dividend paths.
+        now = datetime.now(timezone.utc)
+        self._insert_holder(T_MGMT, pik=Decimal("5.000"), abc_pik=Decimal("7.000"))
+        issued_at = now - timedelta(days=60)
+        log_id = self._pending(
+            T_MGMT, Decimal("2.500"), "Management", issued_at, "Read timed out"
+        )
+        found = [
+            {
+                "trx_id": "he_mgmt",
+                "recipient": T_MGMT,
+                "quantity": "2.500",
+                "timestamp": issued_at + timedelta(seconds=20),
+            }
+        ]
+        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
+            resolve_pending_issuances(FakeDB2(self.conn))
+
+        row = self.x(
+            "SELECT status, trx_id, rationale FROM token_issuance_log WHERE id = %s",
+            (log_id,),
+        ).fetchone()
+        self.assertEqual(row[0], "SUCCESS")
+        self.assertEqual(row[1], "he_mgmt")
+        self.assertEqual(row[2], "Management")
+        balances = self.x(
+            "SELECT pik, abc_pik FROM tokenholders WHERE member_name = %s", (T_MGMT,)
+        ).fetchone()
+        self.assertEqual(Decimal(str(balances[0])), Decimal("5.000"))
+        self.assertEqual(Decimal(str(balances[1])), Decimal("7.000"))
 
     def test_uncaptured_sibling_in_the_same_window_leaves_row_pending(self):
         # A SUCCESS row whose broadcast returned no trx_id already has an
@@ -1464,7 +807,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             }
         ]
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
         self.assertEqual(
             self.x(
                 "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
@@ -1484,28 +827,13 @@ class StuckPendingRecoveryTests(DBTestCase):
             self.BLOCK_LIMIT_ERROR,
         )
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
         self.assertEqual(
             self.x(
                 "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
             ).fetchone()[0],
             "PENDING",
         )
-
-    def test_rows_inside_scan_coverage_are_left_to_the_bulk_pass(self):
-        # resolve_pending_beyond_scan is the fallback, not a second opinion: a row
-        # the scan already covers must not get its own Hive Engine request.
-        now = datetime.now(timezone.utc)
-        self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(days=7),
-            self.BLOCK_LIMIT_ERROR,
-        )
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
-        lookup.assert_not_called()
 
     def test_recent_pending_never_resolved_before_its_window_elapses(self):
         # A row whose match window is still open could still land on chain.
@@ -1518,7 +846,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             self.BLOCK_LIMIT_ERROR,
         )
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now + timedelta(days=1))
+            resolve_pending_issuances(FakeDB2(self.conn))
         lookup.assert_not_called()
 
     def test_sweep_fails_stuck_rows_from_their_recorded_error_without_network(self):
@@ -1601,7 +929,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         with patch(
             "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=unrelated
         ):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
 
         row = self.x(
             "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (log_id,)
@@ -1614,28 +942,6 @@ class StuckPendingRecoveryTests(DBTestCase):
         ).fetchone()[0]
         self.assertEqual(Decimal(str(abc)), Decimal("5.000"))
 
-    def test_rows_still_resolve_when_the_scan_proved_no_coverage(self):
-        # covered_since=None means the scan's own history fetch failed. The per-row
-        # lookup does not depend on that scan, so it must still settle rows —
-        # returning early here would let one failing API disable resolution for
-        # everyone, which is the shape of the bug this whole path exists to kill.
-        now = datetime.now(timezone.utc)
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(days=2),
-            "Read timed out",
-        )
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=[]):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), None)
-        self.assertEqual(
-            self.x(
-                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-            ).fetchone()[0],
-            "FAILURE",
-        )
-
     def test_per_pass_lookup_cap_defers_the_rest_to_the_next_cycle(self):
         now = datetime.now(timezone.utc)
         for i in range(4):
@@ -1646,13 +952,11 @@ class StuckPendingRecoveryTests(DBTestCase):
                 now - timedelta(days=60 - i),
                 "Read timed out",
             )
-        with patch("hsbi_token_snapshot.MAX_BEYOND_SCAN_LOOKUPS", 2):
+        with patch("hsbi_token_snapshot.MAX_RESOLUTION_LOOKUPS", 2):
             with patch(
                 "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
             ) as lookup:
-                resolve_pending_beyond_scan(
-                    FakeDB2(self.conn), now - timedelta(days=14)
-                )
+                resolve_pending_issuances(FakeDB2(self.conn))
         self.assertEqual(lookup.call_count, 2)
 
 
@@ -1683,8 +987,8 @@ class StuckPendingRecoveryTests(DBTestCase):
 
     def test_two_rows_sharing_a_window_resolve_instead_of_deadlocking(self):
         # Both rows see both issues, so neither has a single candidate. Deferring
-        # on ambiguity — as the bulk matcher does — deadlocks them: nothing else
-        # ever moves a beyond-scan row, so each row would stay PENDING forever and
+        # on ambiguity deadlocks them: nothing else ever moves these rows, so
+        # each would stay PENDING forever and
         # both members would silently stop being paid, which is the exact symptom
         # this path exists to cure.
         now = datetime.now(timezone.utc)
@@ -1718,7 +1022,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             },
         ]
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
 
         rows = dict(
             self.x(
@@ -1776,7 +1080,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             }
         ]
         with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_beyond_scan(FakeDB2(self.conn), now - timedelta(days=14))
+            resolve_pending_issuances(FakeDB2(self.conn))
 
         self.assertEqual(
             self.x(
@@ -1792,7 +1096,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         )
 
     def test_unresolvable_rows_rotate_so_newer_rows_get_a_turn(self):
-        # Ordering purely by issued_at meant the oldest MAX_BEYOND_SCAN_LOOKUPS
+        # Ordering purely by issued_at meant the oldest MAX_RESOLUTION_LOOKUPS
         # rows consumed every lookup every cycle. If they can never be settled,
         # row N+1 never gets one — the same head-of-line blocking this PR removed
         # elsewhere, just at a threshold of 200 instead of 1.
@@ -1807,21 +1111,17 @@ class StuckPendingRecoveryTests(DBTestCase):
             now - timedelta(days=60),
             "Read timed out",
         )
-        with patch("hsbi_token_snapshot.MAX_BEYOND_SCAN_LOOKUPS", 1):
+        with patch("hsbi_token_snapshot.MAX_RESOLUTION_LOOKUPS", 1):
             with patch(
                 "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
             ) as lookup:
-                resolve_pending_beyond_scan(
-                    FakeDB2(self.conn), now - timedelta(days=14)
-                )
+                resolve_pending_issuances(FakeDB2(self.conn))
                 # Pass 1 spends its single lookup on the oldest row.
                 self.assertEqual(lookup.call_count, 1)
                 self.assertEqual(lookup.call_args[0][0], T_PIK)
 
                 # That row is stamped, so pass 2 reaches the one behind it.
-                resolve_pending_beyond_scan(
-                    FakeDB2(self.conn), now - timedelta(days=14)
-                )
+                resolve_pending_issuances(FakeDB2(self.conn))
                 self.assertEqual(lookup.call_count, 2)
                 self.assertEqual(lookup.call_args[0][0], T_HOLDER)
 
@@ -1855,9 +1155,8 @@ class StuckPendingRecoveryTests(DBTestCase):
             with patch(
                 "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
             ) as lookup:
-                resolve_pending_beyond_scan(
+                resolve_pending_issuances(
                     FakeDB2(self.conn),
-                    now - timedelta(days=14),
                     time_budget=timedelta(seconds=10),
                 )
         self.assertEqual(lookup.call_count, 1)
@@ -1877,9 +1176,8 @@ class StuckPendingRecoveryTests(DBTestCase):
         with patch(
             "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
         ) as lookup:
-            resolve_pending_beyond_scan(
-                FakeDB2(self.conn),
-                now - timedelta(days=14),
+            resolve_pending_issuances(
+                    FakeDB2(self.conn),
                 issuer_account="zz_other_issuer",
                 token_symbol="OTHER",
             )
@@ -1897,11 +1195,14 @@ class EngineHistoryLookupTests(unittest.TestCase):
         response.json.return_value = payload
         return response
 
-    def _issue_row(self, trx_id):
+    def _issue_row(self, trx_id, symbol="HSBIDAO"):
+        # Field-for-field the shape history.hive-engine.com returns for a
+        # tokens_issue op, `symbol` included.
         return {
             "operation": "tokens_issue",
             "to": "zz_recipient",
             "issuer": "hivesbi",
+            "symbol": symbol,
             "transactionId": trx_id,
             "quantity": "1.234",
             "timestamp": 1700000000,
@@ -1941,6 +1242,25 @@ class EngineHistoryLookupTests(unittest.TestCase):
         self.assertEqual(get.call_args_list[1].kwargs["params"]["offset"], page_size)
         self.assertEqual(get.call_args_list[0].kwargs["params"]["limit"], page_size)
         self.assertIn("trx_the_real_one", [i["trx_id"] for i in issues])
+
+    def test_another_symbol_is_not_read_as_our_issuance(self):
+        # `symbol` is a query param, and the history endpoint is picked from a
+        # beacon at runtime — the same reason the caller re-checks the time
+        # window locally. A node that ignored it would hand back the recipient's
+        # other Hive Engine tokens; one carrying the same numeric quantity would
+        # mark the row SUCCESS and debit a balance for HSBIDAO never received.
+        with patch.object(
+            issue_module.httpx,
+            "get",
+            return_value=self._response(
+                payload=[
+                    self._issue_row("trx_other_token", symbol="SWAP.HIVE"),
+                    self._issue_row("trx_ours"),
+                ]
+            ),
+        ):
+            issues = self._call()
+        self.assertEqual([i["trx_id"] for i in issues], ["trx_ours"])
 
     def test_unpageable_result_reads_as_unknown_not_absence(self):
         page = [self._issue_row(f"trx_{i}") for i in range(issue_module.HISTORY_PAGE_LIMIT)]

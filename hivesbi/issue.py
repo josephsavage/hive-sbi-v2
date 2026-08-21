@@ -246,7 +246,7 @@ HISTORY_PAGE_LIMIT = 500
 # 35-minute window for one recipient and one symbol; needing more than this many
 # pages means the response cannot be trusted to be complete.
 MAX_HISTORY_PAGES = 20
-# Kept well under the old 30s: resolve_pending_beyond_scan runs these one after
+# Kept well under the old 30s: resolve_pending_issuances runs these one after
 # another inside a strictly sequential pipeline, so a hung node must not be able
 # to hold the whole run for minutes at a time.
 HISTORY_REQUEST_TIMEOUT = 10.0
@@ -261,7 +261,7 @@ def get_history_url() -> str:
 
     `Api()` builds an RPC pool and consults the beacon (measured at ~1.4s cold),
     and the value never changes within a run — so constructing one per stuck row,
-    as this module used to, paid that cost MAX_BEYOND_SCAN_LOOKUPS times for a
+    as this module used to, paid that cost MAX_RESOLUTION_LOOKUPS times for a
     constant.
     """
     global _history_url_cache
@@ -303,11 +303,12 @@ def fetch_issues_to_recipient(
 ):
     """Hive Engine `tokens_issue` ops received by one account in a time window.
 
-    Answers "did this specific issuance reach the chain?" in one or two requests,
-    where walking the issuer's own custom_json history costs tens of thousands of
-    ops. Because the query is scoped to one recipient, one symbol and a
-    35-minute window, its cost does not grow with how long a row has been stuck —
-    which is what makes an old PENDING row resolvable at all.
+Answers "did this specific issuance reach the chain?" — the only question
+    resolution needs answered — in one or two requests, where walking the issuer's
+    own custom_json history costs tens of thousands of ops. Because the query is
+    scoped to one recipient, one symbol and a 35-minute window, its cost does not
+    grow with how long a row has been stuck, which is what makes an old PENDING
+    row resolvable at all.
 
     `start` and `end` are timezone-aware datetimes. Returns a list of dicts with
     trx_id / recipient / quantity / timestamp, or None when the lookup could not
@@ -354,6 +355,13 @@ def fetch_issues_to_recipient(
         if row.get("to") != recipient:
             continue
         if row.get("issuer") != issuer_account:
+            continue
+        # Re-checked locally for the same reason the caller re-checks the time
+        # window: the history endpoint comes from a beacon at runtime, and a node
+        # that ignored `symbol` would hand back the recipient's other Hive Engine
+        # tokens. One of those carrying the same numeric quantity would mark the
+        # row SUCCESS and debit a balance for HSBIDAO the member never received.
+        if str(row.get("symbol", "")).upper() != token_symbol:
             continue
         trx_id = row.get("transactionId")
         quantity = row.get("quantity")
