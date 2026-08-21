@@ -38,14 +38,12 @@ from hivesbi.parse_hist_op import (
     _mark_token_issuance_success,
 )
 from hsbi_token_snapshot import (
-    RESOLVABLE_RATIONALES,
     TOKEN_PRECISION,
     calculate_management_issue_amount,
     insert_pending_issuance,
     issue_balance_tokens,
     issue_management_tokens,
     log_issuance,
-    resolve_pending_issuances,
     sync_tokenholders,
     warn_stuck_pending,
 )
@@ -162,6 +160,19 @@ class PureLogicTests(unittest.TestCase):
                 "custom json operation(s) this block."
             )
         )
+
+    def test_no_chain_history_client_is_reachable(self):
+        # Nothing may settle a token outcome from a runtime-chosen node's answer.
+        # PR #138 scanned the issuer's whole custom_json history and duplicated
+        # every Unit Conversion row; #140's first draft narrowed that to a per-row
+        # Hive Engine lookup, which no PENDING row prod has ever produced could
+        # use. Both are gone. If a lookup helper reappears, this fails and THE
+        # REMIT in hsbi_token_snapshot gets re-read before it goes any further.
+        for name in ("fetch_issues_to_recipient", "get_history_url", "httpx"):
+            self.assertFalse(
+                hasattr(issue_module, name),
+                f"hivesbi.issue.{name} is back; see THE REMIT before keeping it",
+            )
 
     def test_ambiguous_errors_are_not_treated_as_never_broadcast(self):
         # These may have reached the chain; assuming failure would double-issue.
@@ -353,7 +364,7 @@ class ImmediateBalanceIssuanceTests(DBTestCase):
     def test_success_zeroes_balance_and_logs_success(self):
         self._insert_holder(T_PIK, pik=Decimal("5.000"))
         issuer = FakeIssuer(trx_id="chain_pik_ok")
-        issue_balance_tokens(FakeDB2(self.conn), issuer, "pik", "pik")
+        issue_balance_tokens(FakeDB2(self.conn), issuer, "pik")
 
         self.assertEqual(issuer.calls, [(T_PIK, 5.0)])
         pik = self.x(
@@ -371,7 +382,7 @@ class ImmediateBalanceIssuanceTests(DBTestCase):
     def test_failure_keeps_balance_and_leaves_pending_for_reconciliation(self):
         self._insert_holder(T_PIK, pik=Decimal("5.000"))
         issuer = FakeIssuer(fail=True)
-        issue_balance_tokens(FakeDB2(self.conn), issuer, "pik", "pik")
+        issue_balance_tokens(FakeDB2(self.conn), issuer, "pik")
 
         pik = self.x(
             "SELECT pik FROM tokenholders WHERE member_name = %s", (T_PIK,)
@@ -398,7 +409,7 @@ class ImmediateBalanceIssuanceTests(DBTestCase):
         insert_pending_issuance(self.conn, T_PIK, Decimal("5.000"), "pik")
         issuer = FakeIssuer(trx_id="chain_should_not_issue")
 
-        issue_balance_tokens(FakeDB2(self.conn), issuer, "pik", "pik")
+        issue_balance_tokens(FakeDB2(self.conn), issuer, "pik")
 
         self.assertEqual(issuer.calls, [])
 
@@ -406,7 +417,7 @@ class ImmediateBalanceIssuanceTests(DBTestCase):
         self._insert_holder(T_PIK, abc_pik=Decimal("3.000"))
         issuer = FakeIssuer(trx_id="chain_abc_ok")
         issue_balance_tokens(
-            FakeDB2(self.conn), issuer, "Pending Balance Conversion", "abc_pik"
+            FakeDB2(self.conn), issuer, "Pending Balance Conversion"
         )
         abc = self.x(
             "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_PIK,)
@@ -484,44 +495,6 @@ class UnitConversionIssuanceTests(DBTestCase):
         self.assertEqual(row[1], issue_trx)
         self.assertEqual(row[2], source_trx)
         self.assertEqual(row[3], UNIT_CONVERSION_RATIONALE)
-
-    def test_unit_conversion_pending_is_never_resolved_from_chain(self):
-        # PR #138 matched the whole log against chain history and inserted a
-        # duplicate row per Unit Conversion under rationale 'reconciled'. Nothing
-        # reads chain data into this table any more, and Unit Conversion is
-        # excluded from resolution outright: it has no balance to debit and
-        # nothing retries it, so every verdict would be an economic no-op while a
-        # wrong SUCCESS would permanently deny the member their converted units.
-        self.assertNotIn(UNIT_CONVERSION_RATIONALE, RESOLVABLE_RATIONALES)
-        now = datetime.now(timezone.utc)
-        log_id = _insert_pending_token_issuance(
-            self.conn,
-            T_PIK,
-            Decimal("10.000"),
-            UNIT_CONVERSION_RATIONALE,
-            source_trx_id="6fda651869153df5fefb8080c1cc985ee155261b",
-        )
-        self.x(
-            "UPDATE token_issuance_log SET issued_at = %s WHERE id = %s",
-            (now - timedelta(days=60), log_id),
-        )
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            resolve_pending_issuances(FakeDB2(self.conn))
-        lookup.assert_not_called()
-
-        row = self.x(
-            "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-        ).fetchone()
-        self.assertEqual(row[0], "PENDING")
-        self.assertEqual(
-            int(
-                self.x(
-                    "SELECT COUNT(*) FROM token_issuance_log "
-                    "WHERE rationale = 'reconciled'"
-                ).fetchone()[0]
-            ),
-            0,
-        )
 
     def test_source_trx_guard_blocks_pending_and_success_not_failure(self):
         # A reprocessed transfer op must not mint the same source transaction
@@ -608,7 +581,11 @@ class StuckPendingRecoveryTests(DBTestCase):
     """The block-limit stall: a broadcast rejected with
     "Account hivesbi already submitted 5 custom json operation(s) this block"
     leaves a PENDING row, and that row blocks its member in issue_balance_tokens
-    until reconciliation resolves it.
+    until something proves the broadcast's fate.
+
+    Only one thing does that automatically, and it reads the error already stored
+    on the row. A row whose error proves nothing stays PENDING for an operator, so
+    these tests fix which errors count as proof and which do not.
     """
 
     BLOCK_LIMIT_ERROR = (
@@ -629,7 +606,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         )
         issuer = FakeIssuer(fail=True, error=self.BLOCK_LIMIT_ERROR)
         issue_balance_tokens(
-            FakeDB2(self.conn), issuer, "Pending Balance Conversion", "abc_pik"
+            FakeDB2(self.conn), issuer, "Pending Balance Conversion"
         )
 
         row = self.x(
@@ -648,7 +625,7 @@ class StuckPendingRecoveryTests(DBTestCase):
         # Next cycle: no PENDING row blocks the member, so it is attempted again.
         retry_issuer = FakeIssuer(trx_id="chain_retry_ok")
         issue_balance_tokens(
-            FakeDB2(self.conn), retry_issuer, "Pending Balance Conversion", "abc_pik"
+            FakeDB2(self.conn), retry_issuer, "Pending Balance Conversion"
         )
         self.assertEqual(retry_issuer.calls, [(T_HOLDER, 1.234)])
         abc_after = self.x(
@@ -657,8 +634,9 @@ class StuckPendingRecoveryTests(DBTestCase):
         self.assertEqual(Decimal(str(abc_after)), Decimal("0.000"))
 
     def test_ambiguous_broadcast_error_still_stays_pending(self):
-        # Only provably-rejected errors may be failed at broadcast time; a timeout
-        # may still have landed, so it must wait for chain reconciliation.
+        # Only provably-rejected errors may be failed at broadcast time. A timeout
+        # may still have landed, and failing it would mint the same tokens twice,
+        # so the row is held PENDING for an operator instead.
         log_id = insert_pending_issuance(
             self.conn, T_HOLDER, Decimal("1.234"), "Pending Balance Conversion"
         )
@@ -681,179 +659,11 @@ class StuckPendingRecoveryTests(DBTestCase):
             (recipient, units, error, rationale, issued_at),
         ).lastrowid
 
-    def test_row_fails_when_hive_engine_shows_no_issue(self):
-        now = datetime.now(timezone.utc)
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(days=60),
-            self.BLOCK_LIMIT_ERROR,
-        )
-        with patch(
-            "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=[]
-        ) as lookup:
-            resolve_pending_issuances(FakeDB2(self.conn))
-        self.assertEqual(lookup.call_count, 1)
-        self.assertEqual(
-            self.x(
-                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-            ).fetchone()[0],
-            "FAILURE",
-        )
-
-    def test_row_succeeds_and_debits_balance_on_chain_match(self):
-        now = datetime.now(timezone.utc)
-        issued_at = now - timedelta(days=60)
-        self.x(
-            "INSERT INTO tokenholders (member_name, abc_pik) VALUES (%s, %s) "
-            "ON DUPLICATE KEY UPDATE abc_pik = VALUES(abc_pik)",
-            (T_HOLDER, Decimal("5.000")),
-        )
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            issued_at,
-            self.BLOCK_LIMIT_ERROR,
-        )
-        found = [
-            {
-                "trx_id": "he_chain_1",
-                "recipient": T_HOLDER,
-                "quantity": "1.234",
-                "timestamp": issued_at + timedelta(seconds=20),
-            }
-        ]
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_issuances(FakeDB2(self.conn))
-
-        row = self.x(
-            "SELECT status, trx_id, rationale FROM token_issuance_log WHERE id = %s",
-            (log_id,),
-        ).fetchone()
-        self.assertEqual(row[0], "SUCCESS")
-        self.assertEqual(row[1], "he_chain_1")
-        self.assertEqual(row[2], "Pending Balance Conversion")
-        # The balance must be debited exactly as a live issuance would have.
-        abc = self.x(
-            "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_HOLDER,)
-        ).fetchone()[0]
-        self.assertEqual(Decimal(str(abc)), Decimal("3.766"))
-
-    def test_management_row_resolves_without_touching_any_balance(self):
-        # Management has no accrual column — the log row is its ledger, and the
-        # 10% cap counts SUCCESS + PENDING. Left PENDING the cap still holds, but
-        # settling it is what keeps the audit trail honest; settling it must not
-        # debit pik or abc_pik, which belong to the dividend paths.
-        now = datetime.now(timezone.utc)
-        self._insert_holder(T_MGMT, pik=Decimal("5.000"), abc_pik=Decimal("7.000"))
-        issued_at = now - timedelta(days=60)
-        log_id = self._pending(
-            T_MGMT, Decimal("2.500"), "Management", issued_at, "Read timed out"
-        )
-        found = [
-            {
-                "trx_id": "he_mgmt",
-                "recipient": T_MGMT,
-                "quantity": "2.500",
-                "timestamp": issued_at + timedelta(seconds=20),
-            }
-        ]
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_issuances(FakeDB2(self.conn))
-
-        row = self.x(
-            "SELECT status, trx_id, rationale FROM token_issuance_log WHERE id = %s",
-            (log_id,),
-        ).fetchone()
-        self.assertEqual(row[0], "SUCCESS")
-        self.assertEqual(row[1], "he_mgmt")
-        self.assertEqual(row[2], "Management")
-        balances = self.x(
-            "SELECT pik, abc_pik FROM tokenholders WHERE member_name = %s", (T_MGMT,)
-        ).fetchone()
-        self.assertEqual(Decimal(str(balances[0])), Decimal("5.000"))
-        self.assertEqual(Decimal(str(balances[1])), Decimal("7.000"))
-
-    def test_uncaptured_sibling_in_the_same_window_leaves_row_pending(self):
-        # A SUCCESS row whose broadcast returned no trx_id already has an
-        # unidentified claim on an issue in this window. Handing that issue to the
-        # PENDING row would debit a balance against someone else's issuance.
-        now = datetime.now(timezone.utc)
-        issued_at = now - timedelta(days=60)
-        log_issuance(
-            self.conn,
-            "N/A",
-            T_HOLDER,
-            Decimal("1.234"),
-            "SUCCESS",
-            "pik",
-            issued_at=issued_at - timedelta(minutes=1),
-        )
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            issued_at,
-            self.BLOCK_LIMIT_ERROR,
-        )
-        found = [
-            {
-                "trx_id": "he_chain_ambig",
-                "recipient": T_HOLDER,
-                "quantity": "1.234",
-                "timestamp": issued_at + timedelta(seconds=20),
-            }
-        ]
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_issuances(FakeDB2(self.conn))
-        self.assertEqual(
-            self.x(
-                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-            ).fetchone()[0],
-            "PENDING",
-        )
-
-    def test_untrusted_hive_engine_lookup_leaves_row_pending(self):
-        # None means "could not be trusted". Failing the row on a transport error
-        # would re-issue tokens that may already exist on chain.
-        now = datetime.now(timezone.utc)
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(days=60),
-            self.BLOCK_LIMIT_ERROR,
-        )
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None):
-            resolve_pending_issuances(FakeDB2(self.conn))
-        self.assertEqual(
-            self.x(
-                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-            ).fetchone()[0],
-            "PENDING",
-        )
-
-    def test_recent_pending_never_resolved_before_its_window_elapses(self):
-        # A row whose match window is still open could still land on chain.
-        now = datetime.now(timezone.utc)
-        self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(minutes=2),
-            self.BLOCK_LIMIT_ERROR,
-        )
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            resolve_pending_issuances(FakeDB2(self.conn))
-        lookup.assert_not_called()
-
-    def test_sweep_fails_stuck_rows_from_their_recorded_error_without_network(self):
-        # The cheap resolution: record_pending_error already stored the proof of
-        # non-inclusion on the row, so a row stuck from before record_broadcast_error
-        # existed can be failed by reading its own error_message. No chain scan, no
-        # Hive Engine request, no widened lookback.
+    def test_sweep_fails_stuck_rows_from_their_recorded_error(self):
+        # The only automatic resolution there is. record_pending_error already
+        # stored the proof of non-inclusion on the row, so a row stuck from before
+        # record_broadcast_error existed can be failed by reading its own
+        # error_message: no chain scan, no Hive Engine request, no lookback.
         now = datetime.now(timezone.utc)
         stuck_id = self._pending(
             T_HOLDER,
@@ -862,10 +672,7 @@ class StuckPendingRecoveryTests(DBTestCase):
             now - timedelta(days=60),
             self.BLOCK_LIMIT_ERROR,
         )
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient") as lookup:
-            failed = fail_pending_with_proven_non_inclusion(self.conn)
-        lookup.assert_not_called()
-        self.assertEqual(failed, 1)
+        self.assertEqual(fail_pending_with_proven_non_inclusion(self.conn), 1)
 
         row = self.x(
             "SELECT status, error_message FROM token_issuance_log WHERE id = %s",
@@ -878,7 +685,7 @@ class StuckPendingRecoveryTests(DBTestCase):
     def test_sweep_leaves_rows_that_carry_no_proof_of_their_fate(self):
         # A timeout may have landed, and a row with no error at all died between
         # the write-ahead insert and either outcome write. Neither proves anything,
-        # so both must wait for chain evidence.
+        # so both are held for an operator rather than guessed at.
         now = datetime.now(timezone.utc)
         ambiguous_id = self._pending(
             T_HOLDER, Decimal("1.234"), "Pending Balance Conversion",
@@ -897,68 +704,6 @@ class StuckPendingRecoveryTests(DBTestCase):
         )
         self.assertEqual(statuses[ambiguous_id], "PENDING")
         self.assertEqual(statuses[silent_id], "PENDING")
-
-    def test_issue_outside_the_rows_window_is_not_a_candidate(self):
-        # Window scoping is re-checked locally instead of trusted to the remote
-        # timestampStart/timestampEnd. If a history node ignored those params it
-        # would return the recipient's most recent issues; matching one of them
-        # would debit a balance against an issuance never made for this row.
-        now = datetime.now(timezone.utc)
-        issued_at = now - timedelta(days=60)
-        self.x(
-            "INSERT INTO tokenholders (member_name, abc_pik) VALUES (%s, %s) "
-            "ON DUPLICATE KEY UPDATE abc_pik = VALUES(abc_pik)",
-            (T_HOLDER, Decimal("5.000")),
-        )
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            issued_at,
-            "Read timed out",
-        )
-        # Same recipient, same amount, unlogged trx — but issued days later.
-        unrelated = [
-            {
-                "trx_id": "he_recent_unrelated",
-                "recipient": T_HOLDER,
-                "quantity": "1.234",
-                "timestamp": issued_at + timedelta(days=3),
-            }
-        ]
-        with patch(
-            "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=unrelated
-        ):
-            resolve_pending_issuances(FakeDB2(self.conn))
-
-        row = self.x(
-            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (log_id,)
-        ).fetchone()
-        self.assertEqual(row[0], "FAILURE")
-        self.assertNotEqual(row[1], "he_recent_unrelated")
-        # Balance untouched: nothing was proven to have been issued.
-        abc = self.x(
-            "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_HOLDER,)
-        ).fetchone()[0]
-        self.assertEqual(Decimal(str(abc)), Decimal("5.000"))
-
-    def test_per_pass_lookup_cap_defers_the_rest_to_the_next_cycle(self):
-        now = datetime.now(timezone.utc)
-        for i in range(4):
-            self._pending(
-                T_HOLDER,
-                Decimal("1.234"),
-                "Pending Balance Conversion",
-                now - timedelta(days=60 - i),
-                "Read timed out",
-            )
-        with patch("hsbi_token_snapshot.MAX_RESOLUTION_LOOKUPS", 2):
-            with patch(
-                "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
-            ) as lookup:
-                resolve_pending_issuances(FakeDB2(self.conn))
-        self.assertEqual(lookup.call_count, 2)
-
 
     def test_sweep_does_not_read_marker_underscores_as_sql_wildcards(self):
         # The sweep used to build `error_message LIKE '%HIVE_CUSTOM_OP_BLOCK_LIMIT%'`,
@@ -984,331 +729,6 @@ class StuckPendingRecoveryTests(DBTestCase):
             ).fetchone()[0],
             "PENDING",
         )
-
-    def test_two_rows_sharing_a_window_resolve_instead_of_deadlocking(self):
-        # Both rows see both issues, so neither has a single candidate. Deferring
-        # on ambiguity deadlocks them: nothing else ever moves these rows, so
-        # each would stay PENDING forever and
-        # both members would silently stop being paid, which is the exact symptom
-        # this path exists to cure.
-        now = datetime.now(timezone.utc)
-        issued_at = now - timedelta(days=60)
-        for column, value in (("pik", Decimal("5.000")), ("abc_pik", Decimal("5.000"))):
-            self.x(
-                f"INSERT INTO tokenholders (member_name, {column}) VALUES (%s, %s) "
-                f"ON DUPLICATE KEY UPDATE {column} = VALUES({column})",
-                (T_HOLDER, value),
-            )
-        a_id = self._pending(T_HOLDER, Decimal("1.234"), "pik", issued_at, "Read timed out")
-        b_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            issued_at + timedelta(minutes=2),
-            "Read timed out",
-        )
-        found = [
-            {
-                "trx_id": "he_share_a",
-                "recipient": T_HOLDER,
-                "quantity": "1.234",
-                "timestamp": issued_at + timedelta(seconds=30),
-            },
-            {
-                "trx_id": "he_share_b",
-                "recipient": T_HOLDER,
-                "quantity": "1.234",
-                "timestamp": issued_at + timedelta(minutes=2, seconds=30),
-            },
-        ]
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_issuances(FakeDB2(self.conn))
-
-        rows = dict(
-            self.x(
-                "SELECT id, trx_id FROM token_issuance_log WHERE id IN (%s, %s)",
-                (a_id, b_id),
-            ).fetchall()
-        )
-        statuses = dict(
-            self.x(
-                "SELECT id, status FROM token_issuance_log WHERE id IN (%s, %s)",
-                (a_id, b_id),
-            ).fetchall()
-        )
-        self.assertEqual(statuses[a_id], "SUCCESS")
-        self.assertEqual(statuses[b_id], "SUCCESS")
-        # Proximity assigns each row the issue nearest its own intent timestamp,
-        # and each issue is claimed exactly once.
-        self.assertEqual(rows[a_id], "he_share_a")
-        self.assertEqual(rows[b_id], "he_share_b")
-
-    def test_uncaptured_sibling_just_outside_our_window_still_blocks(self):
-        # The sibling's claim reaches [its issued_at - skew, its issued_at +
-        # window], so a sibling 33 minutes earlier still overlaps this row's
-        # window. Scoping the guard to CHAIN_MATCH_WINDOW alone missed it, handed
-        # the shared issue to this row, and debited a balance for tokens issued
-        # against the sibling instead.
-        now = datetime.now(timezone.utc)
-        issued_at = now - timedelta(days=60)
-        self.x(
-            "INSERT INTO tokenholders (member_name, abc_pik) VALUES (%s, %s) "
-            "ON DUPLICATE KEY UPDATE abc_pik = VALUES(abc_pik)",
-            (T_HOLDER, Decimal("5.000")),
-        )
-        self.x(
-            """
-            INSERT INTO token_issuance_log
-                (trx_id, recipient, units, status, rationale, issued_at)
-            VALUES ('N/A', %s, %s, 'SUCCESS', 'pik', %s)
-            """,
-            (T_HOLDER, Decimal("1.234"), issued_at - timedelta(minutes=33)),
-        )
-        log_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            issued_at,
-            "Read timed out",
-        )
-        found = [
-            {
-                "trx_id": "he_shared_with_sibling",
-                "recipient": T_HOLDER,
-                "quantity": "1.234",
-                "timestamp": issued_at + timedelta(seconds=10),
-            }
-        ]
-        with patch("hsbi_token_snapshot.fetch_issues_to_recipient", return_value=found):
-            resolve_pending_issuances(FakeDB2(self.conn))
-
-        self.assertEqual(
-            self.x(
-                "SELECT status FROM token_issuance_log WHERE id = %s", (log_id,)
-            ).fetchone()[0],
-            "PENDING",
-        )
-        self.assertEqual(
-            self.x(
-                "SELECT abc_pik FROM tokenholders WHERE member_name = %s", (T_HOLDER,)
-            ).fetchone()[0],
-            Decimal("5.000"),
-        )
-
-    def test_unresolvable_rows_rotate_so_newer_rows_get_a_turn(self):
-        # Ordering purely by issued_at meant the oldest MAX_RESOLUTION_LOOKUPS
-        # rows consumed every lookup every cycle. If they can never be settled,
-        # row N+1 never gets one — the same head-of-line blocking this PR removed
-        # elsewhere, just at a threshold of 200 instead of 1.
-        now = datetime.now(timezone.utc)
-        old_id = self._pending(
-            T_PIK, Decimal("9.999"), "pik", now - timedelta(days=90), "Read timed out"
-        )
-        newer_id = self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(days=60),
-            "Read timed out",
-        )
-        with patch("hsbi_token_snapshot.MAX_RESOLUTION_LOOKUPS", 1):
-            with patch(
-                "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
-            ) as lookup:
-                resolve_pending_issuances(FakeDB2(self.conn))
-                # Pass 1 spends its single lookup on the oldest row.
-                self.assertEqual(lookup.call_count, 1)
-                self.assertEqual(lookup.call_args[0][0], T_PIK)
-
-                # That row is stamped, so pass 2 reaches the one behind it.
-                resolve_pending_issuances(FakeDB2(self.conn))
-                self.assertEqual(lookup.call_count, 2)
-                self.assertEqual(lookup.call_args[0][0], T_HOLDER)
-
-        stamps = dict(
-            self.x(
-                "SELECT id, last_resolution_attempt FROM token_issuance_log "
-                "WHERE id IN (%s, %s)",
-                (old_id, newer_id),
-            ).fetchall()
-        )
-        self.assertIsNotNone(stamps[old_id])
-        self.assertIsNotNone(stamps[newer_id])
-
-    def test_pass_stops_at_its_time_budget(self):
-        # The row cap bounds requests, not time. A history node that hangs rather
-        # than errors costs the full timeout per row, and sbirunner.sh is
-        # sequential, so an unbounded pass eats the voting window of every job
-        # downstream.
-        now = datetime.now(timezone.utc)
-        for i in range(3):
-            self._pending(
-                T_HOLDER,
-                Decimal(f"{i + 1}.000"),
-                "Pending Balance Conversion",
-                now - timedelta(days=60 + i),
-                "Read timed out",
-            )
-        # Clock jumps past the budget after the first row is attempted.
-        clock = iter([0.0, 0.0, 999.0])
-        with patch("hsbi_token_snapshot.time.monotonic", lambda: next(clock)):
-            with patch(
-                "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
-            ) as lookup:
-                resolve_pending_issuances(
-                    FakeDB2(self.conn),
-                    time_budget=timedelta(seconds=10),
-                )
-        self.assertEqual(lookup.call_count, 1)
-
-    def test_lookup_is_scoped_to_the_issuers_own_symbol(self):
-        # The account name was forwarded but the symbol was not, so a non-HSBIDAO
-        # issuer would have had its rows checked against HSBIDAO history, found
-        # nothing, and failed every one of them — re-issuing the full amount.
-        now = datetime.now(timezone.utc)
-        self._pending(
-            T_HOLDER,
-            Decimal("1.234"),
-            "Pending Balance Conversion",
-            now - timedelta(days=60),
-            "Read timed out",
-        )
-        with patch(
-            "hsbi_token_snapshot.fetch_issues_to_recipient", return_value=None
-        ) as lookup:
-            resolve_pending_issuances(
-                    FakeDB2(self.conn),
-                issuer_account="zz_other_issuer",
-                token_symbol="OTHER",
-            )
-        self.assertEqual(lookup.call_args.kwargs["symbol"], "OTHER")
-        self.assertEqual(lookup.call_args.kwargs["issuer_account"], "zz_other_issuer")
-
-
-class EngineHistoryLookupTests(unittest.TestCase):
-    """fetch_issues_to_recipient answers "did this reach the chain?" — so a
-    truncated or transient response must read as unknown, never as absence."""
-
-    def _response(self, status_code=200, payload=None):
-        response = unittest.mock.Mock()
-        response.status_code = status_code
-        response.json.return_value = payload
-        return response
-
-    def _issue_row(self, trx_id, symbol="HSBIDAO"):
-        # Field-for-field the shape history.hive-engine.com returns for a
-        # tokens_issue op, `symbol` included.
-        return {
-            "operation": "tokens_issue",
-            "to": "zz_recipient",
-            "issuer": "hivesbi",
-            "symbol": symbol,
-            "transactionId": trx_id,
-            "quantity": "1.234",
-            "timestamp": 1700000000,
-        }
-
-    def _call(self):
-        start = datetime.now(timezone.utc) - timedelta(minutes=5)
-        end = datetime.now(timezone.utc)
-        return issue_module.fetch_issues_to_recipient("zz_recipient", start, end)
-
-    def setUp(self):
-        patcher = patch.object(
-            issue_module, "get_history_url", return_value="https://he.example/"
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_full_page_is_paged_through_not_treated_as_complete(self):
-        # The endpoint silently clamps `limit` to 500 — asking for 1000 returns
-        # exactly 500 rows with no error and no truncation indicator. A recipient
-        # with more than one page of symbol activity would have had the real
-        # issue fall past the cut, be marked FAILURE, and be re-issued.
-        page_size = issue_module.HISTORY_PAGE_LIMIT
-        first = [self._issue_row(f"trx_{i}") for i in range(page_size)]
-        second = [self._issue_row("trx_the_real_one")]
-        with patch.object(
-            issue_module.httpx,
-            "get",
-            side_effect=[self._response(payload=first), self._response(payload=second)],
-        ) as get:
-            issues = issue_module.fetch_issues_to_recipient(
-                "zz_recipient",
-                datetime.now(timezone.utc) - timedelta(minutes=5),
-                datetime.now(timezone.utc),
-            )
-        self.assertEqual(get.call_count, 2)
-        self.assertEqual(get.call_args_list[1].kwargs["params"]["offset"], page_size)
-        self.assertEqual(get.call_args_list[0].kwargs["params"]["limit"], page_size)
-        self.assertIn("trx_the_real_one", [i["trx_id"] for i in issues])
-
-    def test_another_symbol_is_not_read_as_our_issuance(self):
-        # `symbol` is a query param, and the history endpoint is picked from a
-        # beacon at runtime — the same reason the caller re-checks the time
-        # window locally. A node that ignored it would hand back the recipient's
-        # other Hive Engine tokens; one carrying the same numeric quantity would
-        # mark the row SUCCESS and debit a balance for HSBIDAO never received.
-        with patch.object(
-            issue_module.httpx,
-            "get",
-            return_value=self._response(
-                payload=[
-                    self._issue_row("trx_other_token", symbol="SWAP.HIVE"),
-                    self._issue_row("trx_ours"),
-                ]
-            ),
-        ):
-            issues = self._call()
-        self.assertEqual([i["trx_id"] for i in issues], ["trx_ours"])
-
-    def test_unpageable_result_reads_as_unknown_not_absence(self):
-        page = [self._issue_row(f"trx_{i}") for i in range(issue_module.HISTORY_PAGE_LIMIT)]
-        with patch.object(
-            issue_module.httpx, "get", return_value=self._response(payload=page)
-        ):
-            self.assertIsNone(self._call())
-
-    def test_transient_non_200_is_retried_before_giving_up(self):
-        # nectarengine's own get_history retries up to 10 times; giving up on the
-        # first 429 or 503 turns a momentarily rate-limited node into no progress
-        # at all for the whole pass.
-        with patch.object(issue_module.time, "sleep"):
-            with patch.object(
-                issue_module.httpx,
-                "get",
-                side_effect=[
-                    self._response(status_code=503),
-                    self._response(payload=[self._issue_row("trx_after_retry")]),
-                ],
-            ) as get:
-                issues = self._call()
-        self.assertEqual(get.call_count, 2)
-        self.assertEqual([i["trx_id"] for i in issues], ["trx_after_retry"])
-
-    def test_persistent_failure_reads_as_unknown(self):
-        with patch.object(issue_module.time, "sleep"):
-            with patch.object(
-                issue_module.httpx, "get", return_value=self._response(status_code=503)
-            ) as get:
-                self.assertIsNone(self._call())
-        self.assertEqual(get.call_count, issue_module.HISTORY_RETRY_ATTEMPTS)
-
-
-class HistoryUrlCacheTests(unittest.TestCase):
-    """Kept out of EngineHistoryLookupTests, which patches get_history_url itself."""
-
-    def test_history_url_is_resolved_once_per_process(self):
-        # Api() builds an RPC pool and consults the beacon (~1.4s cold); it used
-        # to be constructed once per stuck row for a value that never changes.
-        issue_module._history_url_cache = None
-        self.addCleanup(setattr, issue_module, "_history_url_cache", None)
-        with patch.object(issue_module, "Api") as api:
-            api.return_value.history_url = "https://he.example/"
-            self.assertEqual(issue_module.get_history_url(), "https://he.example/")
-            self.assertEqual(issue_module.get_history_url(), "https://he.example/")
-        self.assertEqual(api.call_count, 1)
-
 
 class BroadcastThrottleTests(unittest.TestCase):
     """The 5-custom_json-per-block budget belongs to the issuer account, not to
@@ -1346,6 +766,93 @@ class BroadcastThrottleTests(unittest.TestCase):
         with patch.object(issue_module.time, "sleep") as slept:
             issue_module.throttle_broadcast(account)
         slept.assert_not_called()
+
+    # --- the throttle is only worth anything if the broadcast paths call it ----
+    #
+    # The tests above prove throttle_broadcast spaces its own calls. They say
+    # nothing about whether anything invokes it, so deleting the call from
+    # TokenIssuer.issue left the whole suite green while restoring the stall this
+    # work was opened for. These pin the call sites instead.
+
+    def _bare_issuer(self, account, log):
+        """A TokenIssuer with __init__ skipped.
+
+        Constructing one for real reads the active key out of the database,
+        connects Hive and fetches the account — none of which is what is under
+        test here. Only the broadcast methods and the attributes they touch are
+        needed, so the object is built directly and the two wallets record the
+        order they were called in.
+        """
+        issuer = issue_module.TokenIssuer.__new__(issue_module.TokenIssuer)
+        issuer.account_name = account
+        issuer.token_symbol = "HSBIDAO"
+
+        class _Recorder:
+            def __init__(self, label):
+                self._label = label
+
+            def issue(self, *args, **kwargs):
+                log.append(self._label)
+                return {"trx_id": "chain_throttle_test"}
+
+            def transfer(self, *args, **kwargs):
+                log.append(self._label)
+                return {"trx_id": "chain_throttle_test"}
+
+        issuer.engine_wallet = _Recorder("engine")
+        issuer.hive_account = _Recorder("base_chain")
+        return issuer
+
+    def test_issue_paces_before_it_broadcasts(self):
+        account = "zz_throttle_issue"
+        log = []
+        issuer = self._bare_issuer(account, log)
+        with patch.object(
+            issue_module, "throttle_broadcast", side_effect=lambda a: log.append(("throttle", a))
+        ):
+            issuer.issue("zz_recipient", 1.5)
+        # Paced, and paced BEFORE the op goes out — throttling afterwards would
+        # let the whole loop broadcast into one block and then sleep.
+        self.assertEqual(log, [("throttle", account), "engine"])
+
+    def test_engine_transfer_paces_before_it_broadcasts(self):
+        account = "zz_throttle_engine_xfer"
+        log = []
+        issuer = self._bare_issuer(account, log)
+        with patch.object(
+            issue_module, "throttle_broadcast", side_effect=lambda a: log.append(("throttle", a))
+        ):
+            issuer.transfer("zz_recipient", 1.5, asset_symbol="HSBIDAO")
+        self.assertEqual(log, [("throttle", account), "engine"])
+
+    def test_base_chain_transfer_is_not_paced(self):
+        # HIVE/HBD transfers are not custom_json and carry no per-block limit.
+        # Pacing them would add a second per refund for nothing, so the routing
+        # distinction is pinned here rather than left to a comment.
+        account = "zz_throttle_base_xfer"
+        log = []
+        issuer = self._bare_issuer(account, log)
+        with patch.object(
+            issue_module, "throttle_broadcast", side_effect=lambda a: log.append(("throttle", a))
+        ):
+            issuer.transfer("zz_recipient", 0.001, asset_symbol="HIVE")
+        self.assertEqual(log, ["base_chain"])
+
+    def test_pacing_survives_a_rebuilt_issuer(self):
+        # get_default_token_issuer caches the issuer, and its docstring claims the
+        # cache is not what makes pacing work: the budget belongs to the account,
+        # so _last_broadcast_started is keyed by name and outlives any one object.
+        account = "zz_throttle_rebuilt"
+        self._isolate_throttle_state(account)
+        log = []
+        clock = iter([100.0, 100.2, 101.0])
+        with patch.object(issue_module.time, "sleep") as slept:
+            with patch.object(issue_module.time, "monotonic", lambda: next(clock)):
+                self._bare_issuer(account, log).issue("zz_recipient", 1.0)
+                self._bare_issuer(account, log).issue("zz_recipient", 1.0)
+        self.assertEqual(log, ["engine", "engine"])
+        slept.assert_called_once()
+        self.assertAlmostEqual(slept.call_args[0][0], 0.8, places=3)
 
 
 if __name__ == "__main__":

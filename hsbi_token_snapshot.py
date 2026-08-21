@@ -1,25 +1,18 @@
-import time
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timedelta, timezone
 from hivesbi.settings import get_runtime
 from hivesbi.storage import ConfigurationDB
 from hivesbi.utils import ensure_timezone_aware
 from hivesbi.issuance_log import (
-    PENDING_TRX_PLACEHOLDER,
-    UNCAPTURED_TRX_PLACEHOLDER,
     fail_pending_with_proven_non_inclusion,
     insert_pending_issuance,
     issue_trx_id,
     log_issuance,
-    mark_issuance_failure,
     mark_issuance_success,
     record_broadcast_error,
-    record_resolution_attempt,
     utcnow,
 )
 from hivesbi.issue import (
-    DEFAULT_ISSUER_ACCOUNT,
-    fetch_issues_to_recipient,
     get_tokenholders,
     get_default_token_issuer,
 )
@@ -40,23 +33,6 @@ MANAGEMENT_RECIPIENT = "josephsavage"
 MANAGEMENT_RATIONALE = "Management"
 PIK_RATIONALE = "pik"
 ABC_RATIONALE = "Pending Balance Conversion"
-# The per-row question this module asks the chain is "did recipient R receive
-# exactly U HSBIDAO from us near time T?". CHAIN_MATCH_WINDOW is how long after
-# the intent an issuance may still show up, MATCH_CLOCK_SKEW absorbs chain-vs-app
-# clock drift and history-indexing lag on the other side.
-CHAIN_MATCH_WINDOW = timedelta(minutes=30)
-MATCH_CLOCK_SKEW = timedelta(minutes=5)
-# Most Hive Engine lookups one pass may spend. Rows are taken
-# least-recently-attempted first, so a backlog drains over consecutive cycles and
-# rows that cannot be settled rotate to the back instead of consuming the whole
-# cap every cycle while newer rows never get a turn.
-MAX_RESOLUTION_LOOKUPS = 200
-# Wall clock one resolution pass may spend, whatever the row count. The row cap
-# bounds requests, not time: a history node that hangs instead of erroring costs
-# the full httpx timeout per row, and sbirunner.sh runs jobs back to back, so
-# every minute spent here delays hsbi_upvote_post_comment and members lose
-# curation. Rows not reached are picked up next cycle.
-RESOLUTION_TIME_BUDGET = timedelta(minutes=5)
 STUCK_PENDING_AGE = timedelta(hours=6)
 
 
@@ -86,291 +62,80 @@ def calculate_management_issue_amount(outstanding, management_issued):
 # hivesbi.parse_hist_op for Unit Conversion); they are re-exported above for
 # callers and tests.
 # ---------------------------------------------------------------------------
-# resolving unconfirmed issuances
+# ---------------------------------------------------------------------------
+# unconfirmed issuances
 #
-# THE REMIT — read this before adding anything here.
+# THE REMIT - read this before adding anything here.
 #
-# Four paths issue HSBIDAO, and each one already retries safely on its own. What
-# they cannot survive is an issuance that reached the chain while the record that
-# would stop it being repeated did not get written:
+# Four paths issue HSBIDAO and each retries safely on its own. The write-ahead
+# log exists for the one thing they cannot survive: an issuance that reached the
+# chain while the record that would stop it being repeated did not get written.
 #
-#   pik / Pending Balance Conversion — the ledger is tokenholders.pik / .abc_pik.
+#   pik / Pending Balance Conversion - the ledger is tokenholders.pik / .abc_pik.
 #       The balance is debited only in the same transaction that records SUCCESS,
 #       so a broadcast that fails leaves the balance intact and next cycle simply
 #       reissues it. The one unrecoverable outcome is issued-but-not-debited: the
-#       same tokens are minted again next cycle, and an on-chain mint cannot be
-#       undone.
-#   Management — the ledger is this log: the 10% cap counts SUM(units) over
+#       same tokens are minted again next cycle, and a mint cannot be undone.
+#   Management - the ledger is this log: the 10% cap counts SUM(units) over
 #       SUCCESS + PENDING rows. Issued-but-not-logged undercounts the cap and
 #       management is overpaid next cycle.
-#   Unit Conversion — see RESOLVABLE_RATIONALES below. Not resolved here.
+#   Unit Conversion - no balance to debit, and nothing retries it because the
+#       source transfer op is never reprocessed.
 #
-# So the only question this module needs to answer, for one row at a time, is
-# "did recipient R receive exactly U HSBIDAO from us in [T - skew, T + window]?".
-# fetch_issues_to_recipient answers exactly that in one small request.
+# So a PENDING row is HELD, not settled. It blocks its (recipient, rationale)
+# from being issued again, which is the safe direction: an unpaid member is
+# recoverable, a double mint is not. Exactly two things move a row off PENDING,
+# and both decide from the row's own recorded error rather than from the chain:
 #
-# It deliberately does NOT reconstruct which chain transaction belongs to which
-# log row. That question has no economic content — every candidate carries the
-# same units by construction, so a swapped trx_id costs audit-trail precision and
-# never tokens — and answering it is where the damage came from: PR #138 walked
-# the issuer's whole custom_json history, matched it against the log in bulk, and
-# duplicated every Unit Conversion row under a bogus rationale. The bulk scan and
-# everything it needed (coverage windows, issue-first matching, proximity
-# ranking, tie-breaks, contested rows, uncaptured-placeholder completion,
-# unexplained-issuance reporting) was removed for that reason. If a change starts
-# needing any of it back, the requirement has drifted — check it against the
-# three ledgers above before writing the code.
+#   record_broadcast_error fails it at broadcast time when the error proves the
+#       operation never reached the chain, so the next cycle reissues it.
+#   fail_pending_with_proven_non_inclusion applies that same test to rows already
+#       stuck. One read and a keyed update, no network.
+#
+# What survives both is a row whose error does not prove its own fate - a
+# timeout, a transport failure, a process that died mid-flight. Nothing settles
+# those automatically: warn_stuck_pending announces them and an operator decides.
+#
+# That last part is a deliberate limit, not an omission. Settling from chain
+# history means asking a node picked at runtime whether an issuance exists, then
+# minting or debiting a balance on its answer - and a wrong answer is
+# unrecoverable in both directions. PR #138 did walk the issuer's custom_json
+# history to match the log in bulk and duplicated every Unit Conversion row under
+# a bogus rationale. PR #140 replaced that with a per-row Hive Engine lookup,
+# which was narrower but bought nothing: every PENDING row prod has accumulated
+# carries a HIVE_CUSTOM_OP_BLOCK_LIMIT error, which the two checks above settle
+# outright, so the lookup path never had a row to decide. It was removed along
+# with its httpx history client rather than carried as untested weight.
+#
+# If a change starts needing chain history back, that is the requirement drifting
+# - check it against the three ledgers above before writing the code.
 # ---------------------------------------------------------------------------
-
-# Rationales whose PENDING rows are worth spending a chain lookup on, i.e. the
-# ones where the answer changes a token outcome.
-#
-# Unit Conversion is deliberately excluded. It has no balance to debit
-# (_complete_balance_issuance_effect is a no-op for it) and nothing ever retries
-# it — the source transfer op is not reprocessed — so every possible verdict is
-# an economic no-op, while a wrong SUCCESS would permanently deny a member the
-# units they converted. A stuck Unit Conversion row is an operator matter, and
-# warn_stuck_pending announces it.
-RESOLVABLE_RATIONALES = (PIK_RATIONALE, ABC_RATIONALE, MANAGEMENT_RATIONALE)
-
-
-def _complete_balance_issuance_effect(conn, pending_row):
-    """Debit the tracker a confirmed issuance was drawn from.
-
-    This is the whole point of resolution for pik / Pending Balance Conversion:
-    the tokens exist on chain, so the balance they came from must stop being
-    reissued. Management has no balance column — its ledger is the log row that
-    mark_issuance_success just wrote.
-    """
-    rationale = pending_row["rationale"]
-    if rationale == PIK_RATIONALE:
-        balance_column = "pik"
-    elif rationale == ABC_RATIONALE:
-        balance_column = "abc_pik"
-    else:
-        return
-
-    conn.exec_driver_sql(
-        f"""
-        UPDATE tokenholders
-        SET {balance_column} = GREATEST({balance_column} - %s, 0)
-        WHERE member_name = %s
-        """,
-        (pending_row["units"], pending_row["recipient"]),
-    )
-
-
-def resolve_pending_issuances(
-    db2,
-    issuer_account=DEFAULT_ISSUER_ACCOUNT,
-    token_symbol=None,
-    time_budget=RESOLUTION_TIME_BUDGET,
-):
-    """Settle PENDING rows by asking Hive Engine about each one directly.
-
-    Rows only reach here when the broadcast left no proof of its own fate:
-    fail_pending_with_proven_non_inclusion has already failed everything whose
-    recorded error shows the operation was rejected before inclusion, so what is
-    left is a timeout, a transport failure, or a process that died between the
-    write-ahead insert and either outcome write. Only the chain settles those.
-
-    The lookup is scoped to one recipient, one symbol and that row's own
-    35-minute window, so its cost does not grow with how long a row has been
-    stuck. That is what makes an old row resolvable at all, and why no history
-    scan is needed.
-
-    Lookups run outside any open transaction — each may block for the httpx
-    timeout, and holding a write transaction on token_issuance_log for that long
-    stalls every other reader of the table.
-
-    Two limits bound one pass: MAX_RESOLUTION_LOOKUPS rows and `time_budget` of
-    wall clock. The row cap alone does not bound duration, because a history node
-    that hangs rather than errors turns the cap into cap x timeout. Rows not
-    reached are taken next cycle. Selection rotates by last_resolution_attempt
-    (never-attempted first) so unresolvable rows cannot starve the rows behind
-    them.
-
-    Uncertainty leaves the row PENDING: an untrusted lookup, an unelapsed match
-    window, or a legacy uncaptured sibling with a claim on the same issue.
-    """
-    # Absence only means anything once the match window has fully elapsed.
-    settled_before = utcnow() - MATCH_CLOCK_SKEW - CHAIN_MATCH_WINDOW
-    rationale_slots = ", ".join(["%s"] * len(RESOLVABLE_RATIONALES))
-
-    with db2.engine.begin() as conn:
-        rows = conn.exec_driver_sql(
-            f"""
-            SELECT id, recipient, units, rationale, issued_at
-            FROM token_issuance_log
-            WHERE status = 'PENDING'
-              AND issued_at < %s
-              AND rationale IN ({rationale_slots})
-            ORDER BY last_resolution_attempt ASC, issued_at ASC
-            LIMIT %s
-            """,
-            (settled_before, *RESOLVABLE_RATIONALES, MAX_RESOLUTION_LOOKUPS),
-        ).fetchall()
-
-    deadline = time.monotonic() + time_budget.total_seconds()
-    attempted = 0
-
-    for row in rows:
-        if time.monotonic() >= deadline:
-            print(
-                f"Issuance resolution hit its time budget ({time_budget}) after "
-                f"{attempted} of {len(rows)} row(s); the rest are taken next cycle."
-            )
-            break
-
-        log_id, recipient, rationale = row[0], row[1], row[3]
-        units = token_decimal(row[2])
-        issued_at = ensure_timezone_aware(row[4])
-        if issued_at is None:
-            # issued_at is NOT NULL in schema, so this is defensive only — but an
-            # unstamped row keeps its place at the head of the queue forever, so
-            # stamp before skipping rather than let one bad row starve the rest.
-            with db2.engine.begin() as conn:
-                record_resolution_attempt(conn, log_id)
-            continue
-
-        window_start = issued_at - MATCH_CLOCK_SKEW
-        window_end = issued_at + CHAIN_MATCH_WINDOW
-        issues = fetch_issues_to_recipient(
-            recipient,
-            window_start,
-            window_end,
-            symbol=token_symbol,
-            issuer_account=issuer_account,
-        )
-        attempted += 1
-
-        with db2.engine.begin() as conn:
-            # Stamped whatever happens below, so a row that cannot be settled goes
-            # to the back of the queue instead of consuming a lookup every cycle
-            # forever while newer rows never get one.
-            record_resolution_attempt(conn, log_id)
-
-            if issues is None:
-                print(
-                    f"Hive Engine lookup unavailable for stuck PENDING id={log_id} "
-                    f"{recipient} {units} {rationale}; leaving PENDING"
-                )
-                continue
-
-            # Legacy guard. A SUCCESS row carrying UNCAPTURED_TRX_PLACEHOLDER was
-            # already debited but records no trx_id, so it holds an unidentifiable
-            # claim on one of these issues; taking that issue here would debit the
-            # same balance twice. nectar attaches a trx_id to every broadcast it
-            # signs, so this cannot arise on new rows — it exists for rows written
-            # before that was true. The bound is the sibling's own reach, not
-            # ours: it claims anything in [its issued_at - skew, its issued_at +
-            # window], which overlaps ours whenever its issued_at is within
-            # CHAIN_MATCH_WINDOW + MATCH_CLOCK_SKEW of ours.
-            sibling_reach = CHAIN_MATCH_WINDOW + MATCH_CLOCK_SKEW
-            uncaptured_sibling = conn.exec_driver_sql(
-                """
-                SELECT COUNT(*) FROM token_issuance_log
-                WHERE status = 'SUCCESS' AND recipient = %s AND units = %s
-                  AND trx_id = %s AND issued_at BETWEEN %s AND %s
-                """,
-                (
-                    recipient,
-                    units,
-                    UNCAPTURED_TRX_PLACEHOLDER,
-                    issued_at - sibling_reach,
-                    issued_at + sibling_reach,
-                ),
-            ).scalar()
-            if uncaptured_sibling:
-                print(
-                    f"Uncaptured sibling issuance claims the same window for stuck "
-                    f"PENDING id={log_id} {recipient} {units} {rationale}; "
-                    "leaving PENDING"
-                )
-                continue
-
-            # Exclude issues already claimed by another log row, so a recipient who
-            # legitimately received the same amount twice resolves one row per
-            # issue. Each row commits before the next is read, so two rows sharing
-            # a window in the same pass cannot both take the same issue.
-            logged_trx = {
-                r[0]
-                for r in conn.exec_driver_sql(
-                    "SELECT trx_id FROM token_issuance_log WHERE recipient = %s "
-                    "AND trx_id <> %s",
-                    (recipient, PENDING_TRX_PLACEHOLDER),
-                ).fetchall()
-            }
-            # The window is re-checked locally rather than trusted to the remote
-            # timestampStart/timestampEnd: the history endpoint is chosen from a
-            # beacon at runtime, and a node that silently ignored those params
-            # would hand back the recipient's most recent issues instead. Matching
-            # one of those would mark this row SUCCESS and debit a balance against
-            # an issuance that was never made for it.
-            candidates = [
-                issue
-                for issue in issues
-                if floor_token_amount(issue["quantity"]) == units
-                and issue["trx_id"] not in logged_trx
-                and issue["timestamp"] is not None
-                and window_start <= issue["timestamp"] <= window_end
-            ]
-
-            if not candidates:
-                mark_issuance_failure(
-                    conn,
-                    log_id,
-                    "No matching Hive Engine issuance in match window",
-                )
-                print(
-                    f"Resolved stuck PENDING -> FAILURE from Hive Engine: {recipient} "
-                    f"{units} {rationale}"
-                )
-                continue
-
-            # More than one candidate is settled, never deferred. Nothing else ever
-            # moves these rows, so deferring would leave two rows for the same
-            # recipient and amount PENDING forever — the "member silently stops
-            # being paid" symptom this path exists to cure. Every candidate carries
-            # the same units by construction, so the choice cannot cost tokens:
-            # whichever row loses its issue finds no candidate next pass, fails,
-            # and reissues the identical amount. Nearest-then-trx_id is a total
-            # order, so the pick is deterministic and reproducible for an auditor.
-            chosen = min(
-                candidates,
-                key=lambda issue: (abs(issue["timestamp"] - issued_at), issue["trx_id"]),
-            )
-            pending_row = {
-                "id": log_id,
-                "recipient": recipient,
-                "units": units,
-                "rationale": rationale,
-                "issued_at": issued_at,
-            }
-            mark_issuance_success(conn, log_id, chosen["trx_id"])
-            _complete_balance_issuance_effect(conn, pending_row)
-            print(
-                f"Resolved stuck PENDING -> SUCCESS from Hive Engine: {recipient} "
-                f"{units} {rationale} ({chosen['trx_id']})"
-            )
-
-    if len(rows) == MAX_RESOLUTION_LOOKUPS and attempted == len(rows):
-        print(
-            f"Issuance resolution hit its per-pass cap ({MAX_RESOLUTION_LOOKUPS}); "
-            "remaining rows are taken next cycle."
-        )
+# The tokenholders column each rationale draws from, and the only place that
+# pairing is written down. It is also an allow-list: a column name cannot be a
+# bound parameter, so every statement below interpolates it into SQL directly.
+# Deriving it here rather than taking it from the caller keeps anything a caller
+# controls out of that interpolation for good.
+BALANCE_COLUMNS = {
+    PIK_RATIONALE: "pik",
+    ABC_RATIONALE: "abc_pik",
+}
 
 
 def warn_stuck_pending(conn):
-    """Announce PENDING rows that resolution should already have settled.
+    """Announce PENDING rows old enough that nothing is going to clear them.
 
     issue_balance_tokens skips any member holding a live PENDING row for the same
-    rationale, so an unresolvable row silently stops that member's dividends.
+    rationale, so a row left here silently stops that member's dividends. This is
+    the only thing watching for that, because a row that reaches this age has
+    already survived the one automatic check there is (see THE REMIT above) and
+    can only be settled by hand.
 
-    Causes worth operator attention: an unreachable history API (every lookup
-    returning unknown), a legacy uncaptured sibling holding a claim on the same
-    window, a backlog deeper than one pass's budget, or a Unit Conversion row,
-    which is never resolved automatically and can only be settled by hand.
+    Deciding one takes the same evidence an operator would gather anyway: whether
+    the recipient holds an HSBIDAO issuance from us near issued_at. If they do,
+    the tokens exist - mark the row SUCCESS and debit the matching tokenholders
+    balance in one transaction. If they do not, mark it FAILURE and the next cycle
+    reissues it. Do not guess: the row is blocking one member's dividends, which
+    is recoverable, and both wrong answers mint or destroy tokens, which is not.
     """
     rows = conn.exec_driver_sql(
         """
@@ -389,13 +154,14 @@ def warn_stuck_pending(conn):
     return len(rows)
 
 
-def reconcile_recent_issuances(db2, issuer):
+def reconcile_recent_issuances(db2):
     """Settle last cycle's unconfirmed intents before issuing anything new.
 
-    Cheapest first: a row whose recorded broadcast error already proves the
-    operation never reached the chain needs no chain evidence at all. That is one
-    read and a keyed update, and it clears the whole class of row that caused the
-    stall this work was opened for.
+    A row whose recorded broadcast error already proves the operation never
+    reached the chain needs no chain evidence at all: one read and a keyed
+    update, and it clears the whole class of row that caused the stall this work
+    was opened for. Anything that survives that test has no proof of its own fate
+    and is left PENDING for an operator - see THE REMIT above.
     """
     with db2.engine.begin() as conn:
         swept = fail_pending_with_proven_non_inclusion(conn)
@@ -404,15 +170,6 @@ def reconcile_recent_issuances(db2, issuer):
             f"Failed {swept} PENDING issuance(s) whose recorded error proves the "
             "broadcast never reached the chain; they re-issue next cycle."
         )
-
-    # The symbol and account travel with the issuer. Defaulting either would check
-    # a non-HSBIDAO issuer's rows against HSBIDAO history, find nothing, and fail
-    # every one of them.
-    resolve_pending_issuances(
-        db2,
-        issuer_account=issuer.account_name,
-        token_symbol=issuer.token_symbol,
-    )
 
     with db2.engine.begin() as conn:
         warn_stuck_pending(conn)
@@ -423,13 +180,17 @@ def reconcile_recent_issuances(db2, issuer):
 # ---------------------------------------------------------------------------
 
 
-def issue_balance_tokens(db2, issuer, rationale, balance_column):
+def issue_balance_tokens(db2, issuer, rationale):
     """Write-ahead issuance for per-member balances (pik / abc_pik).
 
     Each member with a positive balance gets a committed PENDING intent before
     broadcast. If the process dies after broadcast and before SUCCESS is recorded,
     reconciliation completes the same row from chain history.
+
+    The balance column comes from BALANCE_COLUMNS, not from the caller: it is
+    interpolated into SQL below and a column name cannot be bound as a parameter.
     """
+    balance_column = BALANCE_COLUMNS[rationale]
     with db2.engine.begin() as conn:
         balance_rows = conn.exec_driver_sql(
             f"SELECT member_name, {balance_column} FROM tokenholders "
@@ -594,13 +355,13 @@ def main():
 
         # Resolve any unconfirmed PENDING issuances from a prior cycle before
         # issuing more (keeps the Management cap and member balances accurate).
-        reconcile_recent_issuances(db2, issuer)
+        reconcile_recent_issuances(db2)
 
         # curation PIK token issuance
-        issue_balance_tokens(db2, issuer, PIK_RATIONALE, "pik")
+        issue_balance_tokens(db2, issuer, PIK_RATIONALE)
 
         # Pending Balance Conversion issuance
-        issue_balance_tokens(db2, issuer, ABC_RATIONALE, "abc_pik")
+        issue_balance_tokens(db2, issuer, ABC_RATIONALE)
 
         # Refresh liquid balances from Hive Engine, then issue the Management 10%
         # against real circulating supply only.

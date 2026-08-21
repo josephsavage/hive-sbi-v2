@@ -342,12 +342,10 @@ CREATE TABLE `token_issuance_log` (
   `error_message` text DEFAULT NULL,
   `rationale` varchar(100) DEFAULT NULL,
   `source_trx_id` varchar(100) DEFAULT NULL,
-  `last_resolution_attempt` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_recipient` (`recipient`),
   KEY `idx_trx_id` (`trx_id`),
-  KEY `idx_source_trx_id` (`source_trx_id`),
-  KEY `idx_status_attempt` (`status`,`last_resolution_attempt`,`issued_at`)
+  KEY `idx_source_trx_id` (`source_trx_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=159353 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

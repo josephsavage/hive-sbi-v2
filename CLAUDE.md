@@ -118,7 +118,9 @@ Production runs these in order each cycle (see `sbirunner.sh`):
 4. `hsbi_liquidpools.py` — liquidity-pool handling
 5. `hsbi_token_snapshot.py` — snapshot Hive Engine tokenholders; issue per-member PIK
    and Pending-Balance-Conversion dividends (immediate, retried next cycle on failure);
-   reconcile prior on-chain issuances; issue the Management 10% (write-ahead, capped)
+   fail stuck PENDING issuances whose recorded error proves the broadcast never
+   reached the chain, and alert on any that carry no such proof; issue the
+   Management 10% (write-ahead, capped)
 6. `hsbi_claim_rewards.py` — claim HIVE/HBD/VESTS rewards for operator accounts
 7. `hsbi_update_member_db.py` — recompute member shares/balances
 8. `hsbi_store_member_hist.py` — append member history

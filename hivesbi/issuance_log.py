@@ -1,9 +1,10 @@
 """Write-ahead issuance log helpers for `token_issuance_log`.
 
 Every HSBIDAO issuance path commits an intent row before broadcasting. The
-broadcast is the only step that cannot be rolled back, so if the process dies
-before SUCCESS is recorded, hsbi_token_snapshot.resolve_pending_issuances asks
-Hive Engine whether that one issuance exists and completes the same row.
+broadcast is the only step that cannot be rolled back, so a row that never
+reaches SUCCESS is HELD at PENDING: it keeps blocking a re-issue of the same
+thing until something proves the operation's fate. See THE REMIT in
+hsbi_token_snapshot for what is allowed to constitute that proof.
 
 rationale is the durable, never-rewritten reason an issuance happened (pik,
 Pending Balance Conversion, Unit Conversion, Management). It is always written
@@ -61,7 +62,9 @@ def record_pending_error(conn, log_id, error_message):
     """Keep a row PENDING (so it still guards against re-issue) but note the error.
 
     A broadcast that raised may still have reached the chain, so we do not assume
-    failure here — resolve_pending_issuances settles the row from Hive Engine.
+    failure here. The error is stored rather than acted on: it is the evidence
+    fail_pending_with_proven_non_inclusion reads later, and failing a row that did
+    reach the chain re-issues tokens that already exist.
     """
     conn.exec_driver_sql(
         "UPDATE token_issuance_log SET error_message = %s WHERE id = %s",
@@ -98,8 +101,9 @@ def record_broadcast_error(conn, log_id, error_message):
     """Record a raised broadcast against its write-ahead row.
 
     Fails the row outright when the error proves the operation never reached the
-    chain, so the next cycle simply re-issues it; otherwise leaves it PENDING for
-    resolve_pending_issuances to settle. Returns the resulting status.
+    chain, so the next cycle simply re-issues it; otherwise leaves it PENDING,
+    where it blocks a re-issue until an operator settles it. Returns the
+    resulting status.
     """
     if never_reached_chain(error_message):
         mark_issuance_failure(conn, log_id, error_message)
@@ -119,7 +123,9 @@ def fail_pending_with_proven_non_inclusion(conn):
 
     This is the same decision record_broadcast_error makes at broadcast time,
     made late: the marker list is the single bar for both, so adding a marker
-    also retroactively clears historical rows carrying that error.
+    also retroactively clears historical rows carrying that error. It is the only
+    thing that clears a stuck row without an operator, which is why the bar for
+    adding a marker is proof of rejection before inclusion and nothing weaker.
 
     The match is made in Python by never_reached_chain, not by SQL LIKE, so the
     two paths are literally the same predicate. A LIKE pattern built from a
@@ -158,21 +164,6 @@ def fail_pending_with_proven_non_inclusion(conn):
         tuple(doomed),
     )
     return result.rowcount or len(doomed)
-
-
-def record_resolution_attempt(conn, log_id, attempted_at=None):
-    """Stamp that resolution just spent a Hive Engine lookup on this row.
-
-    Selection orders by this column so rows rotate: without it, ordering purely
-    by issued_at re-tried the same oldest MAX_RESOLUTION_LOOKUPS rows every
-    cycle, and any row behind a block of permanently unresolvable ones never got
-    a turn. Stamped on every attempt, including the ones that leave the row
-    PENDING — those are exactly the rows that would otherwise monopolise the queue.
-    """
-    conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET last_resolution_attempt = %s WHERE id = %s",
-        (attempted_at or utcnow(), log_id),
-    )
 
 
 def has_issuance_for_source(conn, source_trx_id, rationale):

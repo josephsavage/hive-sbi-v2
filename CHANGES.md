@@ -1,5 +1,74 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## Token issuance: chain lookups removed, no DDL (PR #140)
+
+The previous commit reduced reconciliation from a bulk chain scan to a per-row
+Hive Engine lookup. Production data says that lookup has never had a row to act
+on, so it is removed too, and with it the only reason this PR needed a schema
+change.
+
+**The measurement** (prod, 2026-08-21) — `token_issuance_log` holds 322,562 rows:
+322,430 SUCCESS, 84 FAILURE, 48 PENDING.
+
+- All 48 PENDING carry a `HIVE_CUSTOM_OP_BLOCK_LIMIT` error. Zero carry any other
+  error, and zero carry none at all.
+- `fail_pending_with_proven_non_inclusion` therefore fails all 48 from what is
+  already stored on the row, before any lookup runs. It costs one read and 48
+  keyed updates and no network.
+- So `resolve_pending_issuances` selected from an empty set. Every row it exists
+  to settle had already been settled by the check in front of it.
+- The 84 `trx_id = 'N/A'` rows are exactly the 84 FAILUREs (31 abc + 53 pik): a
+  failed broadcast has no transaction, so the placeholder was written on failure.
+  There are no SUCCESS rows with an uncaptured trx_id, which means the
+  uncaptured-sibling guard could never match either.
+
+### Removed
+
+- `resolve_pending_issuances` and `_complete_balance_issuance_effect`, with
+  `CHAIN_MATCH_WINDOW`, `MATCH_CLOCK_SKEW`, `MAX_RESOLUTION_LOOKUPS`,
+  `RESOLUTION_TIME_BUDGET` and `RESOLVABLE_RATIONALES`.
+- The Hive Engine history client in `hivesbi/issue.py` — `get_history_url`,
+  `_get_history_page`, `fetch_issues_to_recipient`, the `HISTORY_*` constants and
+  the `_history_url_cache`. This existed only to serve resolution.
+- The `httpx` dependency, from both `setup.py` and `requirements-dev.txt`. It was
+  added by this PR and nothing else uses it, so both files are now byte-identical
+  to `main`.
+- `record_resolution_attempt`, and the queue rotation it stamped.
+
+`hsbi_token_snapshot.py` 612 -> 373 lines (782 on `main`), `hivesbi/issue.py`
+379 -> 236 (181 on `main`), tests 1352 -> 859 (1203 on `main`). 20 tests removed,
+one added.
+
+### Schema
+
+**None.** This PR now ships no DDL at all.
+
+`last_resolution_attempt` and `idx_status_attempt` are dropped from
+`docker/mariadb/init/01-sbi-schema.sql`, which is again identical to `main`, and
+step 5 is gone from `sql/PROD_RUNBOOK_virtual_tokens.sql`. Step 4 (#139's
+`source_trx_id`) was confirmed applied in prod on 2026-08-21, so every step in
+that runbook is now live and it stands as a record rather than a deploy step. The
+runbook keeps one new query: a pre/post-deploy count of PENDING rows by proven
+cause, so the operator can confirm the first cycle cleared what it should.
+
+### What this gives up
+
+A PENDING row whose recorded error does *not* prove non-inclusion — a timeout, a
+transport failure, a process killed between broadcast and the outcome write — is
+now held PENDING until an operator settles it. It blocks that member's dividends
+for that rationale while it sits there, and `warn_stuck_pending` prints it every
+cycle once it is 6h old.
+
+That is the deliberate trade. Settling such a row automatically means asking a
+node chosen at runtime whether an issuance exists and then minting or debiting on
+its answer; a wrong answer is unrecoverable in both directions, and the guard
+against a lying node was itself untestable against real data. An unpaid member is
+recoverable, a double mint is not. `warn_stuck_pending`'s docstring now says what
+evidence to gather and what to write. No row of this kind has occurred in prod.
+
+`PureLogicTests.test_no_chain_history_client_is_reachable` fails if a lookup
+helper comes back, so the decision has to be re-argued rather than drifted into.
+
 ## Token issuance: reduced to the remit (PR #140)
 
 The two commits above fixed the stall, then grew a chain-reconciliation engine
@@ -81,6 +150,7 @@ recipient R receive exactly U HSBIDAO from us in [T - skew, T + window]?"**
   network cost. These alone fix the reported production bug.
 - `resolve_pending_issuances` (was `resolve_pending_beyond_scan`) — the per-row
   lookup, with its row cap, time budget and `last_resolution_attempt` rotation.
+  **Superseded:** removed entirely by the entry above.
 - The write-ahead insert, debit-in-the-same-transaction-as-SUCCESS,
   `has_issuance_for_source`, and the Management cap counting SUCCESS + PENDING.
 
@@ -112,6 +182,9 @@ Unchanged from the previous commit — `last_resolution_attempt` and
 `idx_status_attempt` are still required, and step 5 of
 `sql/PROD_RUNBOOK_virtual_tokens.sql` is still the prod DDL. It must still be
 applied **before** the code deploy.
+
+**Superseded:** the entry above removes both objects and step 5. This PR ships no
+DDL.
 
 ## Token issuance: block-limit stall
 
