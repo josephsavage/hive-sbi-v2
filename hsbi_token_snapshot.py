@@ -185,7 +185,9 @@ def issue_balance_tokens(db2, issuer, rationale):
 
     Each member with a positive balance gets a committed PENDING intent before
     broadcast. If the process dies after broadcast and before SUCCESS is recorded,
-    reconciliation completes the same row from chain history.
+    the row stays PENDING and keeps blocking this member's next issuance for this
+    rationale. Nothing completes it from chain history any more: it is settled
+    only by its own recorded error, or by an operator (see THE REMIT above).
 
     The balance column comes from BALANCE_COLUMNS, not from the caller: it is
     interpolated into SQL below and a column name cannot be bound as a parameter.

@@ -1,5 +1,52 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## Token issuance: settled-row shape and sweep guard (PR #140 review)
+
+Three review findings on the block-limit work above. All three are in the paths
+that move a row off PENDING; none change what is allowed to move it.
+
+### A settled FAILURE row no longer keeps the `PENDING` trx_id
+
+`insert_pending_issuance` stamps `trx_id = 'PENDING'` because the transaction id
+is not known yet, and neither `mark_issuance_failure` nor the sweep used to
+replace it. Before this PR nothing ever moved an intent row to FAILURE, so every
+one of prod's 84 FAILURE rows carries `'N/A'` — which is how "no transaction
+exists" is spelled in this table, and what the PR's own measurement relies on.
+Both paths now write `UNCAPTURED_TRX_PLACEHOLDER`, so that invariant still holds
+after deploy and a settled row cannot be misread as in-flight.
+
+### The sweep only ever moves PENDING -> FAILURE
+
+`fail_pending_with_proven_non_inclusion` SELECTs matching rows and then UPDATEs
+them by id. The SELECT reads a snapshot; the UPDATE reads current committed data.
+A row another connection settled as SUCCESS in between would have been flipped to
+FAILURE — and its balance is already debited, so the member would lose the tokens
+while the log denied they were ever issued. `AND status = 'PENDING'` on the UPDATE
+closes it. The count now comes straight from `rowcount` rather than falling back
+to `len(doomed)`, so a row that settled underneath is reported as not-failed
+instead of counted as failed.
+
+### Docstrings match the code
+
+`issue_balance_tokens`, `has_issuance_for_source`, the marker comment in
+`issuance_log`, and the tests module header all still described reconciliation
+completing rows from chain history — machinery this PR deletes.
+
+### Tests
+
+50 -> 57. The three new `SettledRowShapeTests` are mutation-verified: each fails
+against the pre-fix code, and the race test simulates the window by settling the
+row between the sweep's SELECT and its UPDATE.
+
+`DefaultIssuerCacheTests` covers `get_default_token_issuer`'s caching, which was
+added by this PR untested: built once and reused, shared by
+`issue_default_tokens` (the Unit Conversion entry point), and — importantly — a
+failed construction is NOT cached, so one bad moment at startup cannot make every
+issuance for the rest of the run fail. The last test records what the cache does
+not do: it has no invalidation, so a permanently broken issuer stays in place.
+That is the accepted trade, since nectar owns reconnection and node failover
+beneath `TokenIssuer`, and it is now written down where it can be revisited.
+
 ## Token issuance: chain lookups removed, no DDL (PR #140)
 
 The previous commit reduced reconciliation from a bulk chain scan to a per-row

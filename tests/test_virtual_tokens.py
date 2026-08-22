@@ -1,5 +1,5 @@
 """Tests for delegation virtual_tokens, write-ahead token issuance intents,
-Management 10% issuance, and resolution of unconfirmed issuances.
+Management 10% issuance, and the settling of unconfirmed issuances.
 
 The pure-logic tests run anywhere. The DB-level tests connect to the local docker
 MariaDB (the `sbi` database via config.json `databaseConnector2`) and run inside a
@@ -7,9 +7,10 @@ transaction that is rolled back, so they leave no residue. They skip automatical
 when the database is unreachable (e.g. running on the host without the container).
 
 Design note: every token issuance path creates a durable PENDING intent before
-broadcast. Resolution asks Hive Engine, one row at a time, whether that row's own
-issuance exists, and completes or fails the row from the answer. It never invents
-a rationale from chain history and never inserts a row from chain data.
+broadcast. Nothing asks the chain what became of that intent. A row is failed only
+when its own recorded broadcast error proves the operation was never included;
+anything else is held PENDING for an operator. No rationale is ever invented from
+chain history and no row is ever inserted from chain data.
 """
 
 import unittest
@@ -730,6 +731,105 @@ class StuckPendingRecoveryTests(DBTestCase):
             "PENDING",
         )
 
+class SettledRowShapeTests(DBTestCase):
+    """A settled row must not still look like an in-flight one.
+
+    insert_pending_issuance stamps trx_id = 'PENDING' because the transaction id
+    is not known yet. Every FAILURE row in prod carries 'N/A' instead, which is
+    what "no transaction exists" is spelled as in this table, so the paths that
+    settle a row as FAILURE have to replace the placeholder rather than leave it.
+    """
+
+    BLOCK_LIMIT_ERROR = StuckPendingRecoveryTests.BLOCK_LIMIT_ERROR
+
+    def _trx_and_status(self, log_id):
+        return self.x(
+            "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (log_id,)
+        ).fetchone()
+
+    def test_broadcast_time_failure_clears_the_pending_placeholder(self):
+        log_id = insert_pending_issuance(
+            self.conn, T_HOLDER, Decimal("1.234"), "Pending Balance Conversion"
+        )
+        self.assertEqual(self._trx_and_status(log_id)[1], "PENDING")
+        record_broadcast_error(self.conn, log_id, self.BLOCK_LIMIT_ERROR)
+        self.assertEqual(self._trx_and_status(log_id), ("FAILURE", "N/A"))
+
+    def test_sweep_clears_the_pending_placeholder(self):
+        log_id = self.x(
+            """
+            INSERT INTO token_issuance_log
+                (trx_id, recipient, units, status, error_message, rationale, issued_at)
+            VALUES ('PENDING', %s, %s, 'PENDING', %s, %s, %s)
+            """,
+            (
+                T_HOLDER,
+                Decimal("1.234"),
+                self.BLOCK_LIMIT_ERROR,
+                "Pending Balance Conversion",
+                datetime.now(timezone.utc) - timedelta(days=60),
+            ),
+        ).lastrowid
+        self.assertEqual(fail_pending_with_proven_non_inclusion(self.conn), 1)
+        self.assertEqual(self._trx_and_status(log_id), ("FAILURE", "N/A"))
+
+    def test_sweep_will_not_overwrite_a_row_that_settled_underneath_it(self):
+        """The status guard on the sweep's UPDATE.
+
+        The sweep SELECTs matching PENDING rows and then UPDATEs them by id. The
+        SELECT reads a snapshot; the UPDATE reads current committed data. Without
+        `AND status = 'PENDING'` a row another connection settled as SUCCESS in
+        between would be flipped to FAILURE - and that row's balance is already
+        debited, so the member would lose the tokens while the log denied they
+        were ever issued.
+
+        The window is simulated by settling the row between the two statements.
+        """
+        log_id = self.x(
+            """
+            INSERT INTO token_issuance_log
+                (trx_id, recipient, units, status, error_message, rationale, issued_at)
+            VALUES ('PENDING', %s, %s, 'PENDING', %s, %s, %s)
+            """,
+            (
+                T_HOLDER,
+                Decimal("1.234"),
+                self.BLOCK_LIMIT_ERROR,
+                "Pending Balance Conversion",
+                datetime.now(timezone.utc) - timedelta(days=60),
+            ),
+        ).lastrowid
+
+        real_conn = self.conn
+
+        class _SettlesAfterTheSelect:
+            """Passes everything through, settling the row once the SELECT is done."""
+
+            def __init__(self):
+                self.calls = 0
+
+            def exec_driver_sql(self, sql, params=()):
+                result = real_conn.exec_driver_sql(sql, params)
+                self.calls += 1
+                if self.calls == 1:  # the SELECT has read its snapshot
+                    real_conn.exec_driver_sql(
+                        "UPDATE token_issuance_log "
+                        "SET status = 'SUCCESS', trx_id = 'chain_landed_after_all' "
+                        "WHERE id = %s",
+                        (log_id,),
+                    )
+                return result
+
+        failed = fail_pending_with_proven_non_inclusion(_SettlesAfterTheSelect())
+        self.assertEqual(failed, 0)
+        self.assertEqual(
+            self.x(
+                "SELECT status, trx_id FROM token_issuance_log WHERE id = %s", (log_id,)
+            ).fetchone(),
+            ("SUCCESS", "chain_landed_after_all"),
+        )
+
+
 class BroadcastThrottleTests(unittest.TestCase):
     """The 5-custom_json-per-block budget belongs to the issuer account, not to
     any one loop, so pacing lives in hivesbi.issue and applies to every path."""
@@ -853,6 +953,114 @@ class BroadcastThrottleTests(unittest.TestCase):
         self.assertEqual(log, ["engine", "engine"])
         slept.assert_called_once()
         self.assertAlmostEqual(slept.call_args[0][0], 0.8, places=3)
+
+
+class DefaultIssuerCacheTests(unittest.TestCase):
+    """get_default_token_issuer caches a module-global TokenIssuer.
+
+    hivesbi/parse_hist_op calls it once per Unit Conversion, and building one for
+    real re-reads the active key from the database, reconnects Hive and refetches
+    the account, so the cache is what keeps that off the per-conversion path.
+    These pin the three properties that makes it safe to rely on, and record the
+    one it does not have.
+    """
+
+    def _isolate_default_issuer(self):
+        """Never leak a fake issuer (or a real one) into another test."""
+        saved = issue_module._default_issuer
+        issue_module._default_issuer = None
+
+        def restore():
+            issue_module._default_issuer = saved
+
+        self.addCleanup(restore)
+
+    class _FakeIssuer:
+        """Stands in for TokenIssuer so no key read or Hive connection happens."""
+
+        def __init__(self, built):
+            built.append(self)
+            self.account_name = issue_module.DEFAULT_ISSUER_ACCOUNT
+            self.issued = []
+
+        def issue(self, recipient, amount):
+            self.issued.append((recipient, amount))
+            return {"trx_id": "chain_cached_issuer"}
+
+    def _patch_token_issuer(self, built):
+        return patch.object(
+            issue_module, "TokenIssuer", lambda *a, **kw: self._FakeIssuer(built)
+        )
+
+    def test_issuer_is_constructed_once_and_reused(self):
+        # The whole point of the cache: N calls, one key read.
+        self._isolate_default_issuer()
+        built = []
+        with self._patch_token_issuer(built):
+            first = issue_module.get_default_token_issuer()
+            second = issue_module.get_default_token_issuer()
+            third = issue_module.get_default_token_issuer()
+        self.assertEqual(len(built), 1)
+        self.assertIs(first, second)
+        self.assertIs(second, third)
+
+    def test_issue_default_tokens_goes_through_the_cache(self):
+        # parse_hist_op's Unit Conversion path calls issue_default_tokens, not
+        # get_default_token_issuer directly, so the saving only exists if this
+        # entry point shares the cache.
+        self._isolate_default_issuer()
+        built = []
+        with self._patch_token_issuer(built):
+            issue_module.issue_default_tokens("zz_cache_recipient", 5)
+            issue_module.issue_default_tokens("zz_cache_recipient", 7)
+        self.assertEqual(len(built), 1)
+        self.assertEqual(built[0].issued, [("zz_cache_recipient", 5), ("zz_cache_recipient", 7)])
+
+    def test_a_failed_construction_is_not_cached(self):
+        # If the key read or the Hive connection fails, the global must stay None
+        # so the next call retries. Caching the failure would turn one bad moment
+        # at startup into every issuance failing for the rest of the run.
+        self._isolate_default_issuer()
+
+        def _explode(*args, **kwargs):
+            raise RuntimeError("no active key")
+
+        with patch.object(issue_module, "TokenIssuer", _explode):
+            with self.assertRaises(RuntimeError):
+                issue_module.get_default_token_issuer()
+        self.assertIsNone(issue_module._default_issuer)
+
+        built = []
+        with self._patch_token_issuer(built):
+            recovered = issue_module.get_default_token_issuer()
+        self.assertEqual(len(built), 1)
+        self.assertIs(recovered, built[0])
+
+    def test_a_cached_issuer_that_starts_failing_is_never_rebuilt(self):
+        """Characterisation, not a guarantee: the cache has no invalidation.
+
+        Once built, the same object is handed out for the rest of the process no
+        matter how its broadcasts fare. That is the accepted trade — nectar owns
+        reconnection and node failover beneath TokenIssuer, so a transport fault
+        is not the issuer's to repair — but it does mean a permanently broken
+        issuer stays in place. If that is ever observed in prod, this test is the
+        place the assumption is written down.
+        """
+        self._isolate_default_issuer()
+        built = []
+        with self._patch_token_issuer(built):
+            first = issue_module.get_default_token_issuer()
+
+            def _always_fails(recipient, amount):
+                raise RuntimeError("connection is gone")
+
+            first.issue = _always_fails
+            with self.assertRaises(RuntimeError):
+                issue_module.issue_default_tokens("zz_cache_recipient", 1)
+
+            second = issue_module.get_default_token_issuer()
+        self.assertIs(second, first)
+        self.assertEqual(len(built), 1)
 
 
 if __name__ == "__main__":

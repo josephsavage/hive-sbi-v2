@@ -52,9 +52,22 @@ def mark_issuance_success(conn, log_id, trx_id):
 
 
 def mark_issuance_failure(conn, log_id, error_message):
+    """Settle a write-ahead row as FAILURE: no transaction exists for it.
+
+    trx_id is reset from the PENDING placeholder insert_pending_issuance wrote to
+    UNCAPTURED_TRX_PLACEHOLDER, because a broadcast that failed has no
+    transaction. Leaving 'PENDING' on a settled row would break the invariant
+    every FAILURE row in prod satisfies today - trx_id = 'N/A' means exactly "no
+    transaction" - and audit queries that read it that way would stop seeing
+    these rows.
+    """
     conn.exec_driver_sql(
-        "UPDATE token_issuance_log SET status = 'FAILURE', error_message = %s WHERE id = %s",
-        (error_message, log_id),
+        """
+        UPDATE token_issuance_log
+        SET status = 'FAILURE', trx_id = %s, error_message = %s
+        WHERE id = %s
+        """,
+        (UNCAPTURED_TRX_PLACEHOLDER, error_message, log_id),
     )
 
 
@@ -76,7 +89,7 @@ def record_pending_error(conn, log_id, error_message):
 # can never appear in a block. For these the usual "it might still have landed"
 # caution does not apply, and holding the row PENDING is actively harmful: the row
 # blocks its (recipient, rationale) in issue_balance_tokens, so the member stops
-# being paid until reconciliation proves an absence that was certain all along.
+# being paid while the row waits on an absence that was certain at broadcast time.
 #
 # The bar for adding a marker here is that the node rejected the operation
 # deterministically before inclusion. Anything ambiguous — timeouts, transport
@@ -138,7 +151,15 @@ def fail_pending_with_proven_non_inclusion(conn):
     indexed on its own) and so takes next-key locks across the whole table
     while the unified webserver is reading it.
 
-    Returns the number of rows failed.
+    `AND status = 'PENDING'` re-checks the status the SELECT matched on. The
+    SELECT reads a snapshot but the UPDATE reads current committed data, so
+    without it a row that another connection settled as SUCCESS in between would
+    be overwritten to FAILURE — and that row's balance is already debited, so the
+    member would lose the tokens and the log would deny they were ever issued.
+    The guard makes the transition PENDING -> FAILURE and nothing else.
+
+    Returns the number of rows actually failed, straight from the UPDATE, so a
+    row that settled underneath is reported as not-failed rather than counted.
     """
     if not NEVER_REACHED_CHAIN_MARKERS:
         return 0
@@ -158,20 +179,20 @@ def fail_pending_with_proven_non_inclusion(conn):
     result = conn.exec_driver_sql(
         f"""
         UPDATE token_issuance_log
-        SET status = 'FAILURE'
-        WHERE id IN ({placeholders})
+        SET status = 'FAILURE', trx_id = %s
+        WHERE id IN ({placeholders}) AND status = 'PENDING'
         """,
-        tuple(doomed),
+        (UNCAPTURED_TRX_PLACEHOLDER, *doomed),
     )
-    return result.rowcount or len(doomed)
+    return result.rowcount
 
 
 def has_issuance_for_source(conn, source_trx_id, rationale):
     """True when the origin transaction already has a live issuance row.
 
-    PENDING (in flight / awaiting reconciliation) and SUCCESS rows both block a
-    re-issue for the same source transaction; a FAILURE row (provably never on
-    chain) does not, so a genuine retry stays possible.
+    PENDING (in flight, or held because nothing has proved its fate) and SUCCESS
+    rows both block a re-issue for the same source transaction; a FAILURE row
+    (provably never on chain) does not, so a genuine retry stays possible.
     """
     count = conn.exec_driver_sql(
         """
