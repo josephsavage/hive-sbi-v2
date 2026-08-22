@@ -118,7 +118,9 @@ Production runs these in order each cycle (see `sbirunner.sh`):
 4. `hsbi_liquidpools.py` — liquidity-pool handling
 5. `hsbi_token_snapshot.py` — snapshot Hive Engine tokenholders; issue per-member PIK
    and Pending-Balance-Conversion dividends (immediate, retried next cycle on failure);
-   reconcile prior on-chain issuances; issue the Management 10% (write-ahead, capped)
+   fail stuck PENDING issuances whose recorded error proves the broadcast never
+   reached the chain, and alert on any that carry no such proof; issue the
+   Management 10% (write-ahead, capped)
 6. `hsbi_claim_rewards.py` — claim HIVE/HBD/VESTS rewards for operator accounts
 7. `hsbi_update_member_db.py` — recompute member shares/balances
 8. `hsbi_store_member_hist.py` — append member history
@@ -154,9 +156,22 @@ when touching it, add cases to `tests/test_memo.py`.
 ## Git
 
 - Remote: `josephsavage/hive-sbi-v2` (private). Author: josephsavage.
-- `gh` CLI is not available here — provide PR text for manual creation.
+- `gh` CLI is installed and authenticated as `josephsavage`, so PRs can be opened
+  directly (`gh pr create --base main`). Branch protection on `main` reports
+  `mergeable_state: blocked` until review/checks pass — that is not a conflict.
 - Confirm before pushing. Don't push directly to the main branch; use feature
   branches.
+- **PRs are squash-merged.** A local feature branch therefore keeps its
+  pre-squash commits and looks "N commits ahead" of `main` forever, even after it
+  has landed. Commit counts prove nothing here; compare trees before assuming
+  work is unmerged:
+
+  ```sh
+  git diff --stat <branch> origin/main   # empty output = already in main
+  ```
+
+  When starting fresh work, branch from `origin/main`, not from a stale local
+  branch, or the PR replays already-merged history.
 
 ## Reference
 

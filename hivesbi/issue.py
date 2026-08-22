@@ -1,5 +1,6 @@
 """Hive Engine token issuance helpers for HSBIDAO."""
 
+import time
 from typing import Optional
 
 from nectar.account import Account
@@ -11,6 +12,43 @@ from hivesbi.storage import KeysDB
 DEFAULT_ISSUER_ACCOUNT = "hivesbi"
 DEFAULT_TOKEN_SYMBOL = "HSBIDAO"
 DEFAULT_KEY_TYPE = "active"
+
+# Hive rejects the 6th custom_json an account broadcasts inside one 3-second
+# block ("Account hivesbi already submitted 5 custom json operation(s) this
+# block"). Every Hive Engine issue/transfer is one custom_json from the same
+# issuer account, so the budget is per account per block — it cannot be
+# respected by any single loop. hsbi_token_snapshot alone drives three
+# independent broadcast loops (pik, Pending Balance Conversion, Management) and
+# hivesbi/parse_hist_op adds Unit Conversion, so the pacing lives here, at the
+# one place every broadcast passes through.
+#
+# One second between broadcast starts puts at most 3 ops in a block, leaving
+# headroom for whatever another process broadcasts from the same account.
+#
+# This is deliberately slower than the limit strictly requires, and the cost is
+# real: the scheme it replaced slept 3s every 5 issuances (0.6 s/issuance), so at
+# the measured peak (~766 issuances per 144-minute cycle) hsbi_token_snapshot now
+# spends ~12.8 min per cycle pacing instead of ~7.7 min, and sbirunner.sh is
+# sequential — every downstream job, hsbi_upvote_post_comment included, starts
+# that much later. 0.75 would still keep 4 ops/block. The extra margin is kept
+# because the ceiling is shared with processes this one cannot see, and losing a
+# broadcast to the block limit costs a stuck PENDING row and a skipped member.
+BROADCAST_MIN_INTERVAL = 1.0
+
+# Keyed by account name, measured from the START of the previous broadcast so
+# the network round trip counts toward the interval instead of being added on
+# top of it.
+_last_broadcast_started: dict[str, float] = {}
+
+
+def throttle_broadcast(account_name: str) -> None:
+    """Block until `account_name` may safely broadcast another custom_json."""
+    previous = _last_broadcast_started.get(account_name)
+    if previous is not None:
+        wait = BROADCAST_MIN_INTERVAL - (time.monotonic() - previous)
+        if wait > 0:
+            time.sleep(wait)
+    _last_broadcast_started[account_name] = time.monotonic()
 
 
 class TokenIssuer:
@@ -56,6 +94,7 @@ class TokenIssuer:
         """
         if amount <= 0:
             raise ValueError("Amount must be positive")
+        throttle_broadcast(self.account_name)
         return self.engine_wallet.issue(recipient, amount, self.token_symbol)
 
     def transfer(
@@ -92,6 +131,9 @@ class TokenIssuer:
         )
 
         if use_engine:
+            # Base-chain HIVE/HBD transfers are not custom_json and carry no
+            # per-block limit, so only the engine path is throttled.
+            throttle_broadcast(self.account_name)
             return self.engine_wallet.transfer(recipient, amount, symbol, memo=memo)
 
         memo_text = memo or ""
@@ -100,10 +142,23 @@ class TokenIssuer:
         )
 
 
-def get_default_token_issuer() -> "TokenIssuer":
-    """Return a cached `TokenIssuer` configured for default HSBIDAO issuance."""
+_default_issuer: Optional["TokenIssuer"] = None
 
-    return TokenIssuer()
+
+def get_default_token_issuer() -> "TokenIssuer":
+    """Return a cached `TokenIssuer` configured for default HSBIDAO issuance.
+
+    Cached because hivesbi/parse_hist_op calls this once per Unit Conversion,
+    and rebuilding the issuer each time re-reads the active key, reconnects Hive
+    and refetches the account. Note this is not what makes broadcast pacing work:
+    `_last_broadcast_started` is module state keyed by account name, so throttling
+    survives a rebuilt issuer either way.
+    """
+
+    global _default_issuer
+    if _default_issuer is None:
+        _default_issuer = TokenIssuer()
+    return _default_issuer
 
 
 def issue_default_tokens(recipient: str, amount: float) -> dict:

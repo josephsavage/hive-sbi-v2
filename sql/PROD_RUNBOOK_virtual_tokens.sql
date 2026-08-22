@@ -18,14 +18,59 @@
 USE `sbi`;
 
 -- -----------------------------------------------------------------------------
--- PROD STATE MEASURED 2026-07-28 (re-run the pre-checks; do not trust this blind)
---   step 1 virtual_tokens column ................. ALREADY APPLIED — skip
---   step 2 tokens generated expression ........... ALREADY APPLIED — skip
---   step 3 status enum includes 'PENDING' ........ ALREADY APPLIED — skip
---   step 4 source_trx_id column + index .......... NOT APPLIED — run this
--- i.e. prod is post-#138 / pre-#139. Step 4 is the only DDL required, and it must
--- land BEFORE the code deploy (insert_pending_issuance writes source_trx_id on
--- every issuance) and BEFORE the LEGACY CLEANUP backfill at the bottom.
+-- PROD STATE
+--   measured 2026-07-28:
+--     step 1 virtual_tokens column ................. APPLIED
+--     step 2 tokens generated expression ........... APPLIED
+--     step 3 status enum includes 'PENDING' ........ APPLIED
+--   reported applied 2026-08-21:
+--     step 4 source_trx_id column + index .......... APPLIED
+--
+-- Every step in this runbook is live in prod, so there is NO DDL left to run.
+-- PR #140 adds none of its own: it changes only how a PENDING issuance row is
+-- settled, and it settles it from the error already stored on the row (see THE
+-- REMIT in hsbi_token_snapshot.py), which needs no column and no index prod does
+-- not already have.
+--
+-- An earlier draft of #140 did add last_resolution_attempt and idx_status_attempt
+-- to schedule per-row Hive Engine lookups. That path was dropped: every PENDING
+-- row prod has accumulated carries an error that already proves its own fate, so
+-- the lookups had nothing to decide. Neither object exists in prod and neither
+-- should be created.
+--
+-- Re-run the pre-checks anyway before any deploy — do not trust this block blind.
+-- The APPLY section below is kept as the record of how prod reached this state,
+-- and for building an environment from scratch.
+--
+-- The LEGACY CLEANUP section at the bottom is separate one-off remediation for a
+-- PR #138 artifact. Its status is NOT recorded here; measure it with its own
+-- first query before assuming it has or has not been run.
+-- -----------------------------------------------------------------------------
+
+-- -----------------------------------------------------------------------------
+-- PR #140 DEPLOY CHECK — no DDL, but the first post-deploy cycle moves rows.
+--
+-- reconcile_recent_issuances fails every PENDING row whose stored error proves
+-- the broadcast never reached the chain, and the next cycle reissues each one.
+-- Run this BEFORE the deploy to know how many rows that should be, and again
+-- after the first cycle to confirm it happened.
+--
+-- Measured 2026-08-21, pre-deploy: 322,562 rows — 322,430 SUCCESS, 84 FAILURE,
+-- 48 PENDING, and all 48 PENDING carried HIVE_CUSTOM_OP_BLOCK_LIMIT. So expect
+-- all 48 to move to FAILURE on the first cycle and be reissued.
+--
+-- LOCATE, not LIKE: '_' is a LIKE wildcard, and a pattern built from the marker
+-- would also match errors the code deliberately leaves PENDING.
+--
+-- A PENDING row WITHOUT that marker is the case nothing settles automatically.
+-- warn_stuck_pending prints it every cycle once it is 6h old, and it has to be
+-- resolved by hand — its docstring says what evidence to gather.
+SELECT status,
+       COUNT(*) AS rows_in_status,
+       SUM(LOCATE('HIVE_CUSTOM_OP_BLOCK_LIMIT', COALESCE(error_message, '')) > 0)
+           AS proven_never_on_chain
+FROM token_issuance_log
+GROUP BY status;
 -- -----------------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------------

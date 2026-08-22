@@ -18,7 +18,7 @@ from hivesbi.issuance_log import (
     insert_pending_issuance as _insert_pending_token_issuance,
     issue_trx_id as _issue_trx_id,
     mark_issuance_success as _mark_token_issuance_success,
-    record_pending_error as _record_token_issuance_error,
+    record_broadcast_error as _record_token_issuance_error,
 )
 from hivesbi.issue import TokenIssuer, issue_default_tokens
 from hivesbi.memo_parser import MemoParser

@@ -1,5 +1,408 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## Token issuance: settled-row shape and sweep guard (PR #140 review)
+
+Three review findings on the block-limit work above. All three are in the paths
+that move a row off PENDING; none change what is allowed to move it.
+
+### A settled FAILURE row no longer keeps the `PENDING` trx_id
+
+`insert_pending_issuance` stamps `trx_id = 'PENDING'` because the transaction id
+is not known yet, and neither `mark_issuance_failure` nor the sweep used to
+replace it. Before this PR nothing ever moved an intent row to FAILURE, so every
+one of prod's 84 FAILURE rows carries `'N/A'` — which is how "no transaction
+exists" is spelled in this table, and what the PR's own measurement relies on.
+Both paths now write `UNCAPTURED_TRX_PLACEHOLDER`, so that invariant still holds
+after deploy and a settled row cannot be misread as in-flight.
+
+### The sweep only ever moves PENDING -> FAILURE
+
+`fail_pending_with_proven_non_inclusion` SELECTs matching rows and then UPDATEs
+them by id. The SELECT reads a snapshot; the UPDATE reads current committed data.
+A row another connection settled as SUCCESS in between would have been flipped to
+FAILURE — and its balance is already debited, so the member would lose the tokens
+while the log denied they were ever issued. `AND status = 'PENDING'` on the UPDATE
+closes it. The count now comes straight from `rowcount` rather than falling back
+to `len(doomed)`, so a row that settled underneath is reported as not-failed
+instead of counted as failed.
+
+### Docstrings match the code
+
+`issue_balance_tokens`, `has_issuance_for_source`, the marker comment in
+`issuance_log`, and the tests module header all still described reconciliation
+completing rows from chain history — machinery this PR deletes.
+
+### Tests
+
+50 -> 57. The three new `SettledRowShapeTests` are mutation-verified: each fails
+against the pre-fix code, and the race test simulates the window by settling the
+row between the sweep's SELECT and its UPDATE.
+
+`DefaultIssuerCacheTests` covers `get_default_token_issuer`'s caching, which was
+added by this PR untested: built once and reused, shared by
+`issue_default_tokens` (the Unit Conversion entry point), and — importantly — a
+failed construction is NOT cached, so one bad moment at startup cannot make every
+issuance for the rest of the run fail. The last test records what the cache does
+not do: it has no invalidation, so a permanently broken issuer stays in place.
+That is the accepted trade, since nectar owns reconnection and node failover
+beneath `TokenIssuer`, and it is now written down where it can be revisited.
+
+## Token issuance: chain lookups removed, no DDL (PR #140)
+
+The previous commit reduced reconciliation from a bulk chain scan to a per-row
+Hive Engine lookup. Production data says that lookup has never had a row to act
+on, so it is removed too, and with it the only reason this PR needed a schema
+change.
+
+**The measurement** (prod, 2026-08-21) — `token_issuance_log` holds 322,562 rows:
+322,430 SUCCESS, 84 FAILURE, 48 PENDING.
+
+- All 48 PENDING carry a `HIVE_CUSTOM_OP_BLOCK_LIMIT` error. Zero carry any other
+  error, and zero carry none at all.
+- `fail_pending_with_proven_non_inclusion` therefore fails all 48 from what is
+  already stored on the row, before any lookup runs. It costs one read and 48
+  keyed updates and no network.
+- So `resolve_pending_issuances` selected from an empty set. Every row it exists
+  to settle had already been settled by the check in front of it.
+- The 84 `trx_id = 'N/A'` rows are exactly the 84 FAILUREs (31 abc + 53 pik): a
+  failed broadcast has no transaction, so the placeholder was written on failure.
+  There are no SUCCESS rows with an uncaptured trx_id, which means the
+  uncaptured-sibling guard could never match either.
+
+### Removed
+
+- `resolve_pending_issuances` and `_complete_balance_issuance_effect`, with
+  `CHAIN_MATCH_WINDOW`, `MATCH_CLOCK_SKEW`, `MAX_RESOLUTION_LOOKUPS`,
+  `RESOLUTION_TIME_BUDGET` and `RESOLVABLE_RATIONALES`.
+- The Hive Engine history client in `hivesbi/issue.py` — `get_history_url`,
+  `_get_history_page`, `fetch_issues_to_recipient`, the `HISTORY_*` constants and
+  the `_history_url_cache`. This existed only to serve resolution.
+- The `httpx` dependency, from both `setup.py` and `requirements-dev.txt`. It was
+  added by this PR and nothing else uses it, so both files are now byte-identical
+  to `main`.
+- `record_resolution_attempt`, and the queue rotation it stamped.
+
+`hsbi_token_snapshot.py` 612 -> 373 lines (782 on `main`), `hivesbi/issue.py`
+379 -> 236 (181 on `main`), tests 1352 -> 859 (1203 on `main`). 20 tests removed,
+one added.
+
+### Schema
+
+**None.** This PR now ships no DDL at all.
+
+`last_resolution_attempt` and `idx_status_attempt` are dropped from
+`docker/mariadb/init/01-sbi-schema.sql`, which is again identical to `main`, and
+step 5 is gone from `sql/PROD_RUNBOOK_virtual_tokens.sql`. Step 4 (#139's
+`source_trx_id`) was confirmed applied in prod on 2026-08-21, so every step in
+that runbook is now live and it stands as a record rather than a deploy step. The
+runbook keeps one new query: a pre/post-deploy count of PENDING rows by proven
+cause, so the operator can confirm the first cycle cleared what it should.
+
+### What this gives up
+
+A PENDING row whose recorded error does *not* prove non-inclusion — a timeout, a
+transport failure, a process killed between broadcast and the outcome write — is
+now held PENDING until an operator settles it. It blocks that member's dividends
+for that rationale while it sits there, and `warn_stuck_pending` prints it every
+cycle once it is 6h old.
+
+That is the deliberate trade. Settling such a row automatically means asking a
+node chosen at runtime whether an issuance exists and then minting or debiting on
+its answer; a wrong answer is unrecoverable in both directions, and the guard
+against a lying node was itself untestable against real data. An unpaid member is
+recoverable, a double mint is not. `warn_stuck_pending`'s docstring now says what
+evidence to gather and what to write. No row of this kind has occurred in prod.
+
+`PureLogicTests.test_no_chain_history_client_is_reachable` fails if a lookup
+helper comes back, so the decision has to be re-argued rather than drifted into.
+
+## Token issuance: reduced to the remit (PR #140)
+
+The two commits above fixed the stall, then grew a chain-reconciliation engine
+around it. This one removes everything in that engine that does not change a
+token outcome. Net: `hsbi_token_snapshot.py` 1096 -> 612 lines, the test file
+2032 -> 1352, and the cost of a reconciliation pass drops from an unconditional
+walk of up to 10,000 issuer ops every cycle to zero requests when nothing is
+stuck.
+
+**The remit, written down so the next change can be checked against it.** Four
+paths issue HSBIDAO, and each already retries safely on its own. What none of
+them survives is an issuance that reached the chain while the record that would
+stop it being repeated did not get written:
+
+| Path | Ledger of record | Only economically meaningful failure |
+| --- | --- | --- |
+| pik | `tokenholders.pik` | issued, not debited -> reissued next cycle -> **double mint** |
+| Pending Balance Conversion | `tokenholders.abc_pik` | same -> **double mint** |
+| Management | `SUM(units)` in this log | issued, not logged -> cap undercounts -> **management overpaid** |
+| Unit Conversion | `source_trx_id` guard | same source op processed twice (already guarded) |
+
+For pik and Pending Balance Conversion the log row is *not* the ledger — the
+balance column is. The balance is debited only in the same transaction that
+records SUCCESS, so a broadcast that fails leaves it intact and next cycle simply
+reissues. The log row exists purely to carry enough information to perform that
+debit later if the process died between broadcast and debit.
+
+So the only question this code needs to answer, one row at a time, is **"did
+recipient R receive exactly U HSBIDAO from us in [T - skew, T + window]?"**
+`fetch_issues_to_recipient` answers it in one small request.
+
+### Removed
+
+- **The bulk chain scan and everything it needed.** `fetch_recent_chain_issuance_scan`,
+  `fetch_recent_chain_issuances`, `_parse_engine_issue`, `_unwrap_history_op`,
+  `reconcile_issuances`, `_match_pending_rows_to_chain`, `_find_logged_success_for_chain_issue`,
+  `_chain_issue_matches_pending`, `_chain_issue_matches_logged_success`,
+  `_chain_sort_key`, `_rank_by_proximity`, `_proximity_is_tied`, and the constants
+  `CHAIN_SCAN_LOOKBACK`, `HISTORY_SCAN_LIMIT`, `SCAN_TRUNCATION_MARGIN`.
+
+  It walked the issuer's whole `custom_json` stream and matched it against the log
+  in bulk. That is the operation that caused #138 (every Unit Conversion
+  duplicated under a bogus `reconciled` rationale), and every subsequent release
+  has spent its review budget on the machinery built to make bulk matching safe:
+  coverage windows, issue-first matching, proximity ranking, tie-breaks,
+  contested rows. None of it changes a token outcome. Chain transactions carry no
+  rationale, so which trx_id lands on which log row is audit metadata; every
+  candidate carries the same units by construction, so a swapped attribution
+  costs audit precision and never tokens.
+
+  Worse, the bulk matcher *manufactured* the ambiguity it then managed: matching
+  issue-first across all rows can hand a chain issue to the wrong PENDING row,
+  and because SUCCESS triggers `_complete_balance_issuance_effect`, that debits
+  the wrong member's balance. The per-row question cannot produce that error at
+  all — it is scoped to one row by construction.
+
+- **`N/A` placeholder completion.** `complete_uncaptured_success` and the Pass-1
+  loop that fed it. nectar's `TransactionBuilder.broadcast` sets
+  `ret["trx_id"] = sign_ret.id` whenever the RPC reply lacks one, and
+  `Wallet.issue` returns that dict unchanged, so `UNCAPTURED_TRX_PLACEHOLDER` is
+  unreachable on new rows. The one guard kept for it (a legacy `N/A` sibling with
+  a claim on the same issue) is kept because it prevents a double debit on rows
+  written before that was true, and is now labelled as legacy-only.
+
+- **The unexplained-issuance report.** An on-chain issuance with no log row is
+  self-correcting for Management: `sync_tokenholders` refreshes `outstanding`
+  from chain, so unlogged supply raises the 10% base and management receives its
+  share automatically. Reporting it changed nothing.
+
+- **The truncation alert** and the `complete` / `covered_since` / `covered_until`
+  coverage protocol. With no bulk walk there is nothing to truncate.
+
+### Kept, and why
+
+- `throttle_broadcast` — removes the *cause* of the stall (the 5-custom_json
+  per-block limit). Worth more than every resolver downstream.
+- `never_reached_chain` / `record_broadcast_error` / `fail_pending_with_proven_non_inclusion`
+  — classify the common failure at broadcast time and retroactively, at zero
+  network cost. These alone fix the reported production bug.
+- `resolve_pending_issuances` (was `resolve_pending_beyond_scan`) — the per-row
+  lookup, with its row cap, time budget and `last_resolution_attempt` rotation.
+  **Superseded:** removed entirely by the entry above.
+- The write-ahead insert, debit-in-the-same-transaction-as-SUCCESS,
+  `has_issuance_for_source`, and the Management cap counting SUCCESS + PENDING.
+
+### Changed
+
+- **Unit Conversion is excluded from resolution** (`RESOLVABLE_RATIONALES`). It
+  has no balance to debit and nothing ever retries it — the source transfer op is
+  not reprocessed — so every possible verdict is an economic no-op, while a wrong
+  SUCCESS would permanently deny a member the units they converted. Previously
+  those rows consumed the 200-lookup budget and competed with pik/abc rows that
+  do matter. A stuck Unit Conversion row is an operator matter; `warn_stuck_pending`
+  announces it.
+- **`fetch_issues_to_recipient` re-checks `symbol` locally.** It was passed as a
+  query param and trusted, while the time window next to it was deliberately
+  re-checked against exactly the same risk — the history endpoint comes from a
+  beacon at runtime. A node that ignored `symbol` would return the recipient's
+  other Hive Engine tokens; one carrying the same numeric quantity would mark the
+  row SUCCESS and debit a balance for HSBIDAO never received.
+- **Multiple candidates pick by `(nearest, trx_id)`**, a total order, replacing
+  proximity ranking plus a separate tie-break. The old tie-break re-sorted *every*
+  candidate by trx_id rather than just the tied ones, so with three candidates and
+  a tie between the closest two it could select the furthest.
+- `MAX_BEYOND_SCAN_LOOKUPS` -> `MAX_RESOLUTION_LOOKUPS`,
+  `BEYOND_SCAN_TIME_BUDGET` -> `RESOLUTION_TIME_BUDGET`.
+
+### Schema
+
+Unchanged from the previous commit — `last_resolution_attempt` and
+`idx_status_attempt` are still required, and step 5 of
+`sql/PROD_RUNBOOK_virtual_tokens.sql` is still the prod DDL. It must still be
+applied **before** the code deploy.
+
+**Superseded:** the entry above removes both objects and step 5. This PR ships no
+DDL.
+
+## Token issuance: block-limit stall
+
+Symptom: an account with regular Pending Balance Conversions stopped being paid.
+Its last attempt held `error_message = "Assert Exception:insert_info.first->second
+<= HIVE_CUSTOM_OP_BLOCK_LIMIT: Account hivesbi already submitted 5 custom json
+operation(s) this block."`, stayed PENDING for a week, and blocked every later
+conversion for that member (`issue_balance_tokens` skips a member holding a live
+PENDING row for the same rationale).
+
+- **A provably-rejected broadcast now fails its row immediately.** Hive asserts
+  away the 6th `custom_json` an account submits in one block, so that operation can
+  never appear on chain and there is nothing for reconciliation to discover.
+  `record_broadcast_error` fails the row on such errors and the next cycle simply
+  re-issues; balances are untouched, so the retry pays the full amount. Ambiguous
+  errors (timeouts, transport failures, anything unrecognized) still stay PENDING —
+  failing a row that did reach the chain would mint the tokens twice. The marker
+  list is `hivesbi.issuance_log.NEVER_REACHED_CHAIN_MARKERS`; the bar for adding to
+  it is that the node rejected the operation deterministically before inclusion.
+- **One unreachable PENDING row no longer blocks every other row.** A scan that ran
+  out of op budget before reaching its cutoff used to report
+  `covered_since=None`/`complete=False`, and `reconcile_issuances` gated *all*
+  failure-resolution on that scan-wide flag. Because the lookback is extended to
+  cover the oldest PENDING row, one row older than the scan could reach made every
+  later pass truncate — so nothing could ever resolve, for anyone, and the condition
+  reinforced itself as the row aged. A truncated scan now reports the span it
+  actually walked (`covered_since = oldest op inspected + one block`), coverage is
+  judged per row, and the `scan_complete` parameter is gone.
+- **A stuck row is failed from its own recorded error, for free.**
+  `record_pending_error` stores the raised broadcast error on the row, so a row
+  stranded before `record_broadcast_error` existed already carries the proof of its
+  own rejection. `fail_pending_with_proven_non_inclusion` applies the same marker
+  list to `error_message` in one UPDATE with no network at all, and runs first in
+  every reconciliation pass. It is the same decision `record_broadcast_error` makes
+  at broadcast time, made late — so adding a marker also retroactively clears
+  historical rows carrying that error.
+- **The scan window no longer grows.** It used to be widened to cover the oldest
+  PENDING row, which scaled the op budget with it and pinned it at its ceiling on
+  every cycle for as long as one unresolvable row existed — tens of thousands of
+  ops (`history_reverse` batches 1000 per call) re-walked each pass to rediscover
+  a single row's fate. The lookback is now fixed at `CHAIN_SCAN_LOOKBACK`, so an
+  ordinary cycle exits at `reached_cutoff` after a few hundred ops.
+  `HISTORY_SCAN_HARD_LIMIT` and the extension are gone.
+- **Rows older than the scan's reach are resolved individually against Hive
+  Engine.** `resolve_pending_beyond_scan` asks the Hive Engine history API whether
+  one specific issuance exists, scoped to the recipient, the symbol and that row's
+  own 35-minute match window (`fetch_issues_to_recipient`). Cost is one small
+  request per stuck row regardless of its age, where the bulk scan's reach is
+  bounded by issuer op volume. Reaching this path means the row carries no proof of
+  its own fate — the sweep above has already failed everything that does — so what
+  is left is a timeout, a transport failure, or a process that died between the
+  write-ahead insert and either outcome write.
+  - The row's window is re-checked **locally** rather than trusted to the remote
+    `timestampStart`/`timestampEnd`: the history endpoint is chosen from a beacon at
+    runtime, and a node that silently ignored those params would return the
+    recipient's most recent issues instead. Matching one of those would mark the row
+    SUCCESS and debit a balance against an issuance never made for it.
+  - Lookups run **outside** the reconciliation transaction (each can block for the
+    httpx timeout) and are capped at `MAX_BEYOND_SCAN_LOOKUPS` rows **and**
+    `BEYOND_SCAN_TIME_BUDGET` of wall clock per pass, least-recently-attempted
+    first, so a backlog drains over consecutive cycles.
+  - `covered_since=None` — the scan's own history fetch failed — now means "no row
+    is covered" rather than "resolve nothing": this path does not depend on that
+    scan, and skipping it would let one failing API disable resolution for everyone.
+  - Uncertainty leaves the row PENDING: untrusted response, unelapsed match
+    window, an issue outside the row's window, or an uncaptured sibling with a claim
+    on it. Multiple candidates are resolved by proximity, not deferred — see below.
+- **Broadcast pacing moved to the issuer.** The 5-per-block budget belongs to the
+  issuer account across the whole process, not to any one loop, so the previous
+  "sleep 3s every 5 issuances" inside `issue_balance_tokens` could not enforce it —
+  the pik loop, the Pending Balance Conversion loop, Management and Unit Conversion
+  all broadcast from `hivesbi`. `hivesbi.issue.throttle_broadcast` now spaces every
+  Hive Engine broadcast by `BROADCAST_MIN_INTERVAL` (1s, so at most 3 ops per
+  block), measured from the start of the previous broadcast so a slow round trip
+  pays no extra tax. `get_default_token_issuer` is now genuinely cached, as its
+  docstring always claimed.
+
+## Token issuance: code-review fixes on the above (PR #140)
+
+Four of these were paths to **double-minting HSBIDAO**: a PENDING row wrongly
+marked FAILURE is re-issued next cycle while the member's balance was never
+debited, and an on-chain mint cannot be undone.
+
+- **The PENDING sweep no longer matches by SQL `LIKE`.**
+  `fail_pending_with_proven_non_inclusion` interpolated each marker into
+  `error_message LIKE '%…%'`, where `_` is a single-character wildcard — so
+  `HIVE_CUSTOM_OP_BLOCK_LIMIT` also matched messages `never_reached_chain()`
+  rejects, and the two paths were not the "single bar" the docstring claimed. The
+  sweep now selects PENDING rows and applies `never_reached_chain` in Python, so
+  the predicate is literally shared, then updates by primary key. That also drops
+  an unindexed full-table UPDATE that took next-key locks across
+  `token_issuance_log` while the unified webserver read it.
+- **An exhausted history walk no longer claims coverage of all time.** When the
+  generator ended before reaching the cutoff, the scan reported
+  `covered_since = datetime.min` on the theory that a history which ended was
+  walked in full. But an exhausted iterator and one that stopped early are
+  indistinguishable from there, and `HISTORY_SCAN_LIMIT` is exactly 10× nectar's
+  1000-op `history_reverse` batch, so a batch-boundary stop landed in that branch
+  by construction — failing every settled PENDING row in a single pass. Coverage
+  now always ends at the oldest op actually inspected; older rows fall through to
+  the per-row lookup, which is what it exists for.
+- **The Hive Engine history lookup pages past the endpoint's silent clamp.**
+  `accountHistory` clamps `limit` to 500 — asking for 1000 returns exactly 500 rows
+  with no error and no truncation indicator (verified against both beacon
+  endpoints), so a cut-off response read as "nothing was issued". It now requests
+  the clamp and pages on `offset` until a short page proves the result set is
+  exhausted; a result needing more than `MAX_HISTORY_PAGES` reads as **unknown**
+  and leaves the row PENDING.
+- **Two rows sharing a window no longer deadlock as PENDING.** With more than one
+  candidate, `resolve_pending_beyond_scan` deferred. Deferring is correct in the
+  bulk matcher — a contested row resolves once its sibling records a trx_id — but
+  nothing else ever moves a beyond-scan row, so two rows for the same recipient and
+  amount with overlapping windows each saw both issues, each deferred, and stayed
+  PENDING forever: the "member silently stops being paid" symptom this path exists
+  to cure. It now takes the candidate nearest its own intent timestamp (the bulk
+  matcher's discriminator, shared via `_rank_by_proximity`), breaking exact ties by
+  trx_id. Every candidate carries the same units by construction, so a swapped
+  attribution costs trx_id accuracy in the audit trail, never tokens.
+
+And on availability and correctness of attribution:
+
+- **The uncaptured-sibling guard covers the sibling's own reach.** A sibling claims
+  any issue in `[its issued_at - MATCH_CLOCK_SKEW, its issued_at + CHAIN_MATCH_WINDOW]`,
+  so its claim overlaps ours whenever its `issued_at` is within
+  `CHAIN_MATCH_WINDOW + MATCH_CLOCK_SKEW`. Scoping to `CHAIN_MATCH_WINDOW` alone
+  left a 5-minute blind spot at each end in which a shared issue was handed to the
+  PENDING row, stamping it with the sibling's trx_id and debiting a balance for
+  tokens never issued against it.
+- **One pass is bounded in time, not just in rows.** `MAX_BEYOND_SCAN_LOOKUPS`
+  bounds requests; a history node that hangs rather than errors turned that into
+  cap × timeout (200 × 30s ≈ 100 minutes). `sbirunner.sh` is sequential, so that
+  came straight out of the voting window of every job downstream. There is now a
+  `BEYOND_SCAN_TIME_BUDGET` (5 min) checked between rows, and the per-request
+  timeout dropped from 30s to `HISTORY_REQUEST_TIMEOUT` (10s).
+- **Unresolvable rows rotate instead of starving the queue.** Selection was
+  oldest-first and capped, so 200 rows that could never be settled consumed every
+  lookup every cycle and row 201 never got one — the head-of-line blocking this
+  work removed elsewhere, at a threshold of 200 instead of 1. New column
+  `token_issuance_log.last_resolution_attempt` is stamped on **every** attempt,
+  including those that leave the row PENDING, and selection orders by it
+  (never-attempted first).
+- **A transient non-200 no longer costs a whole cycle.** The lookup re-implemented
+  `nectarengine.Api.get_history`'s plumbing but dropped its retry loop, so one 429
+  or 503 meant no progress for that row until the next cycle. It now retries
+  `HISTORY_RETRY_ATTEMPTS` times with backoff.
+- **`history_url` is resolved once per process.** `Api()` builds an RPC pool and
+  consults the beacon (~1.4s cold in the pinned container) and was constructed once
+  per stuck row for a value that never changes within a run.
+- **The token symbol travels with the issuer.** `reconcile_recent_issuances`
+  forwarded `issuer.account_name` but let the symbol default, so a non-HSBIDAO
+  issuer would have had its rows checked against HSBIDAO history, found nothing,
+  and failed every one of them.
+- Housekeeping: `warn_stuck_pending`'s docstring no longer blames an incomplete
+  chain scan (truncation stopped being a cause when coverage became per-row), and
+  the `BATCH_SLEEP_TIME` sleeps in `main()` are gone — they were the loop-granular
+  half of the pacing scheme `throttle_broadcast` replaced, adding 6s a cycle for
+  nothing. `BROADCAST_MIN_INTERVAL` stays at 1.0s, but now documents its latency
+  cost (~12.8 min/cycle at peak vs ~7.7 min under the old 0.6 s/issuance) rather
+  than only its block-budget headroom.
+
+**Schema change** — `token_issuance_log.last_resolution_attempt` plus
+`idx_status_attempt (status, last_resolution_attempt, issued_at)`. The index also
+gives the PENDING sweep and `warn_stuck_pending` something better than a full scan
+of a 159k-row table that grows every cycle. Prod DDL is **step 5 of
+`sql/PROD_RUNBOOK_virtual_tokens.sql`**, with its own pre-/post-checks; run it
+after step 4 so the new column lands at the end of the row and applies instantly.
+**It must be applied before deploying this code** — `resolve_pending_beyond_scan`
+orders by the new column, so every `status = 'PENDING'` query errors on the unknown
+column without it. Dev picks both up from `docker/mariadb/init/01-sbi-schema.sql`
+on a fresh volume (`docker compose down -v`).
+
 ## Delegation rewards → HSBIDAO virtual_tokens (PR #138)
 
 - Delegations no longer grant voting-weight bonus *shares*. On every delegation
