@@ -177,4 +177,4 @@ when touching it, add cases to `tests/test_memo.py`.
 
 `CHANGES.md` is a running log of recent behavioral changes (token issuance, mana
 tracking/accrual scaling, voting eligibility/throttling) — read it to understand
-the most recent intent before editing those areas.
+the most recent intent before editing those areas. Ask before refactoring.
