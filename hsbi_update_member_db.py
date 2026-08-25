@@ -281,14 +281,22 @@ def run():
                             timestamp, op["shares"]
                         )
                 elif share_type.lower() in ["delegation"]:
-                    if op["shares"] > 0 and op["sponsor"] in member_data:
-                        # print("del. bonus_shares: %s - %d" % (op["sponsor"], op["shares"]))
-                        delegation[op["sponsor"]] = op["shares"]
-                    elif op["vests"] > 0 and op["sponsor"] in member_data:
-                        sp = hv.vests_to_hp(float(op["vests"]))
-                        delegation[op["sponsor"]] = int(sp / hp_share_ratio)
-                    # memo_hp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], hp_share_ratio)
-                    delegation_timestamp[op["sponsor"]] = timestamp
+                    if op["sponsor"] in member_data:
+                        if op["shares"] > 0:
+                            # print("del. bonus_shares: %s - %d" % (op["sponsor"], op["shares"]))
+                            delegation[op["sponsor"]] = op["shares"]
+                        elif op["vests"] > 0:
+                            sp = hv.vests_to_hp(float(op["vests"]))
+                            delegation[op["sponsor"]] = int(sp / hp_share_ratio)
+                        else:
+                            # A cleared Delegation row (shares=vests=0, written by
+                            # hsbi_check_delegation.clear_delegation_trx) must win
+                            # over any earlier, still-nonzero Valid Delegation row
+                            # for this account, since new_delegation_record is
+                            # append-only and never invalidates prior rows.
+                            delegation[op["sponsor"]] = 0
+                        # memo_hp_delegation(transferMemos, memo_transfer_acc, op["sponsor"], delegation[op["sponsor"]], hp_share_ratio)
+                        delegation_timestamp[op["sponsor"]] = timestamp
                 elif share_type.lower() in ["removeddelegation"]:
                     delegation[op["sponsor"]] = 0
                     delegation_timestamp[op["sponsor"]] = None
