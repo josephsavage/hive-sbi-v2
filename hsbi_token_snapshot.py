@@ -16,6 +16,7 @@ from hivesbi.issue import (
     get_tokenholders,
     get_default_token_issuer,
 )
+from hivesbi.lassecash import refresh_lassecash_stakers
 
 
 # Pacing against the 5-custom_json-per-block limit is enforced per broadcast in
@@ -369,6 +370,12 @@ def main():
         # against real circulating supply only.
         sync_tokenholders(db2)
         issue_management_tokens(db2, issuer)
+
+        # LasseCash staker list for hsbi_lassecash_vote. It runs last and never
+        # raises, so a Magi outage cannot affect issuance. It skips itself when
+        # the list is younger than share_cycle_min (the high-VP regime opens
+        # this gate about every 15 minutes).
+        refresh_lassecash_stakers(rt, share_cycle_min)
 
 
 if __name__ == "__main__":

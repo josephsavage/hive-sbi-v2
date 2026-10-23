@@ -1,5 +1,54 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## LasseCash companion vote (`hsbi_lassecash_vote.py`)
+
+LasseCash pays post rewards from a contract on Magi (formerly VSC). A Hive vote
+never reaches that contract; only a `vsc.call` custom_json with action `vote`
+counts. The new job casts that call from `sbi-tokens` on SBI-voted root posts
+that carry the `lassecash` tag, by members whose L-Shares meet the contract's
+viral threshold. The call is its own Hive transaction; the SBI Hive vote and
+`hsbi_upvote_post_comment.py` are unchanged.
+
+### Staker list on the token cycle
+
+`hsbi_token_snapshot.py` calls `refresh_lassecash_stakers` last inside its cycle
+gate. The refresh reads `shr_hive:<member>` for every member from Magi and writes
+`lassecash_stakers`. It skips itself when the list is younger than
+`share_cycle_min`, because the high-VP regime opens the gate about every 15
+minutes. It never raises, so a Magi outage cannot affect issuance. The vote job
+reads only this table and adds no member scan to the vote loop.
+
+### Every vote is dry-run first
+
+The contract checks no tag, no post existence and no age: a dry run registered a
+permlink that does not exist on Hive. The SBI-side tag check is therefore the
+only guard against paying non-LasseCash posts. Before each broadcast the job runs
+`simulateContractCalls`, so the contract's own code decides threshold, window
+and vote power. "author needs" and "voting has closed" refusals skip the post;
+other refusals defer it for up to 3 days.
+
+### Weight and RC
+
+Weight = (30-day regeneration of the post's meter) / (qualifying posts of that
+window in the last 30 days), clamped to 1..100. Viral budget 4,285
+weight-percent, deep 1,000. Magi reserves the whole `rc_limit` for 5 days, so the
+limit is 3x the simulated cost (floor 1,500, ceiling 30,000), as lassecash.com
+sizes it. One vote per run, so each dry run sees the previous vote's meter.
+
+### Rows and settlement
+
+`lassecash_votes` records each post as QUALIFIED or IGNORED (untagged), then
+PENDING (write-ahead) and BROADCAST. The vote record `pv_` or the Magi verdict
+settles a row as SUCCESS or FAILED. A PENDING row with no proof after 30 minutes
+returns to QUALIFIED. A post where `sbi-tokens` already voted is SKIPPED, because
+a second call replaces the weight and spends vote power again.
+
+### Deploy
+
+Create `lassecash_stakers` and `lassecash_votes` in prod (DDL in `sql/sbi.sql`).
+Add the `lassecash` block from `config.example.json` with `enabled: true` and
+`broadcast: false` for the shadow week, then set `broadcast: true`.
+
 ## Token issuance: settled-row shape and sweep guard (PR #140 review)
 
 Three review findings on the block-limit work above. All three are in the paths

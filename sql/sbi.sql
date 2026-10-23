@@ -70,6 +70,50 @@ CREATE TABLE `configuration` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `lassecash_stakers`
+-- (hivesbi/lassecash.py: every member's L-Shares, refreshed on the token cycle)
+--
+
+CREATE TABLE `lassecash_stakers` (
+  `account` varchar(50) NOT NULL,
+  `l_shares` bigint(20) NOT NULL DEFAULT '0',
+  `eligible` tinyint(1) NOT NULL DEFAULT '0',
+  `checked_at` datetime NOT NULL,
+  PRIMARY KEY (`account`),
+  KEY `idx_eligible` (`eligible`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `lassecash_votes`
+-- (hsbi_lassecash_vote.py: one row per SBI-voted post of an eligible staker)
+--
+
+CREATE TABLE `lassecash_votes` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `authorperm` varchar(300) NOT NULL,
+  `author` varchar(16) NOT NULL,
+  `permlink` varchar(256) NOT NULL,
+  `post_created` datetime NOT NULL,
+  `voter` varchar(16) NOT NULL,
+  `vote_window` tinyint(4) NOT NULL DEFAULT '0',
+  `weight` tinyint(4) DEFAULT NULL,
+  `rc_limit` int(11) DEFAULT NULL,
+  `trx_id` varchar(64) DEFAULT NULL,
+  `status` enum('QUALIFIED','IGNORED','PENDING','BROADCAST','SUCCESS','FAILED','SKIPPED') NOT NULL DEFAULT 'QUALIFIED',
+  `error_message` text,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_authorperm` (`authorperm`),
+  KEY `idx_status` (`status`),
+  KEY `idx_window_created` (`vote_window`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `member`
 --
 

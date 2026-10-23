@@ -125,8 +125,13 @@ Production runs these in order each cycle (see `sbirunner.sh`):
 7. `hsbi_update_member_db.py` — recompute member shares/balances
 8. `hsbi_store_member_hist.py` — append member history
 9. `hsbi_upvote_post_comment.py` — vote on eligible member posts
-10. `hsbi_stream_post_comment.py` — stream new posts/comments into the queue
-11. `hsbi_manage_accrual.py` — track fleet mana and scale rshares-per-cycle
+10. `hsbi_lassecash_vote.py` — cast the LasseCash (Magi `vsc.call`) companion vote
+    from `sbi-tokens` on SBI-voted `lassecash` posts by members on the staker list.
+    `hsbi_token_snapshot.py` refreshes that list (`lassecash_stakers`) at most once per
+    `share_cycle_min`. Off unless `config.json` `lassecash.enabled`; signs only with
+    `lassecash.broadcast`
+11. `hsbi_stream_post_comment.py` — stream new posts/comments into the queue
+12. `hsbi_manage_accrual.py` — track fleet mana and scale rshares-per-cycle
 
 `hsbi_update_curation_rshares.py` and `hsbi_reset_rshares.py` exist but are
 **disabled** in the runner. The blacklist job runs separately on a daily systemd
@@ -137,8 +142,9 @@ and this list together.
 
 Scripts that **vote, transfer, claim rewards, issue tokens, or sign any
 blockchain operation are live** (`hsbi_upvote_post_comment.py`, `hsbi_transfer.py`,
-`hsbi_claim_rewards.py`, `hsbi_token_snapshot.py`, anything using `make_hive` with
-keys, and `hivesbi/issue.py`). **Never put production Hive keys in a local
+`hsbi_claim_rewards.py`, `hsbi_token_snapshot.py`, `hsbi_lassecash_vote.py` when
+`lassecash.broadcast` is on, anything using `make_hive` with keys, and
+`hivesbi/issue.py`). **Never put production Hive keys in a local
 `config.json`**, and assume an unfamiliar `hsbi_*` script can broadcast unless
 proven otherwise. Token issuance goes through `hivesbi/issue.py` (`TokenIssuer`,
 `HSBIDAO` symbol, `hivesbi` issuer account) and is logged to `token_issuance_log`
