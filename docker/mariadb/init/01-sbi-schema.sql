@@ -217,23 +217,26 @@ DROP TABLE IF EXISTS `lassecash_votes`;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `lassecash_votes` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `authorperm` varchar(300) NOT NULL,
+  `authorperm` varchar(300) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL,
   `author` varchar(16) NOT NULL,
-  `permlink` varchar(256) NOT NULL,
+  `permlink` varchar(256) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL,
   `post_created` datetime NOT NULL,
   `voter` varchar(16) NOT NULL,
+  `hive_voted` tinyint(1) NOT NULL DEFAULT 0,
   `vote_window` tinyint(4) NOT NULL DEFAULT 0,
   `weight` tinyint(4) DEFAULT NULL,
   `rc_limit` int(11) DEFAULT NULL,
   `trx_id` varchar(64) DEFAULT NULL,
-  `status` enum('QUALIFIED','IGNORED','PENDING','BROADCAST','SUCCESS','FAILED','SKIPPED') NOT NULL DEFAULT 'QUALIFIED',
+  `broadcast_at` datetime DEFAULT NULL,
+  `status` enum('QUALIFIED','IGNORED','BASELINE','PENDING','BROADCAST','SUCCESS','FAILED','SKIPPED') NOT NULL DEFAULT 'QUALIFIED',
   `error_message` text DEFAULT NULL,
   `created_at` datetime NOT NULL,
   `updated_at` datetime NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_authorperm` (`authorperm`),
   KEY `idx_status` (`status`),
-  KEY `idx_window_created` (`vote_window`,`created_at`)
+  KEY `idx_window_created` (`vote_window`,`created_at`),
+  KEY `idx_author_broadcast` (`author`,`broadcast_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

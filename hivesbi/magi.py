@@ -1,13 +1,16 @@
 """Read-only client for the Magi (formerly VSC) layer-2 GraphQL API.
 
-The client reads contract state, resource credits (RC), transaction verdicts
-and contract dry runs. It never signs or broadcasts anything: a contract call
-reaches Magi as a Hive custom_json, which the caller broadcasts through nectar.
+The client reads contract state, resource credits (RC), transaction verdicts,
+contract call history and contract dry runs. It never signs or broadcasts
+anything: a contract call reaches Magi as a Hive custom_json, which the caller
+broadcasts through nectar.
 
 Every query goes to the first node that answers. The node list and its order
 come from the LasseCash client (api/src/magi-nodes.ts), which fails over the
-same way. On 2026-10-23 api.vsc.eco refused connections while both other nodes
-answered, so a single hard-coded node is not enough.
+same way. On 2026-10-23 api.vsc.eco did not answer while both other nodes
+did, so a single hard-coded node is not enough. A node that hangs costs the
+full timeout, so the client moves the node that answered to the front of its
+list: a dead node then costs one timeout per client, not one per query.
 """
 
 import json
@@ -69,11 +72,12 @@ class MagiClient:
 
         A transport failure moves on to the next node. A GraphQL error does
         not: every node runs the same code, so the next node gives the same
-        answer, and the error names the real fault.
+        answer, and the error names the real fault. The node that answers
+        moves to the front, so later queries skip the nodes that failed.
         """
         body = json.dumps({"query": query, "variables": variables or {}})
         failures = []
-        for url in self.nodes:
+        for url in list(self.nodes):
             try:
                 answer = self._post(url, body, self.timeout)
             except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -87,6 +91,9 @@ class MagiClient:
             if answer.get("data") is None:
                 failures.append(f"{url}: no data in answer")
                 continue
+            if url != self.nodes[0]:
+                self.nodes.remove(url)
+                self.nodes.insert(0, url)
             return answer["data"]
         raise MagiError("all Magi nodes failed: " + " | ".join(failures))
 
@@ -195,3 +202,46 @@ class MagiClient:
             return "FAILED", results[0].get("errMsg") or results[0].get("err")
         except (MagiError, KeyError, TypeError, ValueError):
             return "FAILED", None
+
+    def contract_vote_calls(self, contract_id, from_block, page_size=100, max_pages=200):
+        """Return every `vote` call to the contract since Hive block `from_block`.
+
+        Each item is {"trx_id", "timestamp", "status", "author", "permlink",
+        "weight"}. The author keeps the "hive:" prefix that the payload carries.
+        findTransaction lists newest first in pages. A call that arrives
+        between two pages shifts the offsets, so a caller dedupes by trx_id.
+        max_pages stops a runaway listing with a MagiError.
+        """
+        calls = []
+        for page in range(max_pages):
+            data = self.query(
+                "query($c: String!, $f: Uint64!, $o: Int!, $l: Int!) "
+                "{ findTransaction(filterOptions: "
+                "{byContract: $c, fromBlock: $f, offset: $o, limit: $l}) "
+                "{ id anchr_ts status ops { type data } } }",
+                {"c": contract_id, "f": from_block, "o": page * page_size, "l": page_size},
+            )
+            records = data.get("findTransaction") or []
+            for record in records:
+                for op in record.get("ops") or []:
+                    call = op.get("data") or {}
+                    if (
+                        op.get("type") != "call"
+                        or call.get("contract_id") != contract_id
+                        or call.get("action") != "vote"
+                    ):
+                        continue
+                    fields = str(call.get("payload", "")).split("|")
+                    if len(fields) < 3:
+                        continue
+                    calls.append({
+                        "trx_id": record.get("id"),
+                        "timestamp": record.get("anchr_ts"),
+                        "status": record.get("status"),
+                        "author": fields[0],
+                        "permlink": fields[1],
+                        "weight": fields[2],
+                    })
+            if len(records) < page_size:
+                return calls
+        raise MagiError(f"findTransaction listing exceeded {max_pages} pages")

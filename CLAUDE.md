@@ -92,8 +92,8 @@ docker compose up -d mariadb
 ```
 
 There is no `pytest.ini`/`pyproject.toml` — pytest uses defaults and discovers
-`tests/`. Current coverage is `tests/test_memo.py` (memo-parsing cases, mocked
-`Account`/blockchain) and `tests/test_virtual_tokens.py`. Add tests alongside it.
+`tests/`. [docs/agent/tests.md](docs/agent/tests.md) lists every test file and what
+it covers. Add tests alongside the code, and add a row there for a new test file.
 
 DB-backed tests skip if MariaDB/config is unavailable. Check `docker compose ps` for MariaDB availability before running tests and bring containers up if they are not already running.
 
@@ -126,10 +126,12 @@ Production runs these in order each cycle (see `sbirunner.sh`):
 8. `hsbi_store_member_hist.py` — append member history
 9. `hsbi_upvote_post_comment.py` — vote on eligible member posts
 10. `hsbi_lassecash_vote.py` — cast the LasseCash (Magi `vsc.call`) companion vote
-    from `sbi-tokens` on SBI-voted `lassecash` posts by members on the staker list.
-    `hsbi_token_snapshot.py` refreshes that list (`lassecash_stakers`) at most once per
-    `share_cycle_min`. Off unless `config.json` `lassecash.enabled`; signs only with
-    `lassecash.broadcast`
+    from `sbi-tokens` on `lassecash` root posts by members on the staker list: at
+    once on a post with the SBI Hive vote; on a post without it after the 24-hour
+    Hive window, at most once per author per 24 hours. `hsbi_token_snapshot.py`
+    refreshes that list (`lassecash_stakers`) at most once per `share_cycle_min`.
+    Off unless `config.json` `lassecash.enabled`; signs only with
+    `lassecash.broadcast`. `--backfill` seeds the 30-day weight baseline once, at deploy
 11. `hsbi_stream_post_comment.py` — stream new posts/comments into the queue
 12. `hsbi_manage_accrual.py` — track fleet mana and scale rshares-per-cycle
 
@@ -178,6 +180,14 @@ when touching it, add cases to `tests/test_memo.py`.
 
   When starting fresh work, branch from `origin/main`, not from a stale local
   branch, or the PR replays already-merged history.
+
+## Agent docs and project memory
+
+`docs/agent/` holds the test index (`docs/agent/tests.md`) and the project memory
+(`docs/agent/memory/`, one file per fact). [docs/agent/README.md](docs/agent/README.md)
+indexes both. Read the index before you work in an area it names. Record a new
+project fact there, not in a private memory directory, so every contributor and
+agent reads the same facts.
 
 ## Reference
 

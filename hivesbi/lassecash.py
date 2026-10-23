@@ -3,10 +3,18 @@
 LasseCash rewards posts from a contract on Magi (formerly VSC). A Hive vote
 never reaches that contract: only a `vsc.call` custom_json with action `vote`
 counts. hsbi_lassecash_vote casts that call from one account that holds
-L-Shares (`sbi-tokens`), on member posts that already received the SBI Hive
-vote. The call is its own Hive transaction. The contract never checks for a
-matching Hive vote, and a bundle would let a rejected custom_json also reject
-the SBI Hive vote.
+L-Shares (`sbi-tokens`) on the `lassecash` root posts of members who meet the
+viral threshold:
+
+- A post that received the SBI Hive vote gets the L-cash vote in the same
+  pipeline run, whatever the author's last L-cash vote.
+- A post without the SBI Hive vote becomes a candidate when the upvote job's
+  24 hour window closes. It gets the L-cash vote only when the author's last
+  L-cash vote attempt is at least 24 hours old (LCASH_CAP).
+
+The call is its own Hive transaction. The contract never checks for a matching
+Hive vote, and a bundle would let a rejected custom_json also reject the SBI
+Hive vote.
 
 Facts this module relies on, read from the contract source
 (github.com/LasseEhlers/LasseCash-Migration-to-MAGI, contract/state/pob.go,
@@ -49,23 +57,48 @@ REGEN_DAYS = {VIRAL: 7, DEEP: 30}
 FULL_METER_WEIGHT_PCT = 1_000
 LOOKBACK_DAYS = 30
 
+# Hive produces one block every 3 seconds. The backfill turns LOOKBACK_DAYS
+# into a block range for Magi's contract call history.
+BLOCKS_PER_DAY = 28_800
+
 # 1,000 L-Shares in the contract's 1e-8 base unit. Governance can move it
 # (bounds 1 to 10,000 L-Shares); a dry run refusal "author needs N L-Shares"
 # reports the live value. Override with config lassecash.threshold_viral.
 DEFAULT_THRESHOLD_VIRAL = 1_000 * 10**8
 
-# A qualified post stays a candidate this long after its Hive creation time.
-# The SBI Hive vote lands within 24 hours, so the extra days only absorb
-# deferrals for vote power or RC.
+# hsbi_upvote_post_comment votes a post only in its first 24 hours. A post
+# without the SBI Hive vote by then never gets one, and becomes an L-cash
+# candidate only then.
+HIVE_VOTE_WINDOW = timedelta(hours=24)
+
+# A post without the SBI Hive vote gets the L-cash vote only when the author's
+# last L-cash vote attempt is at least this old. Hive-voted posts bypass the
+# cap. A broadcast that provably never reached the chain is not an attempt.
+LCASH_CAP = timedelta(hours=24)
+
+# A post stays a candidate this long after its Hive creation time. A Hive-voted
+# post qualifies within minutes and a post without the Hive vote at 24 hours,
+# so the remaining days absorb deferrals for the cap, vote power or RC.
 CANDIDATE_DAYS = 3
 
-# Magi applies a Hive-included call within a few blocks. A row still without a
-# verdict after this long is settled without one.
+# Transaction expiration in seconds. hsbi_lassecash_vote passes it to
+# make_hive. A transaction that no block includes before it expires can never
+# be included.
+TX_EXPIRATION_S = 300
+
+# Magi applies a Hive-included call within a few blocks. A BROADCAST row still
+# without a verdict after this long is settled without one. A PENDING row is
+# checked against account history only after this long, so the timeout must
+# exceed TX_EXPIRATION_S.
 CONFIRM_TIMEOUT = timedelta(minutes=30)
 
-# One vote per run. A dry run reads committed chain state, so a second vote in
-# the same run would be checked against a meter that does not yet show the
-# first one. The next run sees it.
+# The account-history search for a PENDING row's broadcast starts this long
+# before broadcast_at, to absorb clock skew between this host and Hive.
+BROADCAST_SEARCH_MARGIN = timedelta(minutes=10)
+
+# One vote at a time. A dry run reads committed Magi state, so the meter that a
+# dry run checks lacks every vote Magi has not applied yet. cast_votes casts at
+# most one vote per run, and none while an earlier vote is PENDING or BROADCAST.
 MAX_VOTES_PER_RUN = 1
 
 # rc_limit sizing, copied from the LasseCash signer (api/src/aioha-signer.ts
@@ -83,6 +116,7 @@ PERMANENT_REFUSALS = ("author needs", "voting has closed")
 
 QUALIFIED = "QUALIFIED"
 IGNORED = "IGNORED"
+BASELINE = "BASELINE"
 PENDING = "PENDING"
 BROADCAST = "BROADCAST"
 SUCCESS = "SUCCESS"
@@ -166,20 +200,45 @@ def post_window(post_value):
         return VIRAL
 
 
-# --- vote weight and RC -------------------------------------------------------
+def is_vote_op(op, contract_id, voter, author, permlink):
+    """True when an account-history op is the voter's vote call on this post.
+
+    op is a nectar history dict of a custom_json. The weight is not compared:
+    any vote call on the post proves that a broadcast reached the chain.
+    """
+    auths = list(op.get("required_posting_auths") or []) + list(op.get("required_auths") or [])
+    if op.get("id") != CUSTOM_JSON_ID or voter not in auths:
+        return False
+    body = op.get("json")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return False
+    if not isinstance(body, dict):
+        return False
+    prefix = f"{qualify(author)}|{permlink}|"
+    return (
+        body.get("contract_id") == contract_id
+        and body.get("action") == VOTE_ACTION
+        and str(body.get("payload", "")).startswith(prefix)
+    )
+
+
+# --- vote weight, cap and RC --------------------------------------------------
 def weight_budget(window):
     """Weight-percent one meter regenerates in LOOKBACK_DAYS: 4,285 viral, 1,000 deep."""
     return FULL_METER_WEIGHT_PCT * LOOKBACK_DAYS // REGEN_DAYS[window]
 
 
-def compute_weight(window, qualified_posts):
-    """Spread one meter's 30-day regeneration over the posts of the last 30 days.
+def compute_weight(window, votes):
+    """Spread one meter's 30-day regeneration over the votes of the last 30 days.
 
-    qualified_posts includes the post being voted. The contract accepts 1..100.
+    votes includes the vote being cast. The contract accepts 1..100.
     """
-    if qualified_posts < 1:
-        qualified_posts = 1
-    return max(1, min(100, weight_budget(window) // qualified_posts))
+    if votes < 1:
+        votes = 1
+    return max(1, min(100, weight_budget(window) // votes))
 
 
 def size_rc_limit(gas_used):
@@ -189,6 +248,33 @@ def size_rc_limit(gas_used):
 
 def is_permanent_refusal(err_msg):
     return any(marker in (err_msg or "") for marker in PERMANENT_REFUSALS)
+
+
+def baseline_vote_time(post):
+    """When the live job votes a post: with the Hive vote, else when the window closes."""
+    if post["hive_voted"]:
+        return post["created"]
+    return post["created"] + HIVE_VOTE_WINDOW
+
+
+def apply_cap(posts):
+    """Split posts into (counted, capped) the way the live cap does.
+
+    Each post carries "author", "created" and "hive_voted". A Hive-voted post
+    always counts. Another post counts only when the author's previous counted
+    vote is at least LCASH_CAP older than its own vote time.
+    """
+    counted, capped = [], []
+    last_vote = {}
+    for post in sorted(posts, key=baseline_vote_time):
+        at = baseline_vote_time(post)
+        previous = last_vote.get(post["author"])
+        if post["hive_voted"] or previous is None or at - previous >= LCASH_CAP:
+            counted.append(post)
+            last_vote[post["author"]] = at
+        else:
+            capped.append(post)
+    return counted, capped
 
 
 # --- Hive post checks ---------------------------------------------------------
@@ -218,6 +304,16 @@ def has_lassecash_tag(comment):
     return any(
         isinstance(tag, str) and tag.strip().lower() == LASSECASH_TAG for tag in tags
     )
+
+
+def sbi_voted(comment, sbi_voters):
+    """True when one of SBI's voting accounts voted the post on Hive.
+
+    posts_comments.voted stays 0 when a pooled SBI vote lands after the upvote
+    job's last pass over the post, so the post's own votes decide.
+    """
+    voters = set(sbi_voters)
+    return any(vote["voter"] in voters for vote in comment.get_votes())
 
 
 # --- lassecash_stakers ----------------------------------------------------------
@@ -314,10 +410,33 @@ def refresh_lassecash_stakers(rt, refresh_min, magi=None):
         return None
 
 
+def blacklisted_members(conn, accounts):
+    """Members that hsbi_upvote_post_comment never votes, for policy reasons.
+
+    The upvote job skips a member whose `blacklisted` flag is set, or whose flag
+    is NULL while `hivewatchers` or `buildawhale` is set. A post without the
+    SBI Hive vote by such a member gets no L-cash vote either.
+    """
+    if not accounts:
+        return set()
+    placeholders = ", ".join(["%s"] * len(accounts))
+    rows = conn.exec_driver_sql(
+        f"""
+        SELECT account FROM member
+        WHERE account IN ({placeholders})
+          AND (COALESCE(blacklisted, 0) <> 0
+               OR (blacklisted IS NULL
+                   AND (COALESCE(hivewatchers, 0) <> 0 OR COALESCE(buildawhale, 0) <> 0)))
+        """,
+        tuple(accounts),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
 # --- lassecash_votes ------------------------------------------------------------
 _VOTE_COLUMNS = (
-    "id, authorperm, author, permlink, post_created, voter, vote_window, "
-    "weight, rc_limit, trx_id, status, error_message, created_at, updated_at"
+    "id, authorperm, author, permlink, post_created, voter, hive_voted, vote_window, "
+    "weight, rc_limit, trx_id, broadcast_at, status, error_message, created_at, updated_at"
 )
 
 
@@ -337,15 +456,18 @@ def known_authorperms(conn, authorperms):
     return {row[0] for row in rows}
 
 
-def insert_vote_row(conn, authorperm, author, permlink, post_created, voter, status, now):
+def insert_vote_row(conn, authorperm, author, permlink, post_created, voter, status, now,
+                    hive_voted=False, vote_window=VIRAL, created_at=None, error_message=None):
+    """Insert one row. created_at defaults to now; a BASELINE row passes its vote time."""
     conn.exec_driver_sql(
         """
         INSERT INTO lassecash_votes
-            (authorperm, author, permlink, post_created, voter, vote_window,
-             status, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (authorperm, author, permlink, post_created, voter, hive_voted, vote_window,
+             status, error_message, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (authorperm, author, permlink, post_created, voter, VIRAL, status, now, now),
+        (authorperm, author, permlink, post_created, voter, 1 if hive_voted else 0,
+         vote_window, status, error_message, created_at or now, now),
     )
 
 
@@ -369,14 +491,37 @@ def update_vote_row(conn, row_id, now, **fields):
     )
 
 
-def qualified_count(conn, window, since):
-    """Qualifying posts of one window in the lookback, whatever their vote outcome."""
+def in_flight_count(conn):
+    """Votes broadcast or about to be, that Magi has not settled yet."""
+    return conn.exec_driver_sql(
+        "SELECT COUNT(*) FROM lassecash_votes WHERE status IN (%s, %s)",
+        (PENDING, BROADCAST),
+    ).scalar()
+
+
+def last_attempt(conn, author):
+    """Time of the author's last L-cash vote attempt, or None."""
+    return conn.exec_driver_sql(
+        "SELECT MAX(broadcast_at) FROM lassecash_votes WHERE author = %s",
+        (author,),
+    ).scalar()
+
+
+def meter_votes(conn, window, since):
+    """Votes charged to one window's meter in the lookback.
+
+    A live row counts from its broadcast attempt, unless Magi failed it. A
+    BASELINE row from the backfill counts from its created_at, which holds
+    the time the live job would have voted the post.
+    """
     return conn.exec_driver_sql(
         """
         SELECT COUNT(*) FROM lassecash_votes
-        WHERE vote_window = %s AND created_at >= %s AND status <> %s
+        WHERE vote_window = %s
+          AND ((status = %s AND created_at >= %s)
+               OR (broadcast_at >= %s AND status <> %s))
         """,
-        (window, since, IGNORED),
+        (window, BASELINE, since, since, FAILED),
     ).scalar()
 
 
@@ -394,18 +539,28 @@ def expire_candidates(conn, cutoff, now):
     ).rowcount
 
 
-def recent_voted_posts(conn, authors, since):
-    """Root posts in posts_comments (sbi_steem_ops) that SBI voted, by `authors`."""
+def member_root_posts(conn, authors, since, until=None):
+    """Root posts in posts_comments (sbi_steem_ops) by `authors`, oldest first.
+
+    voted is the upvote job's flag for the SBI Hive vote. skip marks a post
+    that the stream's tag, app or body blacklist rejected.
+    """
     if not authors:
         return []
     placeholders = ", ".join(["%s"] * len(authors))
+    until_clause = "AND created < %s" if until is not None else ""
+    params = (since, *(() if until is None else (until,)), *authors)
     rows = conn.exec_driver_sql(
         f"""
-        SELECT authorperm, author, created FROM posts_comments
-        WHERE voted = 1 AND main_post = 1 AND created >= %s
+        SELECT authorperm, author, created, voted, skip FROM posts_comments
+        WHERE main_post = 1 AND created >= %s {until_clause}
           AND author IN ({placeholders})
         ORDER BY created
         """,
-        (since, *authors),
+        params,
     ).fetchall()
-    return [{"authorperm": r[0], "author": r[1], "created": r[2]} for r in rows]
+    return [
+        {"authorperm": r[0], "author": r[1], "created": r[2],
+         "voted": bool(r[3]), "skip": bool(r[4])}
+        for r in rows
+    ]

@@ -4,10 +4,25 @@
 
 LasseCash pays post rewards from a contract on Magi (formerly VSC). A Hive vote
 never reaches that contract; only a `vsc.call` custom_json with action `vote`
-counts. The new job casts that call from `sbi-tokens` on SBI-voted root posts
-that carry the `lassecash` tag, by members whose L-Shares meet the contract's
-viral threshold. The call is its own Hive transaction; the SBI Hive vote and
+counts. The new job casts that call from `sbi-tokens` on root posts that carry
+the `lassecash` tag, by members whose L-Shares meet the contract's viral
+threshold. The call is its own Hive transaction; the SBI Hive vote and
 `hsbi_upvote_post_comment.py` are unchanged.
+
+### Candidates and the 24-hour cap
+
+- A post with the SBI Hive vote qualifies at once and gets the L-cash vote in
+  the same pipeline run. It bypasses the cap.
+- A post without the SBI Hive vote qualifies when the upvote job's 24-hour
+  window closes. It gets the L-cash vote only when the author's last L-cash vote
+  attempt (`broadcast_at`) is at least 24 hours old. A broadcast that provably
+  never reached the chain does not start the cap.
+- The job reads the post's own Hive votes, because `posts_comments.voted` can stay
+  0 after a pooled SBI vote late in the window.
+- A post without the Hive vote gets no L-cash vote when the stream's blacklist
+  skipped it, or when the member is excluded from SBI votes (`blacklisted`, or
+  `hivewatchers`/`buildawhale` with `blacklisted` NULL), as in the upvote job.
+- Every candidate leaves the queue 3 days after posting.
 
 ### Staker list on the token cycle
 
@@ -29,25 +44,52 @@ other refusals defer it for up to 3 days.
 
 ### Weight and RC
 
-Weight = (30-day regeneration of the post's meter) / (qualifying posts of that
-window in the last 30 days), clamped to 1..100. Viral budget 4,285
-weight-percent, deep 1,000. Magi reserves the whole `rc_limit` for 5 days, so the
-limit is 3x the simulated cost (floor 1,500, ceiling 30,000), as lassecash.com
-sizes it. One vote per run, so each dry run sees the previous vote's meter.
+Weight = (30-day regeneration of the post's meter) / (votes charged to that
+meter in the last 30 days, this one included), clamped to 1..100. A charged vote
+is a broadcast attempt that Magi did not fail, or a BASELINE row from the
+backfill. Viral budget 4,285 weight-percent, deep 1,000. Magi reserves the whole
+`rc_limit` for 5 days, so the limit is 3x the simulated cost (floor 1,500,
+ceiling 30,000), as lassecash.com sizes it.
+
+A dry run reads committed Magi state, so it misses every vote Magi has not
+applied yet. The job therefore casts at most one vote per run, and none while an
+earlier vote is PENDING or BROADCAST.
 
 ### Rows and settlement
 
 `lassecash_votes` records each post as QUALIFIED or IGNORED (untagged), then
-PENDING (write-ahead) and BROADCAST. The vote record `pv_` or the Magi verdict
-settles a row as SUCCESS or FAILED. A PENDING row with no proof after 30 minutes
-returns to QUALIFIED. A post where `sbi-tokens` already voted is SKIPPED, because
-a second call replaces the weight and spends vote power again.
+PENDING (write-ahead, with `broadcast_at`) and BROADCAST. The vote record `pv_`
+or the Magi verdict settles a row as SUCCESS or FAILED. A BROADCAST row without
+a verdict after 30 minutes is FAILED. A PENDING row is not retried on a timeout
+alone: after 30 minutes, when its transaction (300-second expiration) has
+expired, the job searches the `sbi-tokens` account history for the call. A
+found call makes the row BROADCAST with its trx id; a missing call returns the
+post to QUALIFIED. A lookup error leaves the row PENDING. A post where
+`sbi-tokens` already voted is SKIPPED, because a second call replaces the weight
+and spends vote power again.
+
+`authorperm` and `permlink` compare case-sensitively (`utf8_bin`), as Hive
+permlinks do, so two posts whose permlinks differ only in case are two rows. An
+error on one row or one post never stops the others, and a failed phase never
+skips the next one.
+
+### Magi node failover
+
+The Magi client moves the node that answered to the front of its list. A node
+that hangs therefore costs one 20-second timeout per client, not one per query.
+On 2026-10-23 `api.vsc.eco` failed by connect timeout, not by refusal.
 
 ### Deploy
 
-Create `lassecash_stakers` and `lassecash_votes` in prod (DDL in `sql/sbi.sql`).
-Add the `lassecash` block from `config.example.json` with `enabled: true` and
-`broadcast: false` for the shadow week, then set `broadcast: true`.
+1. Create `lassecash_stakers` and `lassecash_votes` in prod (DDL in `sql/sbi.sql`).
+2. Add the `lassecash` block from `config.example.json` with `enabled: true` and
+   `broadcast: false`.
+3. Run `python3 hsbi_lassecash_vote.py --backfill` once. It refreshes the staker
+   list, replays the last 30 days of member posts through the live rules into
+   BASELINE rows, and prints the tagged posts against the posts the contract
+   registered. Check the "registered but untagged" list before step 4. The
+   backfill never signs. It replaces the planned shadow week.
+4. Set `broadcast: true`.
 
 ## Token issuance: settled-row shape and sweep guard (PR #140 review)
 
