@@ -57,9 +57,10 @@ REGEN_DAYS = {VIRAL: 7, DEEP: 30}
 FULL_METER_WEIGHT_PCT = 1_000
 LOOKBACK_DAYS = 30
 
-# Hive produces one block every 3 seconds. The backfill turns LOOKBACK_DAYS
-# into a block range for Magi's contract call history.
-BLOCKS_PER_DAY = 28_800
+# Hive produces one block every BLOCK_INTERVAL_S seconds. The backfill turns
+# LOOKBACK_DAYS into a block range for Magi's contract call history.
+BLOCK_INTERVAL_S = 3
+BLOCKS_PER_DAY = 86_400 // BLOCK_INTERVAL_S
 
 # 1,000 L-Shares in the contract's 1e-8 base unit. Governance can move it
 # (bounds 1 to 10,000 L-Shares); a dry run refusal "author needs N L-Shares"
@@ -93,7 +94,8 @@ TX_EXPIRATION_S = 300
 CONFIRM_TIMEOUT = timedelta(minutes=30)
 
 # The account-history search for a PENDING row's broadcast starts this long
-# before broadcast_at, to absorb clock skew between this host and Hive.
+# before broadcast_at, and needs irreversible blocks this long past the
+# transaction's expiration, to absorb clock skew between this host and Hive.
 BROADCAST_SEARCH_MARGIN = timedelta(minutes=10)
 
 # One vote at a time. A dry run reads committed Magi state, so the meter that a
@@ -258,11 +260,13 @@ def baseline_vote_time(post):
 
 
 def apply_cap(posts):
-    """Split posts into (counted, capped) the way the live cap does.
+    """Split posts into (counted, capped) by the cap, at each post's own vote time.
 
     Each post carries "author", "created" and "hive_voted". A Hive-voted post
     always counts. Another post counts only when the author's previous counted
-    vote is at least LCASH_CAP older than its own vote time.
+    vote is at least LCASH_CAP older than its own vote time. The live job
+    defers a capped post instead and votes it when the cap ends inside its
+    candidate window, so this split counts fewer votes than the live job casts.
     """
     counted, capped = [], []
     last_vote = {}
@@ -472,11 +476,16 @@ def insert_vote_row(conn, authorperm, author, permlink, post_created, voter, sta
 
 
 def vote_rows_with_status(conn, statuses):
+    """Rows with one of `statuses`: Hive-voted rows first, then oldest post first.
+
+    cast_votes votes the first row that passes every check, so a post with the
+    SBI Hive vote goes ahead of every post without it.
+    """
     placeholders = ", ".join(["%s"] * len(statuses))
     return _vote_rows(
         conn.exec_driver_sql(
             f"SELECT {_VOTE_COLUMNS} FROM lassecash_votes "
-            f"WHERE status IN ({placeholders}) ORDER BY post_created, id",
+            f"WHERE status IN ({placeholders}) ORDER BY hive_voted DESC, post_created, id",
             tuple(statuses),
         )
     )

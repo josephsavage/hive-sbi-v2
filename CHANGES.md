@@ -11,8 +11,9 @@ threshold. The call is its own Hive transaction; the SBI Hive vote and
 
 ### Candidates and the 24-hour cap
 
-- A post with the SBI Hive vote qualifies at once and gets the L-cash vote in
-  the same pipeline run. It bypasses the cap.
+- A post with the SBI Hive vote qualifies at once and bypasses the cap. It goes
+  ahead of every post without the Hive vote, so it gets the L-cash vote in the
+  same pipeline run unless an earlier vote is unsettled or RC is short.
 - A post without the SBI Hive vote qualifies when the upvote job's 24-hour
   window closes. It gets the L-cash vote only when the author's last L-cash vote
   attempt (`broadcast_at`) is at least 24 hours old. A broadcast that provably
@@ -53,7 +54,8 @@ ceiling 30,000), as lassecash.com sizes it.
 
 A dry run reads committed Magi state, so it misses every vote Magi has not
 applied yet. The job therefore casts at most one vote per run, and none while an
-earlier vote is PENDING or BROADCAST.
+earlier vote is PENDING or BROADCAST. It tries Hive-voted posts first, then the
+oldest post first.
 
 ### Rows and settlement
 
@@ -63,8 +65,13 @@ or the Magi verdict settles a row as SUCCESS or FAILED. A BROADCAST row without
 a verdict after 30 minutes is FAILED. A PENDING row is not retried on a timeout
 alone: after 30 minutes, when its transaction (300-second expiration) has
 expired, the job searches the `sbi-tokens` account history for the call. A
-found call makes the row BROADCAST with its trx id; a missing call returns the
-post to QUALIFIED. A lookup error leaves the row PENDING. A post where
+found call makes the row BROADCAST with its trx id. A missing call returns the
+post to QUALIFIED only when the history covers the transaction's whole life:
+the node's last irreversible block is past the expiration plus a 10-minute
+margin, and the walk reaches an operation older than the search start. A node
+can answer a lagging or an empty history, and nectar walks an empty answer as an
+account without operations. Such a history, or a lookup error, leaves the row
+PENDING. A post where
 `sbi-tokens` already voted is SKIPPED, because a second call replaces the weight
 and spends vote power again.
 
@@ -85,10 +92,10 @@ On 2026-10-23 `api.vsc.eco` failed by connect timeout, not by refusal.
 2. Add the `lassecash` block from `config.example.json` with `enabled: true` and
    `broadcast: false`.
 3. Run `python3 hsbi_lassecash_vote.py --backfill` once. It refreshes the staker
-   list, replays the last 30 days of member posts through the live rules into
-   BASELINE rows, and prints the tagged posts against the posts the contract
-   registered. Check the "registered but untagged" list before step 4. The
-   backfill never signs. It replaces the planned shadow week.
+   list, replays the last 30 days of member posts through the candidate rules
+   and the cap into BASELINE rows, and prints the tagged posts against the
+   posts the contract registered. Check the "registered but untagged" list
+   before step 4. The backfill never signs. It replaces the planned shadow week.
 4. Set `broadcast: true`.
 
 ## Token issuance: settled-row shape and sweep guard (PR #140 review)

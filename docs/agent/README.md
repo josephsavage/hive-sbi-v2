@@ -10,6 +10,9 @@ CLAUDE.md points here. This directory holds working knowledge that the code, CHA
 - [Token issuance design invariants](memory/token-issuance-design-invariants.md): valid issuance rationales, the one-issuance-per-second guarantee, and the PR #138/#139 history.
 - [Cycle cadence and issuance volume](memory/cycle-cadence-and-issuance-volume.md): the 144-minute and high-VP (about 15-minute) cycle regimes and the measured issuance peaks.
 - [nectar fails in a fresh container](memory/nectar-fresh-container-config-store.md): the `Hive()` sqlite error in a new local app container, and how to seed the node key.
+- [L-cash: Hive-voted posts first](memory/lassecash-hive-voted-priority.md): the 2026-10-25 ruling that orders the L-cash candidate queue.
+- [L-cash: RC capacity is operator-managed](memory/lassecash-rc-capacity-operator-managed.md): `sbi-tokens` RC is shared with manual Magi calls; the operator adds HBD, and the job keeps no reserve.
+- [L-cash: 30-day volume below 42](memory/lassecash-30-day-volume.md): why every weight is 100 now, and when to revisit the weight and the backfill cap.
 
 ## Rules
 

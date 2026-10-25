@@ -9,10 +9,11 @@ Runs after hsbi_upvote_post_comment in sbirunner.sh. Each run:
                     vote at once, a post without it once the upvote job's 24 hour
                     window has closed. QUALIFIED when it carries the `lassecash`
                     tag, else IGNORED.
-3. cast_votes     - dry-run the oldest QUALIFIED post on Magi and, when the
-                    contract accepts it, broadcast one vsc.call vote. A post
-                    without the SBI Hive vote waits for the author's 24 hour cap.
-                    No vote goes out while an earlier vote is unsettled.
+3. cast_votes     - dry-run the QUALIFIED posts on Magi, Hive-voted posts first
+                    and then the oldest first, and broadcast one vsc.call vote
+                    for the first post the contract accepts. A post without the
+                    SBI Hive vote waits for the author's 24 hour cap. No vote
+                    goes out while an earlier vote is unsettled.
 
 A failed phase prints its error and the next phase still runs.
 
@@ -31,15 +32,16 @@ LIVE: with broadcast on, this job signs custom_json with the voter's posting key
 
 import argparse
 import time
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from nectar.account import Account
 from nectar.comment import Comment
-from nectar.utils import resolve_authorperm
+from nectar.utils import parse_time, resolve_authorperm
 
 from hivesbi.issuance_log import issue_trx_id, never_reached_chain
 from hivesbi.lassecash import (
     BASELINE,
+    BLOCK_INTERVAL_S,
     BLOCKS_PER_DAY,
     BROADCAST,
     BROADCAST_SEARCH_MARGIN,
@@ -102,20 +104,61 @@ def load_comment(authorperm, hv):
     return None
 
 
+class HistoryNotCovered(Exception):
+    """The voter's account history cannot prove yet that a vote call is absent."""
+
+
+def chain_time(value):
+    """Naive UTC datetime of a Hive time string, as the DATETIME columns hold it."""
+    if isinstance(value, str):
+        value = parse_time(value)
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def last_irreversible_time(hv):
+    """Block time of the node's last irreversible block, as naive UTC.
+
+    The dynamic global properties hold the head block time only, so the time
+    is the head time less one block interval per block between the two.
+    """
+    props = hv.get_dynamic_global_properties()
+    behind = props["head_block_number"] - props["last_irreversible_block_num"]
+    return chain_time(props["time"]) - timedelta(seconds=BLOCK_INTERVAL_S * behind)
+
+
 def find_broadcast(hv, settings, row):
     """Return the trx_id of the voter's vote call on the row's post, or None.
 
     Searches the voter's Hive account history back to the row's broadcast
-    attempt. settle_votes asks only after CONFIRM_TIMEOUT, when the
-    transaction has expired, so None proves the broadcast never reached the
-    chain.
+    attempt. None proves that the broadcast never reached the chain, so the
+    search returns None only from a history that covers the transaction's
+    whole life:
+
+    - the node's last irreversible block is past the transaction's expiration;
+    - the walk reaches an operation older than the search start.
+
+    Otherwise it raises HistoryNotCovered and the row stays PENDING. A node can
+    answer a lagging history, or an empty one that nectar walks as an account
+    without operations.
     """
-    since = (row["broadcast_at"] or row["updated_at"]) - BROADCAST_SEARCH_MARGIN
+    attempted = row["broadcast_at"] or row["updated_at"]
+    since = attempted - BROADCAST_SEARCH_MARGIN
+    expired = attempted + timedelta(seconds=TX_EXPIRATION_S) + BROADCAST_SEARCH_MARGIN
+    irreversible = last_irreversible_time(hv)
+    if irreversible <= expired:
+        raise HistoryNotCovered(
+            f"last irreversible block {irreversible:%Y-%m-%d %H:%M:%S} is not past "
+            f"the expiration margin {expired:%Y-%m-%d %H:%M:%S}"
+        )
     account = Account(settings.voter, blockchain_instance=hv)
-    for op in account.history_reverse(stop=since, only_ops=["custom_json"]):
+    for op in account.history_reverse(only_ops=["custom_json"]):
+        if chain_time(op["timestamp"]) < since:
+            return None
         if is_vote_op(op, settings.contract_id, settings.voter, row["author"], row["permlink"]):
             return op["trx_id"]
-    return None
+    raise HistoryNotCovered(f"account history ends after {since:%Y-%m-%d %H:%M:%S}")
 
 
 def _settle_row(row, state, magi, find, now):
@@ -159,8 +202,9 @@ def settle_votes(db2, magi, settings, find, now=None):
     says. Without it, a BROADCAST row with a trx id asks Magi for the call's
     verdict, and is FAILED after CONFIRM_TIMEOUT without one. A PENDING row
     is searched for in the voter's account history (find): a found call
-    becomes BROADCAST with its trx id, and a call that is not there returns
-    the post to QUALIFIED. A lookup error leaves the row PENDING for the next
+    becomes BROADCAST with its trx id, and a call that the history proves
+    absent returns the post to QUALIFIED. A history that proves nothing
+    (HistoryNotCovered) or a lookup error leaves the row PENDING for the next
     run, and an error on one row never stops the others.
     """
     now = now or utcnow()
@@ -175,6 +219,9 @@ def settle_votes(db2, magi, settings, find, now=None):
     for row in rows:
         try:
             update = _settle_row(row, state, magi, find, now)
+        except HistoryNotCovered as exc:
+            print(f"{LOG}: {row['authorperm']} stays {row['status']}: {exc}")
+            continue
         except Exception as exc:  # noqa: BLE001 - one row must not block the others
             print(f"{LOG}: settling {row['authorperm']} failed, row stays {row['status']}: {exc}")
             continue
@@ -246,7 +293,7 @@ def qualify_posts(db, db2, settings, load, sbi_voters, now=None):
 
 
 def cast_votes(db2, magi, settings, broadcast_vote, now=None):
-    """Vote on QUALIFIED posts, oldest first. Returns the number of broadcast attempts.
+    """Vote on QUALIFIED posts, Hive-voted first, then oldest first. Returns broadcast attempts.
 
     broadcast_vote(json_body) signs and broadcasts the custom_json and returns
     nectar's transaction dict. It is only called with settings.broadcast on.
@@ -384,10 +431,14 @@ def backfill_baseline(db, db2, magi, settings, load, sbi_voters, head_block, now
     """Seed the weight lookback with the last LOOKBACK_DAYS of posts. Never signs.
 
     This replaces the shadow week. Each root post of an eligible staker from
-    LOOKBACK_DAYS ago up to the candidate window replays through the live
-    rules: a Hive-voted post counts, a post without the Hive vote counts when
-    the cap allows. Counted tagged posts become BASELINE rows dated at the
-    time the live job would have voted them; capped ones become SKIPPED rows.
+    LOOKBACK_DAYS ago up to the candidate window replays through the
+    candidate rules and the cap (apply_cap): a Hive-voted post counts, a post
+    without the Hive vote counts when the cap allows. Counted tagged posts
+    become BASELINE rows dated at the time the live job would have voted
+    them; capped ones become SKIPPED rows. The replay does not defer a capped
+    post as the live job does, so it can count fewer votes than the live job
+    casts. compute_weight returns 100 for up to 42 votes, so the difference
+    changes no weight at the 30-day volume of 2026-10.
     Posts in the candidate window are left to the live job. A post that
     already has a row is left alone, so a second backfill adds nothing twice.
 

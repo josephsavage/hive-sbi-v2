@@ -206,6 +206,64 @@ class VoteOpTests(unittest.TestCase):
         self.assertFalse(lc.is_vote_op(self.op(json="not json"), CONTRACT, VOTER, "lasseehlers", permlink))
 
 
+class FindBroadcastTests(unittest.TestCase):
+    """find_broadcast proves a call absent only from a history that covers the transaction."""
+
+    attempted = datetime(2026, 10, 24, 15, 0)
+    vote_trx = "6448aa65545a140395e61cb95addfd36de1704a2"
+
+    def op(self, minutes, vote=False):
+        """A custom_json op `minutes` after the attempt, in nectar's history shape."""
+        at = self.attempted + timedelta(minutes=minutes)
+        return {"id": "vsc.call", "required_auths": [], "required_posting_auths": [VOTER],
+                "json": KEYCHAIN_JSON if vote else '{"action": "claim_pool", "payload": "1"}',
+                "trx_id": self.vote_trx if vote else "0" * 40,
+                "timestamp": at.strftime("%Y-%m-%dT%H:%M:%S")}
+
+    def find(self, ops, head_minutes=30, blocks_behind=0):
+        """Run find_broadcast on a node whose head is `head_minutes` after the attempt."""
+        hv = Mock()
+        head = self.attempted + timedelta(minutes=head_minutes)
+        hv.get_dynamic_global_properties.return_value = {
+            "time": head.strftime("%Y-%m-%dT%H:%M:%S"),
+            "head_block_number": 1_000 + blocks_behind,
+            "last_irreversible_block_num": 1_000,
+        }
+        account = Mock()
+        account.history_reverse.return_value = iter(ops)
+        row = {"author": "lasseehlers", "permlink": "lassecash-runs-on-a-fifth-of-a-household",
+               "broadcast_at": self.attempted, "updated_at": self.attempted}
+        self.account_factory = Mock(return_value=account)
+        with patch.object(job, "Account", self.account_factory):
+            return job.find_broadcast(hv, lc.LassecashSettings(), row)
+
+    def test_finds_the_vote_call(self):
+        self.assertEqual(self.find([self.op(20), self.op(1, vote=True), self.op(-20)]), self.vote_trx)
+
+    def test_history_past_the_search_start_proves_absence(self):
+        # The search starts BROADCAST_SEARCH_MARGIN (10 min) before the attempt.
+        self.assertIsNone(self.find([self.op(20), self.op(-5), self.op(-11)]))
+
+    def test_empty_history_proves_nothing(self):
+        # nectar walks an empty or null history answer as an account without operations.
+        with self.assertRaises(job.HistoryNotCovered):
+            self.find([])
+
+    def test_history_that_ends_inside_the_search_window_proves_nothing(self):
+        with self.assertRaises(job.HistoryNotCovered):
+            self.find([self.op(20), self.op(-5)])
+
+    def test_lagging_node_proves_nothing(self):
+        # Expiration (5 min) plus the margin (10 min): irreversible blocks must pass +15 min.
+        with self.assertRaises(job.HistoryNotCovered):
+            self.find([self.op(-11)], head_minutes=15)
+        self.account_factory.assert_not_called()
+        # Head at +16 min, 20 blocks (60 s) ahead of the last irreversible block: +15 min.
+        with self.assertRaises(job.HistoryNotCovered):
+            self.find([self.op(-11)], head_minutes=16, blocks_behind=20)
+        self.assertIsNone(self.find([self.op(-11)], head_minutes=16))
+
+
 class WeightTests(unittest.TestCase):
     def test_budgets_match_meter_regeneration(self):
         # 1,000 weight-percent per full meter; viral refills in 7 days, deep in 30.
@@ -723,6 +781,15 @@ class CastTests(DBTestCase):
                          (lc.BROADCAST, "f" * 40, 100, self.now))
         self.assertEqual(self.row(second)["status"], lc.QUALIFIED)  # next run
 
+    def test_hive_voted_post_goes_ahead_of_older_posts_without_it(self):
+        older = self.add_vote_row("plain", post_age=timedelta(hours=30), hive_voted=False)
+        newer = self.add_vote_row("hive", post_age=timedelta(hours=1), hive_voted=True)
+        broadcast, sent = self.broadcaster()
+        self.assertEqual(job.cast_votes(self.db, FakeMagi(), self.settings, broadcast, self.now), 1)
+        self.assertEqual([s["payload"] for s in sent], [f"hive:{AUTHOR}|hive|100"])
+        self.assertEqual((self.row(newer)["status"], self.row(older)["status"]),
+                         (lc.BROADCAST, lc.QUALIFIED))  # the older post waits for the next run
+
     def test_unsettled_vote_blocks_casting(self):
         # The dry run would check a meter that lacks the unsettled vote.
         self.add_vote_row("in-flight", status=lc.BROADCAST, trx_id="e" * 40, broadcast_at=self.now)
@@ -945,6 +1012,14 @@ class SettleTests(DBTestCase):
         job.settle_votes(self.db, FakeMagi(), self.settings, find, self.now + lc.CONFIRM_TIMEOUT)
         row = self.row(row_id)
         self.assertEqual((row["status"], row["broadcast_at"]), (lc.QUALIFIED, None))
+
+    def test_unproven_absence_stays_pending(self):
+        row_id = self.add_vote_row("unproven", status=lc.PENDING, broadcast_at=self.now)
+        find, asked = self.finder(error=job.HistoryNotCovered("account history ends after ..."))
+        job.settle_votes(self.db, FakeMagi(), self.settings, find, self.now + lc.CONFIRM_TIMEOUT)
+        row = self.row(row_id)
+        self.assertEqual((row["status"], row["broadcast_at"], asked),
+                         (lc.PENDING, self.now, ["unproven"]))
 
     def test_pending_lookup_error_stays_pending_and_others_settle(self):
         pending = self.add_vote_row("unknown", status=lc.PENDING, broadcast_at=self.now)
