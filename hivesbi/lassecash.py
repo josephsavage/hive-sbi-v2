@@ -93,6 +93,11 @@ TX_EXPIRATION_S = 300
 # exceed TX_EXPIRATION_S.
 CONFIRM_TIMEOUT = timedelta(minutes=30)
 
+# A PENDING row older than this prints an ALERT line on every run. No vote goes
+# out while a row is PENDING, so a row that account history never settles stops
+# every L-cash vote. The age matches hsbi_token_snapshot STUCK_PENDING_AGE.
+STUCK_VOTE_AGE = timedelta(hours=6)
+
 # The account-history search for a PENDING row's broadcast starts this long
 # before broadcast_at, and needs irreversible blocks this long past the
 # transaction's expiration, to absorb clock skew between this host and Hive.

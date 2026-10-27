@@ -41,7 +41,9 @@ permlink that does not exist on Hive. The SBI-side tag check is therefore the
 only guard against paying non-LasseCash posts. Before each broadcast the job runs
 `simulateContractCalls`, so the contract's own code decides threshold, window
 and vote power. "author needs" and "voting has closed" refusals skip the post;
-other refusals defer it for up to 3 days.
+other refusals defer it for up to 3 days. A dry run that reports success without
+`gas_used` is a Magi error, and the post stays QUALIFIED: the `rc_limit` would
+fall to the 1,500 floor, and a registering vote needs about 4,300.
 
 ### Weight and RC
 
@@ -71,7 +73,11 @@ the node's last irreversible block is past the expiration plus a 10-minute
 margin, and the walk reaches an operation older than the search start. A node
 can answer a lagging or an empty history, and nectar walks an empty answer as an
 account without operations. Such a history, or a lookup error, leaves the row
-PENDING. A post where
+PENDING. `broadcast_at` is the time of the write-ahead, not the start of the
+run, so the dry runs before the vote do not shift the expiration that the search
+assumes. A PENDING row older than 6 hours prints
+`ALERT: stuck PENDING L-cash vote` on every run, as `hsbi_token_snapshot.py` does
+for a stuck issuance: no vote goes out while the row is PENDING. A post where
 `sbi-tokens` already voted is SKIPPED, because a second call replaces the weight
 and spends vote power again.
 
@@ -84,7 +90,9 @@ skips the next one.
 
 The Magi client moves the node that answered to the front of its list. A node
 that hangs therefore costs one 20-second timeout per client, not one per query.
-On 2026-10-23 `api.vsc.eco` failed by connect timeout, not by refusal.
+On 2026-10-23 `api.vsc.eco` failed by connect timeout, not by refusal. A
+truncated answer (`http.client.IncompleteRead`, not an `OSError`) or an answer
+that is not a JSON object also moves the query to the next node.
 
 ### Deploy
 

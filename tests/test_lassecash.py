@@ -13,6 +13,8 @@ figures and the keychain capture of the 1% vote sbi-tokens cast that day.
 """
 
 import contextlib
+import http.client
+import io
 import json
 import unittest
 import urllib.error
@@ -413,6 +415,16 @@ class MagiClientTests(unittest.TestCase):
         self.assertIn("a:", str(ctx.exception))
         self.assertIn("b:", str(ctx.exception))
 
+    def test_truncated_or_malformed_answer_fails_over(self):
+        # A truncated body raises http.client.IncompleteRead, which is not an
+        # OSError. A JSON answer that is not an object has no "errors" key.
+        rc = {"data": {"getAccountRC": {"amount": 7, "max_rcs": 9}}}
+        for bad in (http.client.IncompleteRead(b"{", 499), [], None):
+            post = FakeTransport({"a": [bad], "b": [rc]})
+            client = MagiClient(nodes=["a", "b"], post=post)
+            self.assertEqual(client.available_rc(VOTER), 7)
+            self.assertEqual(client.nodes, ["b", "a"])
+
     def test_graphql_error_does_not_fail_over(self):
         post = FakeTransport({"a": [{"errors": [{"message": "bad key"}]}], "b": []})
         with self.assertRaises(MagiError):
@@ -447,6 +459,16 @@ class MagiClientTests(unittest.TestCase):
         self.assertEqual(sent["calls"][0]["rc_limit"], 100_000)
         self.assertFalse(result["success"])
         self.assertEqual(result["gas_used"], 125260669)
+
+    def test_simulated_success_without_gas_is_an_error(self):
+        # rc_limit is sized from gas_used. A success without it would size the
+        # limit at RC_FLOOR, below what a registering vote needs.
+        for gas in (None, 0):
+            post = FakeTransport({"a": [{"data": {"simulateContractCalls": [
+                {"success": True, "err_msg": "", "gas_used": gas, "ret": "voted"}
+            ]}}]})
+            with self.assertRaises(MagiError):
+                MagiClient(nodes=["a"], post=post).simulate_call(VOTER, CONTRACT, "vote", "x")
 
     def test_transaction_verdicts(self):
         post = FakeTransport({"a": [
@@ -495,8 +517,8 @@ class RunTests(unittest.TestCase):
             stack.enter_context(patch.object(job, "get_runtime", return_value=rt))
             stack.enter_context(patch.object(job, "MagiClient"))
             mocks["make_hive"] = stack.enter_context(patch.object(job, "make_hive", return_value=hv))
-            for name in ("settle_votes", "qualify_posts", "cast_votes", "sync_lassecash_stakers",
-                         "backfill_baseline", "print_backfill_report"):
+            for name in ("settle_votes", "alert_stuck_votes", "qualify_posts", "cast_votes",
+                         "sync_lassecash_stakers", "backfill_baseline", "print_backfill_report"):
                 mocks[name] = stack.enter_context(patch.object(job, name))
             if settle_error:
                 mocks["settle_votes"].side_effect = settle_error
@@ -515,7 +537,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual((kwargs["keys"], kwargs["nobroadcast"], kwargs["expiration"]),
                          ([], True, lc.TX_EXPIRATION_S))
         rt["storages"]["keys"].get.assert_not_called()
-        for name in ("settle_votes", "qualify_posts", "cast_votes"):
+        for name in ("settle_votes", "alert_stuck_votes", "qualify_posts", "cast_votes"):
             mocks[name].assert_called_once()
 
     def test_broadcast_run_signs_custom_json_with_the_posting_key(self):
@@ -536,8 +558,8 @@ class RunTests(unittest.TestCase):
     def test_failed_phase_does_not_skip_the_next(self):
         rt = self.runtime({"enabled": True})
         _, mocks = self.run_job(rt, settle_error=MagiError("all Magi nodes failed"))
-        mocks["qualify_posts"].assert_called_once()
-        mocks["cast_votes"].assert_called_once()
+        for name in ("alert_stuck_votes", "qualify_posts", "cast_votes"):
+            mocks[name].assert_called_once()
 
     def test_backfill_refreshes_stakers_and_never_signs(self):
         rt = self.runtime({"enabled": True, "broadcast": True}, key_row={"wif": "test-wif"})
@@ -756,6 +778,13 @@ class QualifyTests(DBTestCase):
 
 
 class CastTests(DBTestCase):
+    def setUp(self):
+        super().setUp()
+        # The write-ahead reads the clock itself; pin it to the run's time.
+        clock = patch.object(job, "utcnow", return_value=self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+
     def broadcaster(self, result=None, error=None):
         sent = []
 
@@ -937,6 +966,18 @@ class CastTests(DBTestCase):
         row = self.row(unknown)
         self.assertEqual((row["status"], row["broadcast_at"]), (lc.PENDING, self.now))
 
+    def test_broadcast_at_is_the_write_ahead_time(self):
+        # find_broadcast dates the transaction from broadcast_at, so the dry
+        # runs before the write-ahead must not age it.
+        row_id = self.add_vote_row("slow")
+        later = self.now + timedelta(minutes=12)
+        broadcast, _ = self.broadcaster(error=RuntimeError("read timed out"))
+        with patch.object(job, "utcnow", return_value=later):
+            job.cast_votes(self.db, FakeMagi(), self.settings, broadcast, self.now)
+        row = self.row(row_id)
+        self.assertEqual((row["status"], row["broadcast_at"], row["updated_at"]),
+                         (lc.PENDING, later, later))
+
     def test_candidate_window_expiry(self):
         row_id = self.add_vote_row("stale", post_age=timedelta(days=4),
                                    error_message="msg: not enough vote power")
@@ -1029,6 +1070,22 @@ class SettleTests(DBTestCase):
         job.settle_votes(self.db, magi, self.settings, find, self.now + lc.CONFIRM_TIMEOUT)
         self.assertEqual(self.row(pending)["status"], lc.PENDING)
         self.assertEqual(self.row(landed)["status"], lc.SUCCESS)
+
+    def test_stuck_pending_vote_prints_an_alert(self):
+        # No vote goes out while a row is PENDING, so a row that account
+        # history never settles needs an operator.
+        stuck = self.add_vote_row("stuck", status=lc.PENDING,
+                                  broadcast_at=self.now - lc.STUCK_VOTE_AGE,
+                                  error_message="read timed out")
+        self.add_vote_row("recent", status=lc.PENDING, broadcast_at=self.now - timedelta(hours=1))
+        self.add_vote_row("in-flight", status=lc.BROADCAST, trx_id="a" * 40,
+                          broadcast_at=self.now - timedelta(days=1))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(job.alert_stuck_votes(self.db, self.now), 1)
+        self.assertEqual(out.getvalue().splitlines(), [
+            f"ALERT: stuck PENDING L-cash vote id={stuck} authorperm=@{AUTHOR}/stuck "
+            f"broadcast_at={self.now - lc.STUCK_VOTE_AGE} error=read timed out"
+        ])
 
 
 class BackfillTests(DBTestCase):

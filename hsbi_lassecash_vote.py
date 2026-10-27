@@ -4,6 +4,8 @@ Runs after hsbi_upvote_post_comment in sbirunner.sh. Each run:
 
 1. settle_votes   - resolve earlier PENDING/BROADCAST rows from Magi state and,
                     for a PENDING row, from the voter's Hive account history.
+   alert_stuck_votes - print an ALERT line for each PENDING row older than
+                    STUCK_VOTE_AGE (6 hours).
 2. qualify_posts  - record each new root post of a member on the staker list
                     (refreshed by hsbi_token_snapshot): a post with the SBI Hive
                     vote at once, a post without it once the upvote job's 24 hour
@@ -57,6 +59,7 @@ from hivesbi.lassecash import (
     PENDING,
     QUALIFIED,
     SKIPPED,
+    STUCK_VOTE_AGE,
     SUCCESS,
     TX_EXPIRATION_S,
     VOTE_ACTION,
@@ -232,6 +235,25 @@ def settle_votes(db2, magi, settings, find, now=None):
         print(f"{LOG}: {row['authorperm']} -> {update['status']} {update['error_message'] or ''}")
 
 
+def alert_stuck_votes(db2, now=None):
+    """Print an ALERT line for each PENDING row older than STUCK_VOTE_AGE. Returns the count.
+
+    The check reads only the database, so a Magi outage that fails
+    settle_votes cannot hide a stuck row. A BROADCAST row never gets stuck:
+    settle_votes fails it after CONFIRM_TIMEOUT.
+    """
+    now = now or utcnow()
+    with db2.engine.begin() as conn:
+        rows = vote_rows_with_status(conn, (PENDING,))
+    stuck = [r for r in rows if now - (r["broadcast_at"] or r["updated_at"]) >= STUCK_VOTE_AGE]
+    for row in stuck:
+        print(
+            f"ALERT: stuck PENDING L-cash vote id={row['id']} authorperm={row['authorperm']} "
+            f"broadcast_at={row['broadcast_at']} error={row['error_message']}"
+        )
+    return len(stuck)
+
+
 def _qualify_post(db2, settings, load, sbi_voters, post, blacklisted, now):
     """Record one post. Returns 1 when a row was added, 0 when the post waits."""
     _, permlink = resolve_authorperm(post["authorperm"])
@@ -397,10 +419,13 @@ def cast_votes(db2, magi, settings, broadcast_vote, now=None):
 
         # Write-ahead: the row is PENDING, with the attempt time, before the
         # one step that cannot be rolled back. broadcast_at also starts the
-        # author's L-cash cap.
+        # author's L-cash cap. The time is read here, not at the start of the
+        # run: find_broadcast expects the transaction to expire within
+        # TX_EXPIRATION_S of broadcast_at, and the dry runs above take time.
+        attempted = utcnow()
         with db2.engine.begin() as conn:
-            update_vote_row(conn, row["id"], now, status=PENDING, weight=weight,
-                            rc_limit=rc_limit, broadcast_at=now, error_message=None)
+            update_vote_row(conn, row["id"], attempted, status=PENDING, weight=weight,
+                            rc_limit=rc_limit, broadcast_at=attempted, error_message=None)
         cast += 1
         try:
             tx = broadcast_vote(body)
@@ -410,18 +435,18 @@ def cast_votes(db2, magi, settings, broadcast_vote, now=None):
                 # A provable rejection is no vote attempt: the post returns to
                 # the queue and the author's cap does not start.
                 with db2.engine.begin() as conn:
-                    update_vote_row(conn, row["id"], now, status=QUALIFIED,
+                    update_vote_row(conn, row["id"], attempted, status=QUALIFIED,
                                     broadcast_at=None, error_message=error)
             else:
                 # Any other error may hide a landed broadcast. The row stays
                 # PENDING until settle_votes finds the call or proves it absent.
                 with db2.engine.begin() as conn:
-                    update_vote_row(conn, row["id"], now, status=PENDING, error_message=error)
+                    update_vote_row(conn, row["id"], attempted, status=PENDING, error_message=error)
             print(f"{LOG}: broadcast failed for {row['authorperm']}: {error}")
             continue
         trx_id = issue_trx_id(tx or {})
         with db2.engine.begin() as conn:
-            update_vote_row(conn, row["id"], now, status=BROADCAST,
+            update_vote_row(conn, row["id"], attempted, status=BROADCAST,
                             trx_id=None if trx_id == "N/A" else trx_id)
         print(f"{LOG}: voted {row['authorperm']} at {weight}% (rc_limit {rc_limit}, trx {trx_id})")
     return cast
@@ -575,6 +600,7 @@ def run(argv=None):
 
     phases = (
         ("settle", lambda: settle_votes(rt["db2"], magi, settings, find)),
+        ("alert", lambda: alert_stuck_votes(rt["db2"])),
         ("qualify", lambda: qualify_posts(rt["db"], rt["db2"], settings, load, sbi_voters)),
         ("cast", lambda: cast_votes(rt["db2"], magi, settings, broadcast_vote)),
     )

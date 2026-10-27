@@ -13,6 +13,7 @@ full timeout, so the client moves the node that answered to the front of its
 list: a dead node then costs one timeout per client, not one per query.
 """
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -70,18 +71,23 @@ class MagiClient:
     def query(self, query, variables=None):
         """Run one GraphQL query and return its `data` object.
 
-        A transport failure moves on to the next node. A GraphQL error does
-        not: every node runs the same code, so the next node gives the same
-        answer, and the error names the real fault. The node that answers
-        moves to the front, so later queries skip the nodes that failed.
+        A transport failure moves on to the next node, and so does an answer
+        that is not a JSON object. A truncated body raises
+        http.client.IncompleteRead, which is not an OSError. A GraphQL error
+        does not move on: every node runs the same code, so the next node gives
+        the same answer, and the error names the real fault. The node that
+        answers moves to the front, so later queries skip the nodes that failed.
         """
         body = json.dumps({"query": query, "variables": variables or {}})
         failures = []
         for url in list(self.nodes):
             try:
                 answer = self._post(url, body, self.timeout)
-            except (urllib.error.URLError, OSError, ValueError) as exc:
+            except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
                 failures.append(f"{url}: {exc}")
+                continue
+            if not isinstance(answer, dict):
+                failures.append(f"{url}: answer is not a JSON object")
                 continue
             if answer.get("errors"):
                 messages = "; ".join(
@@ -162,10 +168,17 @@ class MagiClient:
         if not rows:
             raise MagiError("simulateContractCalls returned no result")
         row = rows[-1]
+        success = bool(row.get("success"))
+        gas_used = int(row.get("gas_used") or 0)
+        if success and gas_used <= 0:
+            # The caller sizes rc_limit from gas_used. A success without gas
+            # would size it at the floor, and a registering vote needs about
+            # three times that, so Magi would abort the real call.
+            raise MagiError("simulateContractCalls reported success without gas_used")
         return {
-            "success": bool(row.get("success")),
+            "success": success,
             "err_msg": row.get("err_msg") or "",
-            "gas_used": int(row.get("gas_used") or 0),
+            "gas_used": gas_used,
             "ret": row.get("ret"),
         }
 
