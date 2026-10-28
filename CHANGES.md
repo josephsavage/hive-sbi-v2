@@ -92,7 +92,10 @@ The Magi client moves the node that answered to the front of its list. A node
 that hangs therefore costs one 20-second timeout per client, not one per query.
 On 2026-10-23 `api.vsc.eco` failed by connect timeout, not by refusal. A
 truncated answer (`http.client.IncompleteRead`, not an `OSError`) or an answer
-that is not a JSON object also moves the query to the next node.
+that is not a JSON object also moves the query to the next node. So does an
+answer with GraphQL errors and no data: one node can lack a schema field or
+fail a resolver while the other nodes answer. An answer with data and GraphQL
+errors still raises `MagiError` without trying another node.
 
 ### Deploy
 

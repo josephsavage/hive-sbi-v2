@@ -37,7 +37,7 @@ USER_AGENT = "hive-sbi/1.0 (+https://hivesbi.com)"
 
 
 class MagiError(Exception):
-    """Every node failed, or a node answered with GraphQL errors."""
+    """Every node failed, or a node answered data together with GraphQL errors."""
 
 
 def qualify(account):
@@ -48,6 +48,13 @@ def qualify(account):
     different state key, so an unqualified name fails silently.
     """
     return account if ":" in account else "hive:" + account
+
+
+def _error_text(errors):
+    """The messages of a GraphQL `errors` field, in whatever shape the node sent it."""
+    if not isinstance(errors, list):
+        errors = [errors]
+    return "; ".join(str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errors)
 
 
 def _http_post(url, body, timeout):
@@ -72,11 +79,12 @@ class MagiClient:
         """Run one GraphQL query and return its `data` object.
 
         A transport failure moves on to the next node, and so does an answer
-        that is not a JSON object. A truncated body raises
-        http.client.IncompleteRead, which is not an OSError. A GraphQL error
-        does not move on: every node runs the same code, so the next node gives
-        the same answer, and the error names the real fault. The node that
-        answers moves to the front, so later queries skip the nodes that failed.
+        that is not a JSON object or that holds no data. A truncated body raises
+        http.client.IncompleteRead, which is not an OSError. An answer with
+        GraphQL errors and no data also moves on: one node can lack a schema
+        field or fail a resolver while the other nodes answer. An answer with
+        data and GraphQL errors raises MagiError at once. The node that answers
+        moves to the front, so later queries skip the nodes that failed.
         """
         body = json.dumps({"query": query, "variables": variables or {}})
         failures = []
@@ -89,14 +97,13 @@ class MagiClient:
             if not isinstance(answer, dict):
                 failures.append(f"{url}: answer is not a JSON object")
                 continue
-            if answer.get("errors"):
-                messages = "; ".join(
-                    str(e.get("message", e)) for e in answer["errors"]
-                )
-                raise MagiError(f"{url}: GraphQL error: {messages}")
+            errors = answer.get("errors")
             if answer.get("data") is None:
-                failures.append(f"{url}: no data in answer")
+                detail = f"GraphQL error: {_error_text(errors)}" if errors else "no data in answer"
+                failures.append(f"{url}: {detail}")
                 continue
+            if errors:
+                raise MagiError(f"{url}: GraphQL error: {_error_text(errors)}")
             if url != self.nodes[0]:
                 self.nodes.remove(url)
                 self.nodes.insert(0, url)

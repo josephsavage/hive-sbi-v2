@@ -462,8 +462,8 @@ def backfill_baseline(db, db2, magi, settings, load, sbi_voters, head_block, now
     become BASELINE rows dated at the time the live job would have voted
     them; capped ones become SKIPPED rows. The replay does not defer a capped
     post as the live job does, so it can count fewer votes than the live job
-    casts. compute_weight returns 100 for up to 42 votes, so the difference
-    changes no weight at the 30-day volume of 2026-10.
+    casts. compute_weight returns 100 for up to 42 viral or 10 deep votes in
+    the lookback, so the difference changes no weight below those counts.
     Posts in the candidate window are left to the live job. A post that
     already has a row is left alone, so a second backfill adds nothing twice.
 

@@ -18,6 +18,6 @@ The DB-backed tests connect to the local MariaDB (`sbi` through `config.json` `d
 |---|---|---|
 | `tests/test_memo.py` | `MemoParser` in `hivesbi/memo_parser.py`: sponsor and sponsee extraction from free-text transfer memos, with a mocked `Account` and blockchain. Add a case here for every memo-parsing change. | No |
 | `tests/test_virtual_tokens.py` | Delegation `virtual_tokens` (`hsbi_check_delegation.py`); write-ahead token issuance intents; the Management 10% issuance; settlement of unconfirmed issuances (`hsbi_token_snapshot.py`, `hivesbi/issuance_log.py`). | Partly: the pure-logic tests run anywhere. |
-| `tests/test_lassecash.py` | The LasseCash companion vote: the Magi client (`hivesbi/magi.py`), candidate, cap, weight and settlement rules (`hivesbi/lassecash.py`), the job and its backfill (`hsbi_lassecash_vote.py`), and the staker refresh hook in `hsbi_token_snapshot.main()`. | Partly: the DB tests also skip when `lassecash_votes` lacks the current columns. |
+| `tests/test_lassecash.py` | The LasseCash companion vote: the Magi client (`hivesbi/magi.py`), candidate, cap, weight and settlement rules (`hivesbi/lassecash.py`), the job and its backfill (`hsbi_lassecash_vote.py`), and the staker refresh hook in `hsbi_token_snapshot.main()`. | Partly: the DB tests also skip when `lassecash_votes` lacks the current columns. The `member_root_posts` test reads `posts_comments` in `sbi_steem_ops` (`databaseConnector`). |
 
 When you add a test file, add a row to this table.

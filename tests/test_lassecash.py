@@ -6,7 +6,9 @@ network. The DB tests use the local docker MariaDB (`sbi` via config.json
 databaseConnector2) inside one transaction that is rolled back. They skip when
 the database or the lassecash tables are missing, or when lassecash_votes lacks
 the current columns. On an old volume, recreate the tables from
-docker/mariadb/init/01-sbi-schema.sql or reset the volume.
+docker/mariadb/init/01-sbi-schema.sql or reset the volume. The member_root_posts
+test reads posts_comments in `sbi_steem_ops` (databaseConnector) the same way,
+and skips when that database is unavailable.
 
 Fixture values come from live Magi reads on 2026-10-23: the post record, gas
 figures and the keychain capture of the 1% vote sbi-tokens cast that day.
@@ -71,6 +73,21 @@ try:
 except Exception as exc:  # pragma: no cover - environment dependent
     _DB_SKIP_REASON = f"sbi database unavailable: {exc}"
     _DB_ENGINE = None
+
+_OPS_ENGINE = None
+_OPS_SKIP_REASON = ""
+try:
+    import dataset
+    from hivesbi.settings import Config
+
+    _OPS_ENGINE = dataset.connect(Config.load()["databaseConnector"]).engine
+    with _OPS_ENGINE.connect() as _probe:
+        if not _probe.exec_driver_sql("SHOW TABLES LIKE 'posts_comments'").fetchall():
+            _OPS_SKIP_REASON = "posts_comments missing; apply docker/mariadb/init/02-sbi-steem-ops-schema.sql"
+            _OPS_ENGINE = None
+except Exception as exc:  # pragma: no cover - environment dependent
+    _OPS_SKIP_REASON = f"sbi_steem_ops database unavailable: {exc}"
+    _OPS_ENGINE = None
 
 
 class _SameConnTxn:
@@ -365,7 +382,13 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.threshold_viral, 5)
 
     def test_disabled_refresh_touches_nothing(self):
-        self.assertIsNone(lc.refresh_lassecash_stakers({"cfg": {}, "db2": None, "storages": {}}, 144))
+        # The refresh swallows every error, so a None result does not prove
+        # the guard. The member storage, the DB and Magi must stay untouched.
+        for cfg in ({}, {"lassecash": {"enabled": False}}):
+            member, db2, magi = Mock(), Mock(), Mock()
+            rt = {"cfg": cfg, "db2": db2, "storages": {"member": member}}
+            self.assertIsNone(lc.refresh_lassecash_stakers(rt, 144, magi=magi))
+            self.assertEqual((member.mock_calls, db2.mock_calls, magi.mock_calls), ([], [], []))
 
 
 # --- Magi client ---------------------------------------------------------------
@@ -425,8 +448,27 @@ class MagiClientTests(unittest.TestCase):
             self.assertEqual(client.available_rc(VOTER), 7)
             self.assertEqual(client.nodes, ["b", "a"])
 
-    def test_graphql_error_does_not_fail_over(self):
-        post = FakeTransport({"a": [{"errors": [{"message": "bad key"}]}], "b": []})
+    def test_graphql_error_without_data_fails_over(self):
+        # A node that lacks a schema field answers errors and no data.
+        rc = {"data": {"getAccountRC": {"amount": 5, "max_rcs": 9}}}
+        schema_error = [{"message": 'Cannot query field "output"'}]
+        for bad in ({"errors": schema_error}, {"errors": schema_error, "data": None}):
+            post = FakeTransport({"a": [bad], "b": [rc]})
+            client = MagiClient(nodes=["a", "b"], post=post)
+            self.assertEqual(client.available_rc(VOTER), 5)
+            self.assertEqual(client.nodes, ["b", "a"])
+
+    def test_graphql_error_on_every_node_names_each_error(self):
+        post = FakeTransport({"a": [{"errors": [{"message": "bad key"}]}],
+                              "b": [{"errors": ["malformed"]}]})
+        with self.assertRaises(MagiError) as ctx:
+            MagiClient(nodes=["a", "b"], post=post).available_rc(VOTER)
+        self.assertIn("a: GraphQL error: bad key", str(ctx.exception))
+        self.assertIn("b: GraphQL error: malformed", str(ctx.exception))
+
+    def test_graphql_error_with_data_does_not_fail_over(self):
+        answer = {"errors": [{"message": "bad key"}], "data": {"getAccountRC": None}}
+        post = FakeTransport({"a": [answer], "b": []})
         with self.assertRaises(MagiError):
             MagiClient(nodes=["a", "b"], post=post).available_rc(VOTER)
         self.assertEqual(len(post.calls), 1)
@@ -820,14 +862,19 @@ class CastTests(DBTestCase):
                          (lc.BROADCAST, lc.QUALIFIED))  # the older post waits for the next run
 
     def test_unsettled_vote_blocks_casting(self):
-        # The dry run would check a meter that lacks the unsettled vote.
-        self.add_vote_row("in-flight", status=lc.BROADCAST, trx_id="e" * 40, broadcast_at=self.now)
-        waiting = self.add_vote_row("waiting")
-        magi = FakeMagi()
-        broadcast, sent = self.broadcaster()
-        self.assertEqual(job.cast_votes(self.db, magi, self.settings, broadcast, self.now), 0)
-        self.assertEqual((sent, magi.simulated), ([], []))
-        self.assertEqual(self.row(waiting)["status"], lc.QUALIFIED)
+        # The dry run would check a meter that lacks the unsettled vote. A
+        # PENDING vote may have landed, so it blocks the same as a BROADCAST one.
+        cases = ((lc.BROADCAST, {"trx_id": "e" * 40}), (lc.PENDING, {}))
+        for status, fields in cases:
+            with self.subTest(status=status):
+                self.conn.exec_driver_sql("DELETE FROM lassecash_votes")
+                self.add_vote_row("in-flight", status=status, broadcast_at=self.now, **fields)
+                waiting = self.add_vote_row("waiting")
+                magi = FakeMagi()
+                broadcast, sent = self.broadcaster()
+                self.assertEqual(job.cast_votes(self.db, magi, self.settings, broadcast, self.now), 0)
+                self.assertEqual((sent, magi.simulated), ([], []))
+                self.assertEqual(self.row(waiting)["status"], lc.QUALIFIED)
 
     def test_weight_spreads_budget_over_lookback_votes(self):
         five_days_ago = self.now - timedelta(days=5)
@@ -1086,6 +1133,49 @@ class SettleTests(DBTestCase):
             f"ALERT: stuck PENDING L-cash vote id={stuck} authorperm=@{AUTHOR}/stuck "
             f"broadcast_at={self.now - lc.STUCK_VOTE_AGE} error=read timed out"
         ])
+
+
+@unittest.skipUnless(_OPS_ENGINE is not None, _OPS_SKIP_REASON)
+class MemberRootPostsTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = _OPS_ENGINE.connect()
+        self.trans = self.conn.begin()
+        self.now = lc.utcnow()
+
+    def tearDown(self):
+        self.trans.rollback()
+        self.conn.close()
+
+    def add_post(self, permlink, created, author=AUTHOR, main_post=1, voted=0, skip=0):
+        self.conn.exec_driver_sql(
+            "INSERT INTO posts_comments (authorperm, author, created, main_post, voted, skip) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (f"@{author}/{permlink}", author, created, main_post, voted, skip),
+        )
+
+    def test_root_posts_by_authors_between_since_and_until(self):
+        # The backfill stops where the live job's candidate window starts: a
+        # post created at `until` belongs to the live job, not the backfill.
+        since = self.now - timedelta(days=lc.LOOKBACK_DAYS)
+        until = self.now - timedelta(days=lc.CANDIDATE_DAYS)
+        self.add_post("before", since - timedelta(seconds=1))
+        self.add_post("at-since", since, voted=1)
+        self.add_post("inside", since + timedelta(days=10), skip=1)
+        self.add_post("comment", since + timedelta(days=11), main_post=0)
+        self.add_post("other", since + timedelta(days=12), author="zz_lc_other")
+        self.add_post("at-until", until)
+        self.add_post("recent", self.now - timedelta(hours=1))
+
+        posts = lc.member_root_posts(self.conn, [AUTHOR], since, until)
+        self.assertEqual(posts, [
+            {"authorperm": f"@{AUTHOR}/at-since", "author": AUTHOR, "created": since,
+             "voted": True, "skip": False},
+            {"authorperm": f"@{AUTHOR}/inside", "author": AUTHOR,
+             "created": since + timedelta(days=10), "voted": False, "skip": True},
+        ])
+        live = lc.member_root_posts(self.conn, [AUTHOR], since)
+        self.assertEqual([p["authorperm"] for p in live],
+                         [f"@{AUTHOR}/{p}" for p in ("at-since", "inside", "at-until", "recent")])
 
 
 class BackfillTests(DBTestCase):
