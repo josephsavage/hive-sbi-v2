@@ -469,6 +469,9 @@ def backfill_baseline(db, db2, magi, settings, load, sbi_voters, head_block, now
 
     Returns a report that compares the tagged and untagged posts with the
     posts the contract registered since head_block - LOOKBACK_DAYS.
+
+    Both Magi reads run before the first insert. A Magi failure then leaves no
+    row behind, so a rerun replays every post and prints the whole report again.
     """
     now = now or utcnow()
     since = now - timedelta(days=LOOKBACK_DAYS)
@@ -505,19 +508,13 @@ def backfill_baseline(db, db2, magi, settings, load, sbi_voters, head_block, now
             untagged.append(entry)
 
     counted, capped = apply_cap(tagged)
+    # Every Magi read runs before the first insert, and the report is complete
+    # before any row exists. A Magi failure here leaves the table untouched, so
+    # a rerun replays every post. Inserting first would commit the rows and make
+    # every later run skip those posts as known, which prints an empty report
+    # for good, and deploy step 4 reads that report.
     state = magi.get_state(settings.contract_id,
                            [post_key(p["author"], p["permlink"]) for p in counted])
-    with db2.engine.begin() as conn:
-        for p in counted:
-            insert_vote_row(conn, p["authorperm"], p["author"], p["permlink"], p["created"],
-                            settings.voter, BASELINE, now, hive_voted=p["hive_voted"],
-                            vote_window=post_window(state.get(post_key(p["author"], p["permlink"]))),
-                            created_at=baseline_vote_time(p))
-        for p in capped:
-            insert_vote_row(conn, p["authorperm"], p["author"], p["permlink"], p["created"],
-                            settings.voter, SKIPPED, now, hive_voted=p["hive_voted"],
-                            error_message="baseline: L-cash cap")
-
     calls = magi.contract_vote_calls(settings.contract_id,
                                      max(0, head_block - LOOKBACK_DAYS * BLOCKS_PER_DAY))
     registered = {(c["author"], c["permlink"]) for c in calls if c["status"] == "CONFIRMED"}
@@ -530,6 +527,17 @@ def backfill_baseline(db, db2, magi, settings, load, sbi_voters, head_block, now
         tagged_not_registered=sorted(tagged_keys - registered),
         untagged_registered=sorted(untagged_keys & registered),
     )
+
+    with db2.engine.begin() as conn:
+        for p in counted:
+            insert_vote_row(conn, p["authorperm"], p["author"], p["permlink"], p["created"],
+                            settings.voter, BASELINE, now, hive_voted=p["hive_voted"],
+                            vote_window=post_window(state.get(post_key(p["author"], p["permlink"]))),
+                            created_at=baseline_vote_time(p))
+        for p in capped:
+            insert_vote_row(conn, p["authorperm"], p["author"], p["permlink"], p["created"],
+                            settings.voter, SKIPPED, now, hive_voted=p["hive_voted"],
+                            error_message="baseline: L-cash cap")
     return report
 
 

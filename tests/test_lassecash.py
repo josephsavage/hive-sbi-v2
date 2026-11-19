@@ -124,8 +124,9 @@ class FakeMagi:
     """
 
     def __init__(self, state=None, sim=None, rc=100_000, verdicts=None, calls=None,
-                 sim_errors=()):
+                 sim_errors=(), calls_error=None):
         self.state = dict(state or {})
+        self.calls_error = calls_error
         self.sim = sim or {"success": True, "err_msg": "", "gas_used": GAS_REVOTE, "ret": "voted"}
         self.rc = rc
         self.verdicts = verdicts or {}
@@ -151,6 +152,8 @@ class FakeMagi:
 
     def contract_vote_calls(self, contract_id, from_block):
         self.from_block = from_block
+        if self.calls_error:
+            raise MagiError(self.calls_error)
         return list(self.calls)
 
 
@@ -1224,6 +1227,39 @@ class BackfillTests(DBTestCase):
         since = self.now - timedelta(days=lc.LOOKBACK_DAYS)
         self.assertEqual(lc.meter_votes(self.conn, lc.VIRAL, since), 3)
         self.assertEqual(lc.vote_rows_with_status(self.conn, (lc.QUALIFIED,)), [])
+
+    def test_magi_failure_writes_no_row_so_a_rerun_still_reports(self):
+        """A Magi outage during the report must not commit the baseline.
+
+        The backfill prints the "registered but untagged" list that deploy
+        step 4 reads. Inserting before that read would commit the rows, and
+        every later run skips those posts as known, so the report stays empty
+        for good.
+        """
+        self.make_staker()
+        posts = [member_post("hive", self.now - timedelta(days=10)),
+                 member_post("untagged", self.now - timedelta(days=9))]
+        calls = [{"author": f"hive:{AUTHOR}", "permlink": "untagged", "status": "CONFIRMED"}]
+
+        def load(authorperm):
+            tags = ["hive"] if authorperm.endswith("/untagged") else ["lassecash"]
+            return FakeComment(tags=tags)
+
+        down = FakeMagi(calls=calls, calls_error="all Magi nodes failed: simulated")
+        with patch.object(job, "member_root_posts", return_value=posts):
+            with self.assertRaises(MagiError):
+                job.backfill_baseline(self.db, self.db, down, self.settings, load,
+                                      [SBI_VOTER], 10_000_000, self.now)
+            # Nothing committed, so the rerun below sees every post as new.
+            self.assertEqual(self.statuses(), {})
+
+            report = job.backfill_baseline(self.db, self.db, FakeMagi(calls=calls),
+                                           self.settings, load, [SBI_VOTER],
+                                           10_000_000, self.now)
+
+        self.assertEqual(self.statuses(), {"hive": lc.BASELINE})
+        self.assertEqual((report["tagged"], report["baseline"], report["untagged"]), (1, 1, 1))
+        self.assertEqual(report["untagged_registered"], [(f"hive:{AUTHOR}", "untagged")])
 
 
 if __name__ == "__main__":

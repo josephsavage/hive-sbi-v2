@@ -86,6 +86,15 @@ permlinks do, so two posts whose permlinks differ only in case are two rows. An
 error on one row or one post never stops the others, and a failed phase never
 skips the next one.
 
+### Backfill: every Magi read before the first insert
+
+`backfill_baseline` runs `get_state` and `contract_vote_calls`, and builds the
+whole report, before it inserts the first row. A Magi failure then leaves the
+table untouched, so a rerun replays every post and prints the report again.
+Inserting first committed the rows and made every later run skip those posts as
+known, which printed an empty report for good, and deploy step 5 reads that
+report.
+
 ### Magi node failover
 
 The Magi client moves the node that answered to the front of its list. A node
@@ -99,15 +108,124 @@ errors still raises `MagiError` without trying another node.
 
 ### Deploy
 
-1. Create `lassecash_stakers` and `lassecash_votes` in prod (DDL in `sql/sbi.sql`).
-2. Add the `lassecash` block from `config.example.json` with `enabled: true` and
-   `broadcast: false`.
-3. Run `python3 hsbi_lassecash_vote.py --backfill` once. It refreshes the staker
-   list, replays the last 30 days of member posts through the candidate rules
-   and the cap into BASELINE rows, and prints the tagged posts against the
-   posts the contract registered. Check the "registered but untagged" list
-   before step 4. The backfill never signs. It replaces the planned shadow week.
-4. Set `broadcast: true`.
+Run every step on the production host, in `/root/steembasicincome`. The job is
+off until step 3, and it signs nothing until step 6.
+
+**Preconditions**
+
+- `sbi-tokens` holds at least 1,000 L-Shares. The contract's viral threshold
+  applies to the voter, not only to the author.
+- `sbi-tokens` has a posting key in the `steem_keys` table of the `sbi`
+  database, with `key_type = 'posting'`. Without that row the job prints
+  `no posting key stored for sbi-tokens; not voting` and casts nothing.
+- `sbi-tokens` has available RC on Magi. A registering vote reserves about
+  4,300 RC for 5 days, and the job defers when available RC is below the
+  `rc_limit` it sized. The operator raises RC by adding HBD on Magi.
+- The host reaches all three Magi nodes in `config.json` `lassecash.magi_nodes`.
+
+**Step 1 - deploy the code**
+
+```sh
+cd /root/steembasicincome && git pull
+```
+
+`sbirunner.sh` gains `hsbi_lassecash_vote.py` as step 10, after
+`hsbi_upvote_post_comment.py`. The systemd unit is `Type=simple` with
+`Restart=always`, so the runner re-reads `sbirunner.sh` on its next restart.
+Run `systemctl restart sbirunner` to pick the new step up at once.
+
+**Step 2 - create the two tables**
+
+Apply only the `lassecash_stakers` and `lassecash_votes` blocks of
+`sql/sbi.sql` to the `sbi` database. Do not apply the whole file: it holds a
+`CREATE TABLE` for every table in the schema.
+
+```sh
+mariadb sbi -e "SHOW TABLES LIKE 'lassecash%';"
+```
+
+Both tables must appear. `DEFAULT CHARSET=utf8` resolves to `utf8mb3` on
+MariaDB 10.11, which matches the rest of the schema.
+
+**Step 3 - add the config block, with signing off**
+
+Copy the `lassecash` block from `config.example.json` into `config.json`, and
+set `enabled: true` and `broadcast: false`. `enabled` turns on both the vote
+job and the staker refresh in `hsbi_token_snapshot.py`. `broadcast` is the
+separate switch that lets the job sign. With `broadcast: false` the job
+qualifies posts, dry-runs them on Magi and reports the vote it would cast.
+
+**Step 4 - seed the weight baseline**
+
+```sh
+python3 -u hsbi_lassecash_vote.py --backfill 2>&1 | tee /root/lcash-backfill.log
+```
+
+Requirements and behaviour of `--backfill`:
+
+- It needs step 2 and step 3. It reads `enabled`, and it returns at once when
+  `enabled` is false.
+- It never signs, whatever `broadcast` says, so it is safe to run while
+  `sbirunner` loops. Do not run the job *without* `--backfill` by hand at any
+  step: the write-ahead assumes one instance at a time.
+- It refreshes `lassecash_stakers` itself. Waiting for `hsbi_token_snapshot.py`
+  is unnecessary.
+- It replays member root posts from 30 days ago up to the 3-day candidate
+  window through the candidate rules and the cap. Counted posts become
+  `BASELINE` rows, capped posts `SKIPPED` rows. Posts inside the candidate
+  window stay for the live job.
+- It reads live Magi and live Hive. A Magi failure leaves no row behind, so a
+  rerun replays every post and prints the whole report again.
+- **Capture the output.** A rerun after a *successful* run skips every post as
+  known and prints an empty report. The report cannot be rebuilt afterwards.
+- Rerun it when the log holds `not loaded, rerun the backfill later` lines.
+  Those posts have no row yet, so the rerun picks them up.
+
+**Step 5 - check the report before enabling signing**
+
+Read three lists in `/root/lcash-backfill.log`:
+
+1. `registered but untagged: check the tag rule` - this list must be empty.
+   The contract reads no Hive post: it checks no tag, no post existence and no
+   age. The SBI-side tag check is the only guard against paying a
+   non-LasseCash post out of the pool. An entry here means a post that the
+   contract already pays and that the tag check rejects, so the tag rule and
+   that post need review before any vote goes out.
+2. `tagged, not registered (no LasseCash vote yet)` - informational. These are
+   the posts the live job would have voted.
+3. `tagged and registered on the contract` - informational.
+
+```sh
+mariadb sbi -e "SELECT status, COUNT(*) FROM lassecash_votes GROUP BY status;"
+```
+
+Expect `BASELINE` and `SKIPPED` rows only. Any other status means the live job
+ran before step 6.
+
+**Step 6 - turn signing on**
+
+Set `broadcast: true` in `config.json`. The next pipeline cycle casts at most
+one vote.
+
+**Step 7 - watch the first cycles**
+
+```sh
+journalctl -u sbirunner -t sbirunner --since '-1h' | grep -E 'hsbi_lassecash_vote|ALERT'
+```
+
+- `voted <authorperm> at <weight>% (rc_limit N, trx ...)` is one cast vote.
+- `ALERT: stuck PENDING L-cash vote` means a write-ahead row has stayed
+  `PENDING` for more than 6 hours. No vote goes out while any row is `PENDING`
+  or `BROADCAST`, so that line stops every later L-cash vote until an operator
+  settles the row.
+- `RC short (N < M); deferring` means `sbi-tokens` needs more RC on Magi.
+
+**Rollback**
+
+- `broadcast: false` stops signing and keeps qualification and settlement.
+- `enabled: false` stops the vote job and the staker refresh. The two tables
+  and their rows stay, so re-enabling resumes from the same baseline.
+- Neither switch touches the SBI Hive vote or `hsbi_upvote_post_comment.py`.
 
 ## Token issuance: settled-row shape and sweep guard (PR #140 review)
 

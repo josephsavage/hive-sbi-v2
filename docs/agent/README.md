@@ -15,6 +15,7 @@ CLAUDE.md points here. This directory holds working knowledge that the code, CHA
 - [L-cash: 30-day volume and weight thresholds](memory/lassecash-30-day-volume.md): why weights stay 100 up to 42 viral or 10 deep votes, and when to revisit the weight and the backfill cap.
 - [L-cash: one instance at a time](memory/lassecash-single-instance.md): the 2026-10-27 ruling that the vote job runs only from `sbirunner.sh`, and why its write-ahead depends on that.
 - [Live jobs: ALERT on a stuck write-ahead row](memory/live-job-stuck-row-alert.md): the 2026-10-27 ruling that a live job prints `ALERT:` for a row stuck past its age.
+- [L-cash: settled rows are terminal](memory/lassecash-settled-rows-are-terminal.md): the 2026-11-19 rulings that the job never retries a FAILED vote and never reclassifies an IGNORED post.
 - [L-cash: payout and claim lifecycle](memory/lassecash-claim-lifecycle.md): the contract's `payout`/`claim_curation` facts, and the 2026-10-27 ruling that a follow-up PR adds them without `settle_pending`.
 
 ## Rules
