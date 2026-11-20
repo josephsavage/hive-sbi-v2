@@ -118,9 +118,18 @@ off until step 3, and it signs nothing until step 6.
 - `sbi-tokens` has a posting key in the `steem_keys` table of the `sbi`
   database, with `key_type = 'posting'`. Without that row the job prints
   `no posting key stored for sbi-tokens; not voting` and casts nothing.
-- `sbi-tokens` has available RC on Magi. A registering vote reserves about
-  4,300 RC for 5 days, and the job defers when available RC is below the
-  `rc_limit` it sized. The operator raises RC by adding HBD on Magi.
+- `sbi-tokens` has available RC on Magi. Magi reserves the whole `rc_limit`
+  for 5 days, and the job defers when available RC is below the `rc_limit` it
+  sized. On 2026-11-20 the dry runs sized 18,627 to 18,900 RC per vote, so
+  nine queued posts reserve about 169,000 RC. Available RC was 93,370 on
+  2026-10-24. Read it before step 6:
+
+  ```sh
+  python3 -c "from hivesbi.settings import get_config; from hivesbi.lassecash import LassecashSettings; from hivesbi.magi import MagiClient; s = LassecashSettings.from_config(get_config()); print(MagiClient(s.magi_nodes).available_rc(s.voter))"
+  ```
+
+  The job logs `RC short` and defers when the reading falls below the next
+  `rc_limit`. The operator raises RC by adding HBD on Magi.
 - The host reaches all three Magi nodes in `config.json` `lassecash.magi_nodes`.
 
 **Step 1 - deploy the code**
@@ -134,7 +143,7 @@ cd /root/steembasicincome && git pull
 `Restart=always`, so the runner re-reads `sbirunner.sh` on its next restart.
 Run `systemctl restart sbirunner` to pick the new step up at once.
 
-**Step 2 - create the two tables**
+**Step 2 - create the two tables and grant on them**
 
 Apply only the `lassecash_stakers` and `lassecash_votes` blocks of
 `sql/sbi.sql` to the `sbi` database. Do not apply the whole file: it holds a
@@ -146,6 +155,32 @@ mariadb sbi -e "SHOW TABLES LIKE 'lassecash%';"
 
 Both tables must appear. `DEFAULT CHARSET=utf8` resolves to `utf8mb3` on
 MariaDB 10.11, which matches the rest of the schema.
+
+Grant the application DB user on both new tables. That user is the one in
+`config.json` `databaseConnector2`, which is `sbi2`@`localhost` in prod. Read
+its current grants first: a grant on `sbi`.* already covers the new tables for
+every privilege that grant lists.
+
+```sh
+mariadb -e "SHOW GRANTS FOR 'sbi2'@'localhost';"
+```
+
+Grant what is missing, as a user that can grant:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON `sbi`.`lassecash_stakers` TO 'sbi2'@'localhost';
+GRANT SELECT, INSERT, UPDATE ON `sbi`.`lassecash_votes` TO 'sbi2'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+`replace_stakers` in `hivesbi/lassecash.py` ends every snapshot with
+`DELETE FROM lassecash_stakers WHERE checked_at < %s`, which removes the rows
+of accounts that left SBI. That statement needs the DELETE privilege. On
+2026-11-20 `sbi2` held SELECT, INSERT and UPDATE on the table and no DELETE,
+so step 4 failed with MySQLdb error 1142, DELETE command denied. The snapshot
+write runs in one transaction, so that failure rolled back and left both
+tables empty. `lassecash_votes` needs no DELETE: the job inserts rows there and
+updates them.
 
 **Step 3 - add the config block, with signing off**
 
@@ -196,11 +231,46 @@ Read three lists in `/root/lcash-backfill.log`:
 3. `tagged and registered on the contract` - informational.
 
 ```sh
-mariadb sbi -e "SELECT status, COUNT(*) FROM lassecash_votes GROUP BY status;"
+mariadb sbi -e "SELECT status, vote_window, COUNT(*) FROM lassecash_votes GROUP BY status, vote_window;"
 ```
 
-Expect `BASELINE` and `SKIPPED` rows only. Any other status means the live job
-ran before step 6.
+The backfill writes `BASELINE` and `SKIPPED` rows. Step 3 turns `enabled` on,
+so the live job also runs each cycle and writes `QUALIFIED` rows for the posts
+in its 3-day candidate window, and `IGNORED` rows for untagged posts and
+excluded members. Those four statuses are expected here. A `PENDING`,
+`CONFIRMED` or `FAILED` row means the job signed before step 6: stop and check
+`broadcast` in `config.json`.
+
+Read the weight the shadow run reports:
+
+```sh
+journalctl -u sbirunner -t sbirunner --since '-3h' | grep 'shadow run, would vote'
+```
+
+Each line names the weight, the `rc_limit`, the window and the vote count in
+the lookback. `compute_weight` divides the window's 30-day budget by that
+count, so a lookback holding more than 42 viral votes produces a weight below
+100. On 2026-11-20 the backfill wrote 92 viral and 3 deep `BASELINE` rows, and
+the shadow run reported 46% at 93 viral votes. See
+[docs/agent/memory/lassecash-30-day-volume.md](docs/agent/memory/lassecash-30-day-volume.md).
+
+The shadow run prints one line per `QUALIFIED` row, and it reports more votes
+than step 6 casts. Two reasons:
+
+1. `cast_votes` counts a cast only after a broadcast, so `MAX_VOTES_PER_RUN`
+   stops nothing while `broadcast` is false. With `broadcast: true` the job
+   casts one vote per run, and none while an earlier vote is `PENDING` or
+   `BROADCAST`.
+2. The 24-hour per-author cap reads `MAX(broadcast_at)`, which stays NULL in a
+   shadow run, so the cap never defers a post there. On 2026-11-20 the shadow
+   run therefore reported three posts per author for `jjprac`, `elizabethbit`
+   and `silvertop`. With `broadcast: true` the cap defers the second and third
+   post of an author whose row has `hive_voted = 0`. A row with
+   `hive_voted = 1` bypasses the cap. Read the flag before step 6:
+
+```sh
+mariadb sbi -e "SELECT author, permlink, hive_voted, post_created FROM lassecash_votes WHERE status = 'QUALIFIED' ORDER BY hive_voted DESC, post_created;"
+```
 
 **Step 6 - turn signing on**
 

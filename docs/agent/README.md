@@ -12,11 +12,13 @@ CLAUDE.md points here. This directory holds working knowledge that the code, CHA
 - [nectar fails in a fresh container](memory/nectar-fresh-container-config-store.md): the `Hive()` sqlite error in a new local app container, and how to seed the node key.
 - [L-cash: Hive-voted posts first](memory/lassecash-hive-voted-priority.md): the 2026-10-25 ruling that orders the L-cash candidate queue.
 - [L-cash: RC capacity is operator-managed](memory/lassecash-rc-capacity-operator-managed.md): `sbi-tokens` RC is shared with manual Magi calls; the operator adds HBD, and the job keeps no reserve.
-- [L-cash: 30-day volume and weight thresholds](memory/lassecash-30-day-volume.md): why weights stay 100 up to 42 viral or 10 deep votes, and when to revisit the weight and the backfill cap.
+- [L-cash: 30-day volume and weight thresholds](memory/lassecash-30-day-volume.md): the 2026-11-20 prod measurement of 95 charged votes, and why viral weights run near 44 rather than 100.
 - [L-cash: one instance at a time](memory/lassecash-single-instance.md): the 2026-10-27 ruling that the vote job runs only from `sbirunner.sh`, and why its write-ahead depends on that.
 - [Live jobs: ALERT on a stuck write-ahead row](memory/live-job-stuck-row-alert.md): the 2026-10-27 ruling that a live job prints `ALERT:` for a row stuck past its age.
 - [L-cash: settled rows are terminal](memory/lassecash-settled-rows-are-terminal.md): the 2026-11-19 rulings that the job never retries a FAILED vote and never reclassifies an IGNORED post.
 - [L-cash: payout and claim lifecycle](memory/lassecash-claim-lifecycle.md): the contract's `payout`/`claim_curation` facts, and the 2026-10-27 ruling that a follow-up PR adds them without `settle_pending`.
+- [Prod DB user grants](memory/prod-db-user-grants.md): `sbi2`@`localhost` holds limited privileges, so a new table needs an explicit GRANT at deploy.
+- [L-cash: a shadow run over-reports](memory/lassecash-shadow-run-overreports.md): why `broadcast: false` prints every QUALIFIED post each cycle, and how to project the live votes.
 
 ## Rules
 
