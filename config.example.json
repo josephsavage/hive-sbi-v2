@@ -49,5 +49,17 @@
     "HSBIDAO:LBI",
     "HSBIDAO:PIXYDUST",
     "HSBIDAO:THREE"
-  ]
+  ],
+  "lassecash": {
+    "enabled": false,
+    "broadcast": false,
+    "voter": "sbi-tokens",
+    "contract_id": "vsc1Be4TTjUiHgzhHAfqFn6s3PDAExH2X59fXV",
+    "magi_nodes": [
+      "https://api.okinoko.io/api/v1/graphql",
+      "https://vsc.techcoderx.com/api/v1/graphql",
+      "https://api.vsc.eco/api/v1/graphql"
+    ],
+    "threshold_viral": 100000000000
+  }
 }

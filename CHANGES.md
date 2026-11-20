@@ -1,5 +1,232 @@
 # Changes from bb3ac15046e999e1ad076d84241186135e084757 to HEAD
 
+## LasseCash companion vote (`hsbi_lassecash_vote.py`)
+
+LasseCash pays post rewards from a contract on Magi (formerly VSC). A Hive vote
+never reaches that contract; only a `vsc.call` custom_json with action `vote`
+counts. The new job casts that call from `sbi-tokens` on root posts that carry
+the `lassecash` tag, by members whose L-Shares meet the contract's viral
+threshold. The call is its own Hive transaction; the SBI Hive vote and
+`hsbi_upvote_post_comment.py` are unchanged.
+
+### Candidates and the 24-hour cap
+
+- A post with the SBI Hive vote qualifies at once and bypasses the cap. It goes
+  ahead of every post without the Hive vote, so it gets the L-cash vote in the
+  same pipeline run unless an earlier vote is unsettled or RC is short.
+- A post without the SBI Hive vote qualifies when the upvote job's 24-hour
+  window closes. It gets the L-cash vote only when the author's last L-cash vote
+  attempt (`broadcast_at`) is at least 24 hours old. A broadcast that provably
+  never reached the chain does not start the cap.
+- The job reads the post's own Hive votes, because `posts_comments.voted` can stay
+  0 after a pooled SBI vote late in the window.
+- A post without the Hive vote gets no L-cash vote when the stream's blacklist
+  skipped it, or when the member is excluded from SBI votes (`blacklisted`, or
+  `hivewatchers`/`buildawhale` with `blacklisted` NULL), as in the upvote job.
+- Every candidate leaves the queue 3 days after posting.
+
+### Staker list on the token cycle
+
+`hsbi_token_snapshot.py` calls `refresh_lassecash_stakers` last inside its cycle
+gate. The refresh reads `shr_hive:<member>` for every member from Magi and writes
+`lassecash_stakers`. It skips itself when the list is younger than
+`share_cycle_min`, because the high-VP regime opens the gate about every 15
+minutes. It never raises, so a Magi outage cannot affect issuance. The vote job
+reads only this table and adds no member scan to the vote loop.
+
+### Every vote is dry-run first
+
+The contract checks no tag, no post existence and no age: a dry run registered a
+permlink that does not exist on Hive. The SBI-side tag check is therefore the
+only guard against paying non-LasseCash posts. Before each broadcast the job runs
+`simulateContractCalls`, so the contract's own code decides threshold, window
+and vote power. "author needs" and "voting has closed" refusals skip the post;
+other refusals defer it for up to 3 days. A dry run that reports success without
+`gas_used` is a Magi error, and the post stays QUALIFIED: the `rc_limit` would
+fall to the 1,500 floor, and a registering vote needs about 4,300.
+
+### Weight and RC
+
+Weight = (30-day regeneration of the post's meter) / (votes charged to that
+meter in the last 30 days, this one included), clamped to 1..100. A charged vote
+is a broadcast attempt that Magi did not fail, or a BASELINE row from the
+backfill. Viral budget 4,285 weight-percent, deep 1,000. Magi reserves the whole
+`rc_limit` for 5 days, so the limit is 3x the simulated cost (floor 1,500,
+ceiling 30,000), as lassecash.com sizes it.
+
+A dry run reads committed Magi state, so it misses every vote Magi has not
+applied yet. The job therefore casts at most one vote per run, and none while an
+earlier vote is PENDING or BROADCAST. It tries Hive-voted posts first, then the
+oldest post first.
+
+### Rows and settlement
+
+`lassecash_votes` records each post as QUALIFIED or IGNORED (untagged), then
+PENDING (write-ahead, with `broadcast_at`) and BROADCAST. The vote record `pv_`
+or the Magi verdict settles a row as SUCCESS or FAILED. A BROADCAST row without
+a verdict after 30 minutes is FAILED. A PENDING row is not retried on a timeout
+alone: after 30 minutes, when its transaction (300-second expiration) has
+expired, the job searches the `sbi-tokens` account history for the call. A
+found call makes the row BROADCAST with its trx id. A missing call returns the
+post to QUALIFIED only when the history covers the transaction's whole life:
+the node's last irreversible block is past the expiration plus a 10-minute
+margin, and the walk reaches an operation older than the search start. A node
+can answer a lagging or an empty history, and nectar walks an empty answer as an
+account without operations. Such a history, or a lookup error, leaves the row
+PENDING. `broadcast_at` is the time of the write-ahead, not the start of the
+run, so the dry runs before the vote do not shift the expiration that the search
+assumes. A PENDING row older than 6 hours prints
+`ALERT: stuck PENDING L-cash vote` on every run, as `hsbi_token_snapshot.py` does
+for a stuck issuance: no vote goes out while the row is PENDING. A post where
+`sbi-tokens` already voted is SKIPPED, because a second call replaces the weight
+and spends vote power again.
+
+`authorperm` and `permlink` compare case-sensitively (`utf8_bin`), as Hive
+permlinks do, so two posts whose permlinks differ only in case are two rows. An
+error on one row or one post never stops the others, and a failed phase never
+skips the next one.
+
+### Backfill: every Magi read before the first insert
+
+`backfill_baseline` runs `get_state` and `contract_vote_calls`, and builds the
+whole report, before it inserts the first row. A Magi failure then leaves the
+table untouched, so a rerun replays every post and prints the report again.
+Inserting first committed the rows and made every later run skip those posts as
+known, which printed an empty report for good, and deploy step 5 reads that
+report.
+
+### Magi node failover
+
+The Magi client moves the node that answered to the front of its list. A node
+that hangs therefore costs one 20-second timeout per client, not one per query.
+On 2026-10-23 `api.vsc.eco` failed by connect timeout, not by refusal. A
+truncated answer (`http.client.IncompleteRead`, not an `OSError`) or an answer
+that is not a JSON object also moves the query to the next node. So does an
+answer with GraphQL errors and no data: one node can lack a schema field or
+fail a resolver while the other nodes answer. An answer with data and GraphQL
+errors still raises `MagiError` without trying another node.
+
+### Deploy
+
+Run every step on the production host, in `/root/steembasicincome`. The job is
+off until step 3, and it signs nothing until step 6.
+
+**Preconditions**
+
+- `sbi-tokens` holds at least 1,000 L-Shares. The contract's viral threshold
+  applies to the voter, not only to the author.
+- `sbi-tokens` has a posting key in the `steem_keys` table of the `sbi`
+  database, with `key_type = 'posting'`. Without that row the job prints
+  `no posting key stored for sbi-tokens; not voting` and casts nothing.
+- `sbi-tokens` has available RC on Magi. A registering vote reserves about
+  4,300 RC for 5 days, and the job defers when available RC is below the
+  `rc_limit` it sized. The operator raises RC by adding HBD on Magi.
+- The host reaches all three Magi nodes in `config.json` `lassecash.magi_nodes`.
+
+**Step 1 - deploy the code**
+
+```sh
+cd /root/steembasicincome && git pull
+```
+
+`sbirunner.sh` gains `hsbi_lassecash_vote.py` as step 10, after
+`hsbi_upvote_post_comment.py`. The systemd unit is `Type=simple` with
+`Restart=always`, so the runner re-reads `sbirunner.sh` on its next restart.
+Run `systemctl restart sbirunner` to pick the new step up at once.
+
+**Step 2 - create the two tables**
+
+Apply only the `lassecash_stakers` and `lassecash_votes` blocks of
+`sql/sbi.sql` to the `sbi` database. Do not apply the whole file: it holds a
+`CREATE TABLE` for every table in the schema.
+
+```sh
+mariadb sbi -e "SHOW TABLES LIKE 'lassecash%';"
+```
+
+Both tables must appear. `DEFAULT CHARSET=utf8` resolves to `utf8mb3` on
+MariaDB 10.11, which matches the rest of the schema.
+
+**Step 3 - add the config block, with signing off**
+
+Copy the `lassecash` block from `config.example.json` into `config.json`, and
+set `enabled: true` and `broadcast: false`. `enabled` turns on both the vote
+job and the staker refresh in `hsbi_token_snapshot.py`. `broadcast` is the
+separate switch that lets the job sign. With `broadcast: false` the job
+qualifies posts, dry-runs them on Magi and reports the vote it would cast.
+
+**Step 4 - seed the weight baseline**
+
+```sh
+python3 -u hsbi_lassecash_vote.py --backfill 2>&1 | tee /root/lcash-backfill.log
+```
+
+Requirements and behaviour of `--backfill`:
+
+- It needs step 2 and step 3. It reads `enabled`, and it returns at once when
+  `enabled` is false.
+- It never signs, whatever `broadcast` says, so it is safe to run while
+  `sbirunner` loops. Do not run the job *without* `--backfill` by hand at any
+  step: the write-ahead assumes one instance at a time.
+- It refreshes `lassecash_stakers` itself. Waiting for `hsbi_token_snapshot.py`
+  is unnecessary.
+- It replays member root posts from 30 days ago up to the 3-day candidate
+  window through the candidate rules and the cap. Counted posts become
+  `BASELINE` rows, capped posts `SKIPPED` rows. Posts inside the candidate
+  window stay for the live job.
+- It reads live Magi and live Hive. A Magi failure leaves no row behind, so a
+  rerun replays every post and prints the whole report again.
+- **Capture the output.** A rerun after a *successful* run skips every post as
+  known and prints an empty report. The report cannot be rebuilt afterwards.
+- Rerun it when the log holds `not loaded, rerun the backfill later` lines.
+  Those posts have no row yet, so the rerun picks them up.
+
+**Step 5 - check the report before enabling signing**
+
+Read three lists in `/root/lcash-backfill.log`:
+
+1. `registered but untagged: check the tag rule` - this list must be empty.
+   The contract reads no Hive post: it checks no tag, no post existence and no
+   age. The SBI-side tag check is the only guard against paying a
+   non-LasseCash post out of the pool. An entry here means a post that the
+   contract already pays and that the tag check rejects, so the tag rule and
+   that post need review before any vote goes out.
+2. `tagged, not registered (no LasseCash vote yet)` - informational. These are
+   the posts the live job would have voted.
+3. `tagged and registered on the contract` - informational.
+
+```sh
+mariadb sbi -e "SELECT status, COUNT(*) FROM lassecash_votes GROUP BY status;"
+```
+
+Expect `BASELINE` and `SKIPPED` rows only. Any other status means the live job
+ran before step 6.
+
+**Step 6 - turn signing on**
+
+Set `broadcast: true` in `config.json`. The next pipeline cycle casts at most
+one vote.
+
+**Step 7 - watch the first cycles**
+
+```sh
+journalctl -u sbirunner -t sbirunner --since '-1h' | grep -E 'hsbi_lassecash_vote|ALERT'
+```
+
+- `voted <authorperm> at <weight>% (rc_limit N, trx ...)` is one cast vote.
+- `ALERT: stuck PENDING L-cash vote` means a write-ahead row has stayed
+  `PENDING` for more than 6 hours. No vote goes out while any row is `PENDING`
+  or `BROADCAST`, so that line stops every later L-cash vote until an operator
+  settles the row.
+- `RC short (N < M); deferring` means `sbi-tokens` needs more RC on Magi.
+
+**Rollback**
+
+- `broadcast: false` stops signing and keeps qualification and settlement.
+- `enabled: false` stops the vote job and the staker refresh. The two tables
+  and their rows stay, so re-enabling resumes from the same baseline.
+- Neither switch touches the SBI Hive vote or `hsbi_upvote_post_comment.py`.
+
 ## Token issuance: settled-row shape and sweep guard (PR #140 review)
 
 Three review findings on the block-limit work above. All three are in the paths
